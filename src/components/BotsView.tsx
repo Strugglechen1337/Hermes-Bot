@@ -39,6 +39,11 @@ import type {
   HermesUsageLimitError,
 } from "../../shared/types";
 import { clearBotAvatar, prepareAvatarDataUrl, saveBotAvatar } from "../lib/avatarStore";
+import {
+  BOT_CHAT_TITLE,
+  getBotHandle,
+  pickPreferredBotSession,
+} from "../lib/botCollaboration";
 import { getBotVisual } from "../lib/botTheme";
 import {
   formatChatDividerTime,
@@ -57,6 +62,7 @@ import {
   fetchSessions,
   normalizeMessages,
   prepareChatImageDataUrl,
+  renameSession,
   updateProfileDescription,
   updateProfileFallback,
   updateProfileModel,
@@ -1167,11 +1173,17 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
         const list = await fetchSessions(profile.name, 30);
         setSessions(list);
         if (autoOpenFirst) {
-          if (list.length > 0) {
-            await loadSessionHistory(list[0].id, list[0].title);
+          const preferred = pickPreferredBotSession(list);
+          if (preferred) {
+            // Ensure this bot has a canonical "Bot Chat" session so Hermes activates
+            // the live teammate roster & `message_agent` bot-to-bot tool automatically.
+            if ((preferred.title || "").trim() !== BOT_CHAT_TITLE) {
+              await renameSession(preferred.id, BOT_CHAT_TITLE, profile.name).catch(() => null);
+            }
+            await loadSessionHistory(preferred.id, BOT_CHAT_TITLE);
           } else {
             setActiveSessionId(null);
-            setActiveTitle("Neuer Chat");
+            setActiveTitle(BOT_CHAT_TITLE);
             setMessages([]);
             attachedOnWsRef.current = false;
             setLoadingChat(false);
@@ -1605,6 +1617,7 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
     let appendedOptimistic = false;
     try {
       if (!sid) {
+        const hasCanonical = sessions.some((s) => (s.title || "").trim() === BOT_CHAT_TITLE);
         const created = await hermesWs.call<{
           session_id: string;
           stored_session_id?: string;
@@ -1613,6 +1626,7 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
           profile: profile.name,
           request_id: randomClientId("req"),
           source: "gui",
+          ...(!hasCanonical ? { title: BOT_CHAT_TITLE } : {}),
         });
         sid = created.session_id;
         if (typeof created.execution_generation === "number") {
@@ -1620,7 +1634,9 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
         }
         attachedOnWsRef.current = true;
         setActiveSessionId(sid);
-        setActiveTitle((text || pendingFiles[0]?.file.name || "Chat").slice(0, 48));
+        setActiveTitle(
+          !hasCanonical ? BOT_CHAT_TITLE : (text || pendingFiles[0]?.file.name || "Chat").slice(0, 48)
+        );
         void refreshSessionsList(false);
       } else if (!attachedOnWsRef.current) {
         const resumed = await hermesWs.call<{
@@ -1840,6 +1856,17 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
       setDeletingSession(false);
     }
   }
+
+  const teammates = useMemo(
+    () =>
+      allProfileNames
+        .filter((name) => name !== profile.name)
+        .map((name) => ({
+          name,
+          handle: getBotHandle(name, allProfileNames),
+        })),
+    [allProfileNames, profile.name]
+  );
 
   const limitSummary = useMemo(() => getPrimaryLimitSummary(usage), [usage]);
   const primaryFallback = fallbacks[0] || RECOMMENDED_ANTHROPIC_FALLBACK;
@@ -2212,6 +2239,32 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
         </div>
 
         <div className="card-stack">
+          {teammates.length > 0 && (
+            <div className="card" style={{ padding: "11px 12px" }}>
+              <div style={{ fontSize: "0.73rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--text-muted)", marginBottom: 7 }}>
+                Anderen Bot ansprechen (Bot-zu-Bot aktiv)
+              </div>
+              <div className="chip-row">
+                {teammates.map((tm) => (
+                  <button
+                    key={tm.name}
+                    type="button"
+                    className="chip"
+                    style={{ minHeight: 32, fontSize: "0.78rem" }}
+                    onClick={() => {
+                      setShowActionsSheet(false);
+                      setInput((prev) =>
+                        prev.trim() ? `${prev.trim()} @${tm.handle} ` : `Frag @${tm.handle}: `
+                      );
+                      requestAnimationFrame(() => textareaRef.current?.focus());
+                    }}
+                  >
+                    @{tm.handle}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
           <button
             type="button"
             className="btn primary full"

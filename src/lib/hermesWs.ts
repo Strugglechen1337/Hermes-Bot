@@ -182,7 +182,18 @@ export class HermesWsClient {
           this.pending.delete(key);
           clearTimeout(pending.timer);
           if (frame.error) {
-            pending.reject(new Error(frame.error.message || `RPC-Fehler ${frame.error.code}`));
+            const dataObj =
+              frame.error.data && typeof frame.error.data === "object"
+                ? (frame.error.data as Record<string, unknown>)
+                : null;
+            const detail =
+              typeof dataObj?.detail === "string" && dataObj.detail.trim()
+                ? dataObj.detail.trim()
+                : "";
+            const msg = detail
+              ? `${frame.error.message}: ${detail}`
+              : frame.error.message || `RPC-Fehler ${frame.error.code}`;
+            pending.reject(new Error(msg));
           } else {
             pending.resolve(frame.result);
           }

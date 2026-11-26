@@ -21,6 +21,7 @@ import type {
   HermesRoomMemberActivity,
   HermesRoomState,
 } from "../../shared/types";
+import { buildGroupMembersPayload } from "../lib/botCollaboration";
 import { getBotVisual, getProfileAvatarByName } from "../lib/botTheme";
 import { formatRelativeTime, formatShortTime, randomClientId } from "../lib/format";
 import { hermesWs, type WsConnectionState } from "../lib/hermesWs";
@@ -130,14 +131,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
     setCreateError(null);
     try {
       const roomId = randomClientId("room");
-      const members = selectedMembers.map((name) => {
-        const p = profiles.find((pr) => pr.name === name);
-        const vis = p ? getBotVisual(p) : null;
-        return {
-          profile: name,
-          display_name: vis?.label || name,
-        };
-      });
+      const members = buildGroupMembersPayload(selectedMembers, profiles);
       const res = await hermesWs.call<{ room: HermesRoom }>("groups.create", {
         room_id: roomId,
         name: newName.trim(),
@@ -152,6 +146,9 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
             purpose: newPurpose.trim(),
             notes: "",
             routing: newRouting,
+            ...(newRouting === "lead" && members[0]?.member_id
+              ? { lead_member_id: members[0].member_id }
+              : {}),
           })
           .catch(() => {
             // Optional context setup
@@ -545,13 +542,26 @@ const GroupRoomView: React.FC<GroupRoomViewProps> = ({
   }, [syncRoom]);
 
   const activities: HermesRoomMemberActivity[] = useMemo(() => {
-    const raw = roomState?.activities || roomState?.active_members || [];
+    const raw =
+      roomState?.driver_status?.member_activity ||
+      roomState?.activities ||
+      roomState?.active_members ||
+      [];
     return Array.isArray(raw) ? raw : [];
   }, [roomState]);
 
-  const anyBotBusy = activities.some(
-    (a) => a.status === "running" || a.status === "queued"
-  );
+  const anyBotBusy =
+    Boolean(roomState?.driver_status?.working) ||
+    activities.some((a) => a.status === "running" || a.status === "queued");
+
+  // Backstop poll while bots are actively discussing so replies appear immediately
+  useEffect(() => {
+    if (!anyBotBusy || wsState !== "connected") return;
+    const timer = window.setInterval(() => {
+      void syncRoom(true);
+    }, 2200);
+    return () => window.clearInterval(timer);
+  }, [anyBotBusy, syncRoom, wsState]);
 
   async function handleSend() {
     const text = input.trim();
@@ -563,10 +573,14 @@ const GroupRoomView: React.FC<GroupRoomViewProps> = ({
       await hermesWs.call("groups.send", {
         room_id: room.room_id,
         event_id: randomClientId("msg"),
-        payload: { text },
+        payload: {
+          text,
+          thread_id: room.room_id,
+        },
       });
       await syncRoom(true);
     } catch (err) {
+      setInput(text);
       setError(err instanceof Error ? err.message : "Gruppennachricht fehlgeschlagen.");
     } finally {
       setSending(false);
@@ -586,12 +600,14 @@ const GroupRoomView: React.FC<GroupRoomViewProps> = ({
     e.preventDefault();
     setSavingContext(true);
     try {
+      const leadId = room.members[0]?.member_id || room.members[0]?.handle || undefined;
       await hermesWs.call("groups.context", {
         room_id: room.room_id,
         event_id: randomClientId("ctx"),
         purpose: purpose.trim(),
         notes: notes.trim(),
         routing,
+        ...(routing === "lead" && leadId ? { lead_member_id: leadId } : {}),
       });
       setShowContextSheet(false);
       await syncRoom(true);

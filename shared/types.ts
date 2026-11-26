@@ -133,9 +133,18 @@ export interface HermesRoomContext {
   lead_member_id?: string | null;
 }
 
+export interface HermesRoomDriverStatus {
+  running?: boolean;
+  working?: boolean;
+  blocked?: boolean;
+  member_activity?: HermesRoomMemberActivity[];
+  last_error?: string | null;
+}
+
 export interface HermesRoomState {
   room: HermesRoom;
   latest_seq?: number;
+  driver_status?: HermesRoomDriverStatus | null;
   activities?: HermesRoomMemberActivity[];
   active_members?: HermesRoomMemberActivity[];
   context?: HermesRoomContext | null;
