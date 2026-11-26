@@ -178,7 +178,7 @@ export async function sendTestPushNotification(): Promise<{
 
 /**
  * Triggers a server-sent Web Push when the app is backgrounded/locked so
- * Alex gets a native iPhone banner when a bot replies or needs confirmation.
+ * the user gets a native iPhone banner when a bot replies or needs confirmation.
  */
 export function notifyIfBackgrounded(payload: {
   title: string;
