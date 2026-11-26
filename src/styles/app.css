@@ -32,11 +32,19 @@
   --radius-pill: 999px;
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --header-top-pad: calc(var(--safe-top) + 10px);
   --tabbar-height: 62px;
   --vvh: 100dvh;
   --vvt: 0px;
   --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI", Roboto, sans-serif;
   --font-mono: "SF Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+/* Home-Screen PWA (iOS standalone): clear the Dynamic Island & iOS status-bar blur cleanly */
+@media (display-mode: standalone) {
+  :root {
+    --header-top-pad: calc(max(var(--safe-top), 54px) + 16px);
+  }
 }
 
 * {
@@ -120,10 +128,8 @@ a {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: calc(var(--safe-top) + 2px) 16px 10px;
-  background: rgba(8, 9, 12, 0.9);
-  backdrop-filter: blur(22px);
-  -webkit-backdrop-filter: blur(22px);
+  padding: var(--header-top-pad) 16px 12px;
+  background: var(--bg-canvas);
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   -webkit-user-select: none;
   user-select: none;
@@ -131,7 +137,7 @@ a {
 }
 
 .kb-open .topbar {
-  padding: calc(var(--safe-top) + 2px) 14px 6px;
+  padding: var(--header-top-pad) 14px 8px;
 }
 
 .kb-open .topbar-subtitle {
@@ -624,11 +630,11 @@ a {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: calc(var(--safe-top) + 2px) 14px 16px;
+  padding: var(--header-top-pad) 14px 16px;
   background: linear-gradient(
     to bottom,
-    rgba(8, 9, 12, 0.92) 0%,
-    rgba(8, 9, 12, 0.62) 64%,
+    rgba(8, 9, 12, 0.94) 0%,
+    rgba(8, 9, 12, 0.65) 68%,
     rgba(8, 9, 12, 0) 100%
   );
   pointer-events: none;
@@ -637,7 +643,7 @@ a {
 }
 
 .kb-open .chat-floating-header {
-  padding-top: calc(var(--safe-top) + 4px);
+  padding-top: var(--header-top-pad);
   padding-bottom: 12px;
 }
 
@@ -695,14 +701,14 @@ a {
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior-y: contain;
-  padding: calc(var(--safe-top) + 64px) 14px 12px;
+  padding: calc(var(--header-top-pad) + 56px) 14px 12px;
   display: flex;
   flex-direction: column;
   gap: 10px;
 }
 
 .kb-open .chat-messages {
-  padding-top: calc(var(--safe-top) + 56px);
+  padding-top: calc(var(--header-top-pad) + 52px);
   padding-bottom: 8px;
 }
 
@@ -1152,7 +1158,7 @@ a {
   display: flex;
   align-items: flex-end;
   justify-content: center;
-  padding-top: calc(var(--safe-top) + 12px);
+  padding-top: var(--header-top-pad);
 }
 
 .kb-open .sheet-backdrop {
