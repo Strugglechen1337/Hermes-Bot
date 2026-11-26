@@ -97,13 +97,13 @@ export const LimitSheet: React.FC<LimitSheetProps> = ({
             <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.85rem", marginBottom: 4 }}>
               <span style={{ fontWeight: 600 }}>{usage.planGauge?.label || "Plan-Limit"}</span>
               <span style={{ fontWeight: 700 }}>
-                {gaugePct}% genutzt {gaugeReset ? `· Reset ${gaugeReset}` : ""}
+                {100 - gaugePct}% verbleibend {gaugeReset ? `· Reset ${gaugeReset}` : ""}
               </span>
             </div>
             <div className="limit-progress-track">
               <div
-                className={`limit-progress-fill ${gaugePct >= 90 ? "critical" : gaugePct >= 70 ? "warn" : ""}`}
-                style={{ width: `${gaugePct}%` }}
+                className={`limit-progress-fill ${100 - gaugePct <= 10 ? "critical" : 100 - gaugePct <= 30 ? "warn" : ""}`}
+                style={{ width: `${100 - gaugePct}%` }}
               />
             </div>
           </div>
@@ -116,14 +116,14 @@ export const LimitSheet: React.FC<LimitSheetProps> = ({
                 <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.84rem", marginBottom: 4, gap: 8 }}>
                   <span style={{ fontWeight: 600 }}>{win.label}</span>
                   <span style={{ color: "var(--text-secondary)", textAlign: "right" }}>
-                    <strong style={{ color: "var(--text-primary)" }}>{win.usedPercent}%</strong> genutzt
-                    {win.resetText ? ` · ${win.resetText}` : ""}
+                    <strong style={{ color: "var(--text-primary)" }}>{win.remainingPercent}% verbleibend</strong>
+                    {win.resetText ? ` · Reset ${win.resetText}` : ""}
                   </span>
                 </div>
                 <div className="limit-progress-track">
                   <div
-                    className={`limit-progress-fill ${win.usedPercent >= 90 ? "critical" : win.usedPercent >= 70 ? "warn" : ""}`}
-                    style={{ width: `${win.usedPercent}%` }}
+                    className={`limit-progress-fill ${win.remainingPercent <= 10 ? "critical" : win.remainingPercent <= 30 ? "warn" : ""}`}
+                    style={{ width: `${win.remainingPercent}%` }}
                   />
                 </div>
               </div>

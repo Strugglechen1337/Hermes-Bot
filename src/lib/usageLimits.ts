@@ -81,39 +81,57 @@ export function parsePlanGaugePercent(gauge: HermesPlanGauge | null | undefined)
 }
 
 /**
- * Extracts structured quota windows from Hermes `session.account_usage` lines
- * (e.g. "5h window: 38% used (resets in 2h 14m)" or "Weekly: 72% left · resets Thu").
+ * Extracts structured quota windows from Hermes `session.account_usage` lines, e.g.:
+ * - "5-hour limit: 29% remaining (71% used) • resets in 2h 0m (2026-11-26 18:40 CET)"
+ * - "5h window: 38% used (resets in 2h 14m)"
+ * - "Weekly: 72% remaining (resets Thu)"
  */
 export function parseAccountUsageLines(lines: string[]): ParsedQuotaWindow[] {
   const windows: ParsedQuotaWindow[] = [];
   for (const raw of lines) {
-    const clean = raw.replace(/\u001b\[[0-9;]*m/g, "").trim();
+    const clean = raw.replace(/\u001b\[[0-9;]*m/g, "").replace(/\*\*/g, "").trim();
     if (!clean) continue;
 
-    const pctMatch = clean.match(/(\d{1,3}(?:\.\d+)?)\s*%/);
-    if (!pctMatch) continue;
+    const remMatch = clean.match(
+      /(\d{1,3}(?:\.\d+)?)\s*%\s*(?:remaining|left|verbleibend|übrig|verfügbar|frei)\b/i
+    );
+    const usedMatch = clean.match(
+      /(\d{1,3}(?:\.\d+)?)\s*%\s*(?:used|verbraucht|genutzt)\b/i
+    );
+    const anyPctMatch = clean.match(/(\d{1,3}(?:\.\d+)?)\s*%/);
+    if (!remMatch && !usedMatch && !anyPctMatch) continue;
 
-    const rawPct = Math.max(0, Math.min(100, Math.round(Number(pctMatch[1]))));
-    const lower = clean.toLowerCase();
-    const isRemaining =
-      /\b(left|remaining|übrig|verfügbar|frei)\b/.test(lower) &&
-      !/\b(used|verbraucht|genutzt)\b/.test(lower);
-    const usedPercent = isRemaining ? 100 - rawPct : rawPct;
-    const remainingPercent = 100 - usedPercent;
+    let remainingPercent: number;
+    let usedPercent: number;
+    if (remMatch) {
+      remainingPercent = Math.max(0, Math.min(100, Math.round(Number(remMatch[1]))));
+      usedPercent = usedMatch
+        ? Math.max(0, Math.min(100, Math.round(Number(usedMatch[1]))))
+        : 100 - remainingPercent;
+    } else if (usedMatch) {
+      usedPercent = Math.max(0, Math.min(100, Math.round(Number(usedMatch[1]))));
+      remainingPercent = 100 - usedPercent;
+    } else {
+      usedPercent = Math.max(0, Math.min(100, Math.round(Number(anyPctMatch![1]))));
+      remainingPercent = 100 - usedPercent;
+    }
 
-    // Label before colon or before percentage
+    // Label before colon or before first percentage
     let label = "Limit";
     const colonIdx = clean.indexOf(":");
-    if (colonIdx > 0 && colonIdx < 40) {
+    const firstPctIdx = anyPctMatch?.index ?? -1;
+    if (colonIdx > 0 && colonIdx < 40 && (firstPctIdx === -1 || colonIdx < firstPctIdx)) {
       label = clean.slice(0, colonIdx).replace(/^[-•*]\s*/, "").trim();
-    } else if (pctMatch.index && pctMatch.index > 0) {
-      label = clean.slice(0, pctMatch.index).replace(/^[-•*]\s*/, "").trim().slice(0, 32) || "Limit";
+    } else if (firstPctIdx > 0) {
+      label = clean.slice(0, firstPctIdx).replace(/^[-•*]\s*/, "").trim().slice(0, 32) || "Limit";
     }
 
     let resetText: string | null = null;
-    const resetMatch = clean.match(/(?:resets?\s*(?:in|at|on)?|zurückgesetzt\s*(?:in|am|um)?)\s*([^)|]+?)(?:\)|$)/i);
+    const resetMatch = clean.match(
+      /(?:resets?\s*(?:in|at|on)?|zurückgesetzt\s*(?:in|am|um)?)\s*([^•|]+?)(?:\s*\([^)]*\))?(?:\)|$)/i
+    );
     if (resetMatch?.[1]) {
-      resetText = resetMatch[1].trim();
+      resetText = resetMatch[1].replace(/\)\s*$/, "").trim();
     }
 
     windows.push({
@@ -207,33 +225,43 @@ export function mergeAccountUsage(
 
 export function getPrimaryLimitSummary(usage: ChatUsageState): {
   label: string;
+  mode: "remaining" | "context" | "none";
   usedPercent: number | null;
+  remainingPercent: number | null;
+  barPercent: number | null;
   resetText: string | null;
   severity: "normal" | "warn" | "critical";
 } {
   const gaugePct = parsePlanGaugePercent(usage.planGauge);
   if (gaugePct !== null) {
+    const remainingPercent = Math.max(0, Math.min(100, 100 - gaugePct));
     return {
       label: usage.planGauge?.label || "Plan-Limit",
+      mode: "remaining",
       usedPercent: gaugePct,
+      remainingPercent,
+      barPercent: remainingPercent,
       resetText: formatResetCountdown(usage.planGauge?.resets_at_ms),
-      severity: gaugePct >= 90 ? "critical" : gaugePct >= 70 ? "warn" : "normal",
+      severity: remainingPercent <= 10 ? "critical" : remainingPercent <= 30 ? "warn" : "normal",
     };
   }
 
   if (usage.quotaWindows.length > 0) {
-    // Pick the tightest (highest usedPercent) window so the user never misses a near-limit cap
+    // Pick the tightest (lowest remainingPercent) window so the user never misses a near-limit cap
     const tightest = usage.quotaWindows.reduce((acc, w) =>
-      w.usedPercent > acc.usedPercent ? w : acc
+      w.remainingPercent < acc.remainingPercent ? w : acc
     );
     return {
       label: tightest.label,
+      mode: "remaining",
       usedPercent: tightest.usedPercent,
+      remainingPercent: tightest.remainingPercent,
+      barPercent: tightest.remainingPercent,
       resetText: tightest.resetText,
       severity:
-        tightest.usedPercent >= 90
+        tightest.remainingPercent <= 10
           ? "critical"
-          : tightest.usedPercent >= 70
+          : tightest.remainingPercent <= 30
             ? "warn"
             : "normal",
     };
@@ -242,7 +270,10 @@ export function getPrimaryLimitSummary(usage: ChatUsageState): {
   if (usage.contextPercent !== null) {
     return {
       label: "Chat-Kontext",
+      mode: "context",
       usedPercent: usage.contextPercent,
+      remainingPercent: Math.max(0, Math.min(100, 100 - usage.contextPercent)),
+      barPercent: usage.contextPercent,
       resetText: null,
       severity:
         usage.contextPercent >= 90
@@ -255,7 +286,10 @@ export function getPrimaryLimitSummary(usage: ChatUsageState): {
 
   return {
     label: "Limit",
+    mode: "none",
     usedPercent: null,
+    remainingPercent: null,
+    barPercent: null,
     resetText: null,
     severity: "normal",
   };

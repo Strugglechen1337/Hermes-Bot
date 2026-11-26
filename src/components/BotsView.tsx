@@ -2058,22 +2058,24 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
           <span className="chat-limit-left">
             <Gauge size={13} style={{ flexShrink: 0 }} />
             <span className="chat-limit-text">
-              {limitSummary.usedPercent !== null
-                ? `${limitSummary.label} ${limitSummary.usedPercent}%`
-                : `${currentActiveModel}`}
+              {limitSummary.mode === "remaining" && limitSummary.remainingPercent !== null
+                ? `${limitSummary.label}: ${limitSummary.remainingPercent}% frei`
+                : limitSummary.mode === "context" && limitSummary.usedPercent !== null
+                  ? `Kontext ${limitSummary.usedPercent}%`
+                  : `${currentActiveModel}`}
               {limitSummary.resetText ? ` · ${limitSummary.resetText}` : ""}
             </span>
-            {limitSummary.usedPercent !== null && (
+            {limitSummary.barPercent !== null && (
               <span className="chat-limit-meter" aria-hidden="true">
                 <span
                   className={`chat-limit-meter-fill ${limitSummary.severity === "normal" ? "" : limitSummary.severity}`}
-                  style={{ width: `${limitSummary.usedPercent}%` }}
+                  style={{ width: `${limitSummary.barPercent}%` }}
                 />
               </span>
             )}
           </span>
           <span className="chat-limit-right">
-            {usage.contextPercent !== null && limitSummary.label !== "Chat-Kontext" && (
+            {usage.contextPercent !== null && limitSummary.mode !== "context" && (
               <span>Kontext {usage.contextPercent}%</span>
             )}
             {hasAnthropicFallback && (

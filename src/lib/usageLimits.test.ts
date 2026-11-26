@@ -18,27 +18,34 @@ describe("usageLimits", () => {
     expect(parsePlanGaugePercent(null)).toBeNull();
   });
 
-  it("parses account usage lines for both used and remaining phrasing", () => {
+  it("parses Hermes account_usage lines with both remaining and used percentages correctly", () => {
     const windows = parseAccountUsageLines([
+      "5-hour limit: 29% remaining (71% used) • resets in 2h 0m (2026-11-26 18:40 CET)",
+      "Weekly limit: 89% remaining (11% used) • resets in 5d 19h (2026-12-02 12:39 CET)",
       "5h window: 38% used (resets in 2h 14m)",
-      "Weekly: 72% remaining (resets Thu)",
     ]);
-    expect(windows).toHaveLength(2);
+    expect(windows).toHaveLength(3);
     expect(windows[0]).toMatchObject({
-      label: "5h window",
-      usedPercent: 38,
-      remainingPercent: 62,
-      resetText: "2h 14m",
+      label: "5-hour limit",
+      remainingPercent: 29,
+      usedPercent: 71,
+      resetText: "2h 0m",
     });
     expect(windows[1]).toMatchObject({
-      label: "Weekly",
-      usedPercent: 28,
-      remainingPercent: 72,
-      resetText: "Thu",
+      label: "Weekly limit",
+      remainingPercent: 89,
+      usedPercent: 11,
+      resetText: "5d 19h",
+    });
+    expect(windows[2]).toMatchObject({
+      label: "5h window",
+      remainingPercent: 62,
+      usedPercent: 38,
+      resetText: "2h 14m",
     });
   });
 
-  it("merges session.usage payloads and computes context percent", () => {
+  it("merges session.usage payloads and computes remaining percent & severity", () => {
     const next = mergeUsagePayload(EMPTY_CHAT_USAGE, {
       context_tokens: 25_000,
       context_length: 100_000,
@@ -50,18 +57,25 @@ describe("usageLimits", () => {
     expect(next.model).toBe("gpt-6.1-terra");
     const summary = getPrimaryLimitSummary(next);
     expect(summary.label).toBe("5h-Limit");
+    expect(summary.mode).toBe("remaining");
     expect(summary.usedPercent).toBe(74);
+    expect(summary.remainingPercent).toBe(26);
+    expect(summary.barPercent).toBe(26);
     expect(summary.severity).toBe("warn");
   });
 
-  it("picks the tightest quota window from session.account_usage", () => {
+  it("picks the tightest (lowest remaining) quota window from session.account_usage", () => {
     const state = mergeAccountUsage(EMPTY_CHAT_USAGE, {
-      lines: ["5h window: 40% used", "Weekly: 92% used"],
+      lines: [
+        "5-hour limit: 29% remaining (71% used)",
+        "Weekly limit: 89% remaining (11% used)",
+      ],
     });
     const summary = getPrimaryLimitSummary(state);
-    expect(summary.label).toBe("Weekly");
-    expect(summary.usedPercent).toBe(92);
-    expect(summary.severity).toBe("critical");
+    expect(summary.label).toBe("5-hour limit");
+    expect(summary.remainingPercent).toBe(29);
+    expect(summary.usedPercent).toBe(71);
+    expect(summary.severity).toBe("warn");
   });
 
   it("formats compact tokens and reset countdowns", () => {
