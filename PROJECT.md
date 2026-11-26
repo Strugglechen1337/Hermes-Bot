@@ -21,12 +21,12 @@ Eine auf dem iPhone gut bedienbare private Web-App (PWA) für Hermes: Bot-Liste,
 2. **BFF-Proxy & WebSocket-Bridge (erledigt):** Schlanker Node/TypeScript-Server (`server/`, Standardport `9135`) mit Pfad-Allowlist, Same-Origin-Schutz, Cookie-Passthrough und sitzungsgebundener WS-Ticket-Bridge.
 3. **Mobile-first PWA (erledigt):** React + TypeScript Oberfläche (`src/`) im dunklen Design mit eigenen Icons (`public/icon.svg`, `icon-180.png`, `icon-512.png`), Web-App-Manifest, Bots/1:1-Streaming-Chat, Gruppenchats, Routinen (mit Sicherheits-Bestätigung vor Aktivierung/Auslösung) und E-Mail-Status/Einrichtung.
 4. **Tests & Dokumentation (erledigt):** Automatisierte Tests für BFF-Sicherheit, Proxy-Verhalten, XSS-sicheres Markdown und Routinen-Schutzmechanismen sowie Betriebsdokumentation in `docs/DEPLOYMENT.md`.
+5. **Privates Hosting & iPhone-Zugang (erledigt):** Als eigener `systemd`-User-Service (`hermes-pocket.service`) auf Loopback-Port `127.0.0.1:9135` (mit `COOKIE_SECURE=true`) eingerichtet und über einen eigenen privaten Tailscale-Serve-HTTPS-Port (`8444`) bereitgestellt. Bestehende Dienste und der bestehende Hermes-Webzugang (`9130` / `8443`) blieben vollständig unangetastet.
 
 ## Offene Arbeit
 
-1. Optionales Deployment auf dem Hermes-Server (`systemd`-User-Service auf `127.0.0.1:9135` + eigener Tailscale-Serve-Port) nach Freigabe, ohne den bestehenden Webzugang auf Port `9130` zu verändern.
-2. Live-End-to-End-Prüfung am iPhone (inkl. „Zum Home-Bildschirm“) mit regulärem Login.
-3. E-Mail-Zugang für `mika` im Tab „E-Mail“ bewusst einrichten und testen; erst nach erfolgreicher Verifikation die pausierte Mail-Routine freigeben.
+1. Live-Prüfung am iPhone (Login mit bestehendem Hermes-Konto, Bot-Chat mit `mika`, Gruppenchat, Routinen-Ansicht sowie „Zum Home-Bildschirm“).
+2. E-Mail-Zugang für `mika` im Tab „E-Mail“ bewusst einrichten und testen; erst nach erfolgreicher Verifikation die pausierte Mail-Routine freigeben.
 
 ## Zusammenarbeit
 
