@@ -1,10 +1,41 @@
+import type { VaultItemKind } from "./vaultClient";
+
 export interface DetectedSecretRequest {
   keyName: string;
   prompt: string;
   explicit: boolean;
 }
 
-const EXPLICIT_TAG_RE = /\[SECRET_REQUEST:\s*([A-Z][A-Z0-9_]{1,63})(?:\s*\|\s*([^\]]+))?\]/i;
+export interface DetectedSecretForm {
+  title: string;
+  fields: DetectedSecretRequest[];
+  explicit: boolean;
+}
+
+export interface DetectedVaultRequest {
+  kind: VaultItemKind;
+  prompt: string;
+  origin?: string;
+  explicit: boolean;
+}
+
+export interface DetectedDealCard {
+  shop: string;
+  title: string;
+  price: string;
+  oldPrice?: string;
+  url: string;
+}
+
+const EXPLICIT_FORM_TITLE_RE = /\[SECRET_FORM:\s*([^\]]+)\]/i;
+const EXPLICIT_FORM_TITLE_GLOBAL_RE = /\[SECRET_FORM:\s*([^\]]+)\]/gi;
+const EXPLICIT_TAG_GLOBAL_RE = /\[SECRET_REQUEST:\s*([A-Z][A-Z0-9_]{1,63})(?:\s*\|\s*([^\]]+))?\]/gi;
+const EXPLICIT_VAULT_RE =
+  /\[VAULT_REQUEST:\s*(payment|address|login)(?:\s*\|\s*([^|\]]+))?(?:\s*\|\s*([^\]]+))?\]/i;
+const EXPLICIT_VAULT_GLOBAL_RE =
+  /\[VAULT_REQUEST:\s*(payment|address|login)(?:\s*\|\s*([^|\]]+))?(?:\s*\|\s*([^\]]+))?\]/gi;
+const EXPLICIT_DEAL_GLOBAL_RE =
+  /\[DEAL_CARD:\s*([^|\]]+)\|\s*([^|\]]+)\|\s*([^|\]]+)(?:\|\s*([^|\]]*))?(?:\|\s*([^\]]+))?\]/gi;
 
 const ENV_VAR_CANDIDATE_RE =
   /\b([A-Z][A-Z0-9_]{2,48}_(?:API_KEY|TOKEN|SECRET|PASSWORD|PASSWD|KEY|PAT|AUTH))\b/g;
@@ -16,7 +47,7 @@ const SECRET_NOUN_RE =
   /\b(api[- ]?key|api[- ]?token|api[- ]?schlüssel|access[- ]?token|bearer[- ]?token|long[- ]?lived[- ]?access[- ]?token|token|passwort|password|geheimnis|secret|zugangsdaten|app[- ]?passwort)\b/i;
 
 const REFUSAL_OR_PAST_RE =
-  /\b(würde ich nicht|nicht über einen normalen chat|erfolgreich gespeichert|wurde hinterlegt|bereits hinterlegt)\b/i;
+  /\b(würde ich nicht|nicht über einen normalen chat|erfolgreich gespeichert|wurde hinterlegt|bereits hinterlegt|karte gespeichert)\b/i;
 
 function inferKeyFromContext(text: string): string {
   const lower = text.toLowerCase();
@@ -27,55 +58,185 @@ function inferKeyFromContext(text: string): string {
   if (/cloudflare/.test(lower)) return "CLOUDFLARE_API_TOKEN";
   if (/telegram/.test(lower)) return "TELEGRAM_BOT_TOKEN";
   if (/discord/.test(lower)) return "DISCORD_TOKEN";
+  if (/amazon/.test(lower)) return "AMAZON_PASSWORD";
+  if (/paypal/.test(lower)) return "PAYPAL_PASSWORD";
   if (/imap|smtp|mail|e-?mail/.test(lower)) return "EMAIL_PASSWORD";
   if (/passwort|password/.test(lower)) return "SERVICE_PASSWORD";
   return "SERVICE_API_TOKEN";
 }
 
 /**
- * Inspects a completed bot message and detects when the bot is asking the user
- * to supply an API key, token, or password so Hermes Pocket can automatically
- * pop up the secure masked input box right inside the chat.
+ * Returns true if the requested key is typically non-secret metadata (e.g. email,
+ * username, URL, address) so the secure form can default to visible text while
+ * still allowing masking and write-only storage in `.env`.
  */
-export function detectBotSecretRequest(text: string): DetectedSecretRequest | null {
+export function isPlaintextFormFieldKey(keyName: string): boolean {
+  const upper = keyName.trim().toUpperCase();
+  if (/(?:^|_)(PASSWORD|PASSWD|SECRET|TOKEN|KEY|CVV|CVC|PIN|AUTH|CARD_NUMBER|CARD|IBAN)(?:$|_)/.test(upper)) {
+    return false;
+  }
+  return /(?:^|_)(EMAIL|MAIL|USER|USERNAME|LOGIN|URL|HOST|NAME|ADDRESS|ADDR|STREET|CITY|ZIP|PLZ|PHONE|COUNTRY|EXPIRY|EXP)(?:$|_)/.test(
+    upper
+  );
+}
+
+/**
+ * Detects an explicit or natural request to store a Payment Card, Shipping Address,
+ * or Shop Login in Hermes's encrypted, model-blind Browser Vault (`vault.add`).
+ */
+export function detectBotVaultRequest(text: string): DetectedVaultRequest | null {
   const trimmed = text.trim();
   if (!trimmed) return null;
 
-  // 1. Explicit structured tag (highest confidence)
-  const tagMatch = trimmed.match(EXPLICIT_TAG_RE);
-  if (tagMatch) {
+  const tag = trimmed.match(EXPLICIT_VAULT_RE);
+  if (tag) {
+    const kind = tag[1].toLowerCase() as VaultItemKind;
+    const defaultPrompt =
+      kind === "payment"
+        ? "Zahlungskarte verschlüsselt im Tresor speichern"
+        : kind === "address"
+          ? "Lieferadresse verschlüsselt im Tresor speichern"
+          : "Shop-Zugangsdaten verschlüsselt im Tresor speichern";
+    const origin = tag[3]?.trim() || undefined;
     return {
-      keyName: tagMatch[1].toUpperCase(),
-      prompt: (tagMatch[2] || `Bitte gib den Wert für ${tagMatch[1].toUpperCase()} sicher ein.`).trim(),
+      kind,
+      prompt: (tag[2] || defaultPrompt).trim(),
+      origin,
       explicit: true,
     };
   }
 
-  // 2. Avoid false positives on security refusals or past-tense confirmations
+  if (REFUSAL_OR_PAST_RE.test(trimmed)) return null;
+
+  // Natural German fallback for checkout/vault prompts (e.g. "Zum Bezahlen fehlt mir noch eine Karte…")
+  const asksForm =
+    /\b(sichere[sn]? formular|tresor|vault|eintragen|hinterlegen|fehlt mir noch)\b/i.test(trimmed);
+  if (!asksForm) return null;
+
+  if (/\b(kreditkarte|zahlungskarte|debitkarte|visa|mastercard|karte)\b/i.test(trimmed) && /\b(bezahlen|kasse|bestellung|formular|tresor)\b/i.test(trimmed)) {
+    return {
+      kind: "payment",
+      prompt: "Zahlungskarte verschlüsselt im Hermes-Tresor für den Browser-Checkout speichern.",
+      explicit: false,
+    };
+  }
+  if (/\b(lieferadresse|rechnungsadresse|anschrift)\b/i.test(trimmed) && /\b(formular|tresor|eintragen|hinterlegen)\b/i.test(trimmed)) {
+    return {
+      kind: "address",
+      prompt: "Lieferadresse verschlüsselt im Hermes-Tresor für Bestellformulare speichern.",
+      explicit: false,
+    };
+  }
+  return null;
+}
+
+/**
+ * Extracts structured `[DEAL_CARD: Shop | Title | Price | OldPrice | URL]` product cards
+ * from an assistant message so Hermes Pocket renders clickable deal cards with "Jetzt kaufen".
+ */
+export function extractProductDeals(text: string): DetectedDealCard[] {
+  const deals: DetectedDealCard[] = [];
+  for (const m of text.matchAll(EXPLICIT_DEAL_GLOBAL_RE)) {
+    const shop = (m[1] || "").trim();
+    const title = (m[2] || "").trim();
+    const price = (m[3] || "").trim();
+    const col4 = (m[4] || "").trim();
+    const col5 = (m[5] || "").trim();
+    // Allow both 4-column (Shop|Title|Price|URL) and 5-column (Shop|Title|Price|OldPrice|URL)
+    let oldPrice: string | undefined;
+    let url = col5;
+    if (!url && /^https?:\/\//i.test(col4)) {
+      url = col4;
+    } else if (col4) {
+      oldPrice = col4;
+    }
+    if (!shop || !title || !price) continue;
+    if (url && !/^https?:\/\//i.test(url)) url = "";
+    deals.push({ shop, title, price, ...(oldPrice ? { oldPrice } : {}), url });
+  }
+  return deals;
+}
+
+/**
+ * Inspects a completed bot message and extracts either a single secure field or a
+ * complete multi-field secure form (`[SECRET_FORM: ...]` + multiple `[SECRET_REQUEST: ...]`).
+ */
+export function detectBotSecretForm(text: string): DetectedSecretForm | null {
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+
+  // Prefer native encrypted Hermes Vault form when a vault request is present
+  if (EXPLICIT_VAULT_RE.test(trimmed)) {
+    return null;
+  }
+
+  const explicitMatches = Array.from(trimmed.matchAll(EXPLICIT_TAG_GLOBAL_RE));
+  if (explicitMatches.length > 0) {
+    const seen = new Set<string>();
+    const fields: DetectedSecretRequest[] = [];
+    for (const m of explicitMatches) {
+      const keyName = m[1].toUpperCase();
+      if (seen.has(keyName)) continue;
+      seen.add(keyName);
+      fields.push({
+        keyName,
+        prompt: (m[2] || `Bitte gib den Wert für ${keyName} sicher ein.`).trim(),
+        explicit: true,
+      });
+    }
+    const titleMatch = trimmed.match(EXPLICIT_FORM_TITLE_RE);
+    const title =
+      titleMatch?.[1]?.trim() ||
+      (fields.length > 1 ? "Gesichertes Formular" : "Passwort / API-Key sicher eingeben");
+    return {
+      title,
+      fields,
+      explicit: true,
+    };
+  }
+
+  // Natural language fallback (single field)
   if (REFUSAL_OR_PAST_RE.test(trimmed)) {
     return null;
   }
 
-  // 3. Natural language request for a key/token/password
   const envMatches = Array.from(trimmed.matchAll(ENV_VAR_CANDIDATE_RE)).map((m) => m[1]);
   if ((!SECRET_NOUN_RE.test(trimmed) && envMatches.length === 0) || !ASKING_PHRASES_RE.test(trimmed)) {
     return null;
   }
 
-  // Prefer explicit UPPER_SNAKE_CASE env var mentioned in the bot's reply
   const keyName = envMatches[0] || inferKeyFromContext(trimmed);
-
   return {
-    keyName,
-    prompt: `Sichere Eingabe für ${keyName} – wird direkt in der geschützten .env des Bots gespeichert.`,
+    title: "Passwort / API-Key sicher eingeben",
+    fields: [
+      {
+        keyName,
+        prompt: `Sichere Eingabe für ${keyName} – wird direkt in der geschützten .env des Bots gespeichert.`,
+        explicit: false,
+      },
+    ],
     explicit: false,
   };
 }
 
 /**
- * Strips any internal `[SECRET_REQUEST: ...]` directive from rendered markdown
- * so the user only sees clean prose plus the interactive security box below.
+ * Backward-compatible single-field helper returning the first detected secret request.
+ */
+export function detectBotSecretRequest(text: string): DetectedSecretRequest | null {
+  const form = detectBotSecretForm(text);
+  return form?.fields[0] ?? null;
+}
+
+/**
+ * Strips any internal `[SECRET_FORM: ...]`, `[SECRET_REQUEST: ...]`, `[VAULT_REQUEST: ...]`,
+ * and `[DEAL_CARD: ...]` directives from rendered markdown prose.
  */
 export function stripSecretRequestTag(text: string): string {
-  return text.replace(EXPLICIT_TAG_RE, "").trim();
+  return text
+    .replace(EXPLICIT_FORM_TITLE_GLOBAL_RE, "")
+    .replace(EXPLICIT_TAG_GLOBAL_RE, "")
+    .replace(EXPLICIT_VAULT_GLOBAL_RE, "")
+    .replace(EXPLICIT_DEAL_GLOBAL_RE, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }

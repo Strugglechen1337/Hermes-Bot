@@ -4,8 +4,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ApprovalPromptCard,
   ClarifyPromptCard,
+  ManualSecretCard,
   SecretPromptCard,
 } from "./InChatPromptCards";
+import * as hermesApi from "../lib/hermesApi";
 
 afterEach(() => {
   cleanup();
@@ -95,5 +97,47 @@ describe("InChatPromptCards", () => {
     fireEvent.click(screen.getByRole("button", { name: /Sicher senden/i }));
     expect(onSubmit).toHaveBeenCalledWith("test-secret-value");
     expect(input.value).toBe("");
+  });
+
+  it("renders a multi-field secure form card and saves all fields write-only", async () => {
+    const saveSpy = vi
+      .spyOn(hermesApi, "saveProfileSecret")
+      .mockResolvedValue({ ok: true, key: "SHOP_EMAIL", envPathHint: "~/.hermes/profiles/nina-recherche/.env" });
+    const onSaved = vi.fn();
+
+    render(
+      <ManualSecretCard
+        profileName="nina-recherche"
+        botLabel="Nina"
+        formTitle="Shop-Zugangsdaten"
+        fields={[
+          { keyName: "SHOP_EMAIL", prompt: "E-Mail-Adresse", explicit: true },
+          { keyName: "SHOP_PASSWORD", prompt: "Passwort", explicit: true },
+        ]}
+        onSaved={onSaved}
+        onClose={() => undefined}
+      />
+    );
+
+    const emailInput = screen.getByPlaceholderText(/E-Mail-Adresse/i) as HTMLInputElement;
+    const passInput = screen.getByPlaceholderText(/Passwort/i) as HTMLInputElement;
+    expect(emailInput.type).toBe("text");
+    expect(passInput.type).toBe("password");
+
+    fireEvent.change(emailInput, { target: { value: "shop@example.test" } });
+    fireEvent.change(passInput, { target: { value: "super-secret-pass" } });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Formular sicher speichern/i }));
+    });
+
+    expect(saveSpy).toHaveBeenCalledTimes(2);
+    expect(saveSpy).toHaveBeenNthCalledWith(1, "nina-recherche", "SHOP_EMAIL", "shop@example.test");
+    expect(saveSpy).toHaveBeenNthCalledWith(2, "nina-recherche", "SHOP_PASSWORD", "super-secret-pass");
+    expect(onSaved).toHaveBeenCalledWith(
+      ["SHOP_EMAIL", "SHOP_PASSWORD"],
+      "~/.hermes/profiles/nina-recherche/.env"
+    );
+    saveSpy.mockRestore();
   });
 });

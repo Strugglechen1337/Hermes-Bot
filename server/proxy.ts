@@ -3,6 +3,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import os from "node:os";
 import path from "node:path";
 import type { ServerConfig } from "./config.js";
+import { appendAutonomousGuidance } from "../shared/botAutonomy.js";
 import { handlePocketPushRoute } from "./push.js";
 import {
   adaptSetCookieHeader,
@@ -455,7 +456,8 @@ async function bootstrapNewProfileDefaults(
     return;
   }
 
-  // 1. Apply the safe, non-destructive command_allowlist (never includes deletions/SSH/gateway stops)
+  // 1. Apply autonomous execution defaults + safe, non-destructive command_allowlist
+  // (never includes deletions/SSH/gateway stops; mail & deletions remain protected)
   try {
     const headers: Record<string, string> = {
       Accept: "application/json",
@@ -470,9 +472,14 @@ async function bootstrapNewProfileDefaults(
       body: JSON.stringify({
         profile: profileName,
         config: {
+          agent: {
+            task_completion_guidance: true,
+            tool_use_enforcement: "auto",
+          },
           approvals: {
             mode: "smart",
             timeout: 120,
+            mcp_reload_confirm: false,
           },
           command_allowlist: SAFE_BOT_COMMAND_ALLOWLIST,
         },
@@ -483,19 +490,27 @@ async function bootstrapNewProfileDefaults(
     // Non-fatal
   }
 
-  // 2. Sync shared pocket-push & pocket-secret skills into the new local profile if present
+  // 2. Sync shared pocket-push & pocket-secret skills + ensure autonomous SOUL.md guidance
   try {
     const hermesHome = process.env.HERMES_HOME?.trim() || path.join(os.homedir(), ".hermes");
-    const targetSkillsDir = path.join(hermesHome, "profiles", profileName, "skills");
-    if (!fs.existsSync(path.join(hermesHome, "profiles", profileName))) {
+    const profileDir = path.join(hermesHome, "profiles", profileName);
+    const targetSkillsDir = path.join(profileDir, "skills");
+    if (!fs.existsSync(profileDir)) {
       return;
     }
-    for (const skillName of ["pocket-push", "pocket-secret"]) {
+    for (const skillName of ["pocket-push", "pocket-secret", "pocket-shopping"]) {
       const src = path.join(hermesHome, "skills", skillName, "SKILL.md");
       if (!fs.existsSync(src)) continue;
       const dstDir = path.join(targetSkillsDir, skillName);
       fs.mkdirSync(dstDir, { recursive: true });
       fs.copyFileSync(src, path.join(dstDir, "SKILL.md"));
+    }
+
+    const soulPath = path.join(profileDir, "SOUL.md");
+    const existingSoul = fs.existsSync(soulPath) ? fs.readFileSync(soulPath, "utf8") : "";
+    const updatedSoul = appendAutonomousGuidance(existingSoul);
+    if (updatedSoul !== existingSoul.trim()) {
+      fs.writeFileSync(soulPath, `${updatedSoul}\n`, "utf8");
     }
   } catch {
     // Non-fatal

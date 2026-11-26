@@ -43,6 +43,7 @@ import type {
   HermesSessionSummary,
   HermesUsageLimitError,
 } from "../../shared/types";
+import { appendAutonomousGuidance } from "../../shared/botAutonomy";
 import { clearBotAvatar, prepareAvatarDataUrl, saveBotAvatar } from "../lib/avatarStore";
 import { evaluateApprovalPolicy, loadAutoApproveSafe } from "../lib/approvalPolicy";
 import {
@@ -81,7 +82,15 @@ import {
 import { hermesWs, type WsConnectionState } from "../lib/hermesWs";
 import { cleanSearchSnippet, PRIVATE_CHAT_TITLE } from "../lib/privateVault";
 import { notifyIfBackgrounded } from "../lib/pushClient";
-import { detectBotSecretRequest, stripSecretRequestTag } from "../lib/secretDetection";
+import {
+  detectBotSecretForm,
+  detectBotVaultRequest,
+  extractProductDeals,
+  stripSecretRequestTag,
+  type DetectedDealCard,
+  type DetectedSecretRequest,
+  type DetectedVaultRequest,
+} from "../lib/secretDetection";
 import {
   EMPTY_CHAT_USAGE,
   formatCompactWindowLabel,
@@ -99,9 +108,11 @@ import {
   ApprovalPromptCard,
   ClarifyPromptCard,
   ManualSecretCard,
+  ProductDealCard,
   SECRET_REQUEST_METHODS,
   SecretPromptCard,
   UsageLimitCard,
+  VaultFormCard,
 } from "./InChatPromptCards";
 import { LimitSheet } from "./LimitSheet";
 import { ModelPickerSheet } from "./ModelPickerSheet";
@@ -355,7 +366,7 @@ export const BotsView: React.FC<BotsViewProps> = ({
       const created = await createProfile({
         name: slug,
         description: createDesc.trim() || undefined,
-        soul: createSoul.trim() || undefined,
+        soul: appendAutonomousGuidance(createSoul.trim()),
         mirror_credentials: true,
         share_auth: true,
       });
@@ -1240,10 +1251,13 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
   const [pendingConnection, setPendingConnection] = useState<HermesConnectionRequest | null>(null);
   const [pendingClarify, setPendingClarify] = useState<HermesServerRequest | null>(null);
   const [pendingSecret, setPendingSecret] = useState<HermesServerRequest | null>(null);
+  const [pendingVaultForm, setPendingVaultForm] = useState<DetectedVaultRequest | null>(null);
   const [manualSecret, setManualSecret] = useState<{
     open: boolean;
+    formTitle?: string;
     initialKey: string;
     promptText?: string;
+    fields?: DetectedSecretRequest[];
   }>({
     open: false,
     initialKey: "",
@@ -1805,16 +1819,23 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
           }
           return next;
         });
-        // Automatically detect when a bot asks for an API key, token, or password and pop up
-        // our secure masked input box pre-filled with the exact variable name.
+        // Automatically detect when a bot asks for a Vault entry (card/address/shop login)
+        // OR a single/multi-field .env secret form and pop up the protected card in chat.
         if (finalText) {
-          const detectedSecret = detectBotSecretRequest(finalText);
-          if (detectedSecret) {
-            setManualSecret({
-              open: true,
-              initialKey: detectedSecret.keyName,
-              promptText: detectedSecret.prompt,
-            });
+          const detectedVault = detectBotVaultRequest(finalText);
+          if (detectedVault) {
+            setPendingVaultForm(detectedVault);
+          } else {
+            const detectedForm = detectBotSecretForm(finalText);
+            if (detectedForm && detectedForm.fields.length > 0) {
+              setManualSecret({
+                open: true,
+                formTitle: detectedForm.title,
+                initialKey: detectedForm.fields[0].keyName,
+                promptText: detectedForm.fields[0].prompt,
+                fields: detectedForm.fields.length > 1 ? detectedForm.fields : undefined,
+              });
+            }
           }
           notifyIfBackgrounded({
             title: visual.label,
@@ -2549,7 +2570,46 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
                         <span>{msg.tool_name || "Werkzeug"}</span>
                       </div>
                     ) : msg.content ? (
-                      <SafeMarkdown text={stripSecretRequestTag(msg.content)} />
+                      <>
+                        {stripSecretRequestTag(msg.content) && (
+                          <SafeMarkdown text={stripSecretRequestTag(msg.content)} />
+                        )}
+                        {msg.role === "assistant" &&
+                          extractProductDeals(msg.content).map((deal, dIdx) => (
+                            <ProductDealCard
+                              key={`${deal.shop}-${deal.title}-${dIdx}`}
+                              deal={deal}
+                              disabled={isStreaming || wsState !== "connected"}
+                              onBuy={(picked: DetectedDealCard) => {
+                                const sid = activeSessionRef.current;
+                                if (!sid || wsState !== "connected" || isStreaming) return;
+                                const buyText = picked.url
+                                  ? `Bitte bestelle ${picked.title} bei ${picked.shop} für ${picked.price} (${picked.url}) und bereite alles bis zur finalen Bestellübersicht vor.`
+                                  : `Bitte bestelle ${picked.title} bei ${picked.shop} für ${picked.price} und bereite alles bis zur finalen Bestellübersicht vor.`;
+                                setMessages((prev) => [
+                                  ...prev,
+                                  {
+                                    id: `u-buy-${Date.now()}`,
+                                    role: "user",
+                                    content: buyText,
+                                    timestamp: Date.now(),
+                                  },
+                                ]);
+                                setIsStreaming(true);
+                                scrollToBottomWithSettle();
+                                void hermesWs
+                                  .call("prompt.submit", {
+                                    session_id: sid,
+                                    profile: profile.name,
+                                    submission_id: randomClientId("sub"),
+                                    text: buyText,
+                                    ...(activeModelOverride ? { model_override: activeModelOverride } : {}),
+                                  })
+                                  .catch(() => setIsStreaming(false));
+                              }}
+                            />
+                          ))}
+                      </>
                     ) : msg.streaming ? (
                       <span style={{ color: "var(--text-muted)" }}>…</span>
                     ) : null}
@@ -2608,30 +2668,85 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
           />
         )}
 
-        {manualSecret.open && (
-          <ManualSecretCard
-            key={manualSecret.initialKey || "manual-secret"}
+        {pendingVaultForm && (
+          <VaultFormCard
             profileName={profile.name}
             botLabel={visual.label}
+            allPublicProfileNames={allProfileNames}
+            isPrivateBot={isPrivateBot}
+            request={pendingVaultForm}
+            onSaved={(safeLabel, kind) => {
+              setPendingVaultForm(null);
+              const kindName =
+                kind === "payment"
+                  ? "Zahlungskarte"
+                  : kind === "address"
+                    ? "Lieferadresse"
+                    : "Shop-Login";
+              appendSystemNotice(
+                `Tresor · ${kindName} (${safeLabel}) verschlüsselt gespeichert – ${visual.label} macht weiter…`
+              );
+              const sid = activeSessionRef.current;
+              if (sid && wsState === "connected") {
+                const handoffText =
+                  `Ich habe ${kindName} (${safeLabel}) soeben verschlüsselt im Hermes-Tresor gespeichert. ` +
+                  `Bitte rufe \`browser_vault\` mit \`action="list"\` auf, fülle das Formular direkt per \`browser_vault(action="fill")\` aus und mache weiter.`;
+                setIsStreaming(true);
+                void hermesWs
+                  .call("prompt.submit", {
+                    session_id: sid,
+                    profile: profile.name,
+                    submission_id: randomClientId("sub"),
+                    text: handoffText,
+                    ...(activeModelOverride ? { model_override: activeModelOverride } : {}),
+                  })
+                  .catch(() => {
+                    setIsStreaming(false);
+                  });
+              }
+            }}
+            onClose={() => setPendingVaultForm(null)}
+          />
+        )}
+
+        {manualSecret.open && (
+          <ManualSecretCard
+            key={
+              manualSecret.fields?.map((f) => f.keyName).join(",") ||
+              manualSecret.initialKey ||
+              "manual-secret"
+            }
+            profileName={profile.name}
+            botLabel={visual.label}
+            formTitle={manualSecret.formTitle}
             initialKey={manualSecret.initialKey}
             promptText={manualSecret.promptText}
-            onSaved={(savedKey, envPathHint) => {
+            fields={manualSecret.fields}
+            onSaved={(savedKeys, envPathHint) => {
               setManualSecret({ open: false, initialKey: "" });
               const envPath =
                 envPathHint ||
                 (profile.name === "default"
                   ? "~/.hermes/.env"
                   : `~/.hermes/profiles/${profile.name}/.env`);
+              const keysSummary = savedKeys.join(", ");
               appendSystemNotice(
-                `Schlüssel „${savedKey}“ sicher in ${envPath} gespeichert – ${visual.label} wird informiert…`
+                savedKeys.length > 1
+                  ? `Gesichertes Formular (${keysSummary}) in ${envPath} gespeichert – ${visual.label} wird informiert…`
+                  : `Schlüssel „${keysSummary}“ sicher in ${envPath} gespeichert – ${visual.label} wird informiert…`
               );
-              // Automatically notify the bot of the exact variable name & .env path (NEVER the secret value!)
+              // Automatically notify the bot of the exact variable names & .env path (NEVER secret values!)
               const sid = activeSessionRef.current;
               if (sid && wsState === "connected") {
+                const formattedKeys = savedKeys.map((k) => `\`${k}\``).join(", ");
                 const handoffText =
-                  `Ich habe den geheimen Wert für \`${savedKey}\` soeben sicher in deiner Profil-.env hinterlegt ` +
-                  `(Schlüssel: \`${savedKey}\`, Datei: \`${envPath}\`, auch für \`$${savedKey}\` freigegeben). ` +
-                  `Bitte lies \`${savedKey}\` direkt aus \`${envPath}\` bzw. der Umgebungsvariable aus und mache direkt weiter – gib den Klartextwert dabei niemals im Chat aus.`;
+                  savedKeys.length > 1
+                    ? `Ich habe das gesicherte Formular soeben vollständig in deiner Profil-.env hinterlegt ` +
+                      `(Schlüssel: ${formattedKeys}, Datei: \`${envPath}\`, auch als Umgebungsvariablen freigegeben). ` +
+                      `Bitte lies die benötigten Werte direkt aus \`${envPath}\` bzw. der Umgebung aus und mache direkt weiter – gib sensible Werte dabei niemals im Chat aus.`
+                    : `Ich habe den geheimen Wert für ${formattedKeys} soeben sicher in deiner Profil-.env hinterlegt ` +
+                      `(Schlüssel: ${formattedKeys}, Datei: \`${envPath}\`, auch für \`$${savedKeys[0]}\` freigegeben). ` +
+                      `Bitte lies ${formattedKeys} direkt aus \`${envPath}\` bzw. der Umgebungsvariable aus und mache direkt weiter – gib den Klartextwert dabei niemals im Chat aus.`;
                 setIsStreaming(true);
                 void hermesWs
                   .call("prompt.submit", {

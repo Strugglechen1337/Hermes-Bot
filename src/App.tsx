@@ -4,6 +4,7 @@ import {
   BellOff,
   Bot,
   CalendarClock,
+  CreditCard,
   Lock,
   LogOut,
   Plug,
@@ -22,6 +23,7 @@ import type {
 } from "../shared/types";
 import { BotsView } from "./components/BotsView";
 import { ConnectorsView } from "./components/ConnectorsView";
+import { CredentialVaultSheet } from "./components/CredentialVaultSheet";
 import { GroupsView } from "./components/GroupsView";
 import { LoginView } from "./components/LoginView";
 import { PrivateVaultSheet } from "./components/PrivateVaultSheet";
@@ -98,6 +100,7 @@ export const App: React.FC = () => {
   const [profilesError, setProfilesError] = useState<string | null>(null);
 
   const [showAccountSheet, setShowAccountSheet] = useState(false);
+  const [showCredentialVault, setShowCredentialVault] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const [pushStatus, setPushStatus] = useState<PushStatusInfo | null>(null);
   const [pushBusy, setPushBusy] = useState(false);
@@ -679,6 +682,19 @@ export const App: React.FC = () => {
         <button
           type="button"
           className="btn full"
+          style={{ marginBottom: 10, borderColor: "rgba(165, 180, 252, 0.34)" }}
+          onClick={() => {
+            setShowAccountSheet(false);
+            setShowCredentialVault(true);
+          }}
+        >
+          <CreditCard size={15} style={{ color: "var(--accent-indigo)" }} />
+          Hermes Tresor (Karten, Adressen &amp; Logins)
+        </button>
+
+        <button
+          type="button"
+          className="btn full"
           style={{ marginBottom: 10, borderColor: "rgba(52, 211, 153, 0.3)" }}
           onClick={() => {
             setShowAccountSheet(false);
@@ -743,6 +759,13 @@ export const App: React.FC = () => {
           setCreateBotTrigger((n) => n + 1);
         }}
         onClose={() => setShowVaultSheet(false)}
+      />
+
+      <CredentialVaultSheet
+        open={showCredentialVault}
+        wsState={wsState}
+        publicProfiles={publicProfiles}
+        onClose={() => setShowCredentialVault(false)}
       />
     </div>
   );

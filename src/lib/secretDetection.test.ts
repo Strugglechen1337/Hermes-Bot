@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { detectBotSecretRequest, stripSecretRequestTag } from "./secretDetection";
+import {
+  detectBotSecretForm,
+  detectBotSecretRequest,
+  detectBotVaultRequest,
+  extractProductDeals,
+  isPlaintextFormFieldKey,
+  stripSecretRequestTag,
+} from "./secretDetection";
 
 describe("secretDetection", () => {
   it("detects explicit [SECRET_REQUEST: KEY | Prompt] tags", () => {
@@ -16,6 +23,78 @@ describe("secretDetection", () => {
         "Ich verbinde mich gern. [SECRET_REQUEST: HOME_ASSISTANT_TOKEN | Prompt]"
       )
     ).toBe("Ich verbinde mich gern.");
+  });
+
+  it("detects multi-field [SECRET_FORM] + [SECRET_REQUEST] bundles and strips all tags", () => {
+    const raw = [
+      "Ich habe das günstigste Angebot gefunden. Bitte gib kurz deine Shop-Daten im gesicherten Formular ein:",
+      "[SECRET_FORM: Shop-Zugangsdaten]",
+      "[SECRET_REQUEST: SHOP_EMAIL | E-Mail-Adresse]",
+      "[SECRET_REQUEST: SHOP_PASSWORD | Shop-Passwort]",
+      "[SECRET_REQUEST: SHIPPING_ADDRESS | Lieferadresse]",
+    ].join("\n");
+
+    const form = detectBotSecretForm(raw);
+    expect(form).not.toBeNull();
+    expect(form?.title).toBe("Shop-Zugangsdaten");
+    expect(form?.explicit).toBe(true);
+    expect(form?.fields.map((f) => f.keyName)).toEqual([
+      "SHOP_EMAIL",
+      "SHOP_PASSWORD",
+      "SHIPPING_ADDRESS",
+    ]);
+    expect(stripSecretRequestTag(raw)).toBe(
+      "Ich habe das günstigste Angebot gefunden. Bitte gib kurz deine Shop-Daten im gesicherten Formular ein:"
+    );
+  });
+
+  it("classifies sensitive vs plaintext form keys safely", () => {
+    expect(isPlaintextFormFieldKey("SHOP_EMAIL")).toBe(true);
+    expect(isPlaintextFormFieldKey("SHIPPING_ADDRESS")).toBe(true);
+    expect(isPlaintextFormFieldKey("SHOP_PASSWORD")).toBe(false);
+    expect(isPlaintextFormFieldKey("HASS_TOKEN")).toBe(false);
+    expect(isPlaintextFormFieldKey("CARD_CVV")).toBe(false);
+    expect(isPlaintextFormFieldKey("PAYMENT_IBAN")).toBe(false);
+  });
+
+  it("detects explicit and natural [VAULT_REQUEST] cards for payment, address, and login", () => {
+    const explicit = detectBotVaultRequest(
+      "Bitte hinterlege deine Karte sicher: [VAULT_REQUEST: payment | Kreditkarte für MediaMarkt]"
+    );
+    expect(explicit).toEqual({
+      kind: "payment",
+      prompt: "Kreditkarte für MediaMarkt",
+      origin: undefined,
+      explicit: true,
+    });
+
+    const login = detectBotVaultRequest(
+      "[VAULT_REQUEST: login | MediaMarkt Konto | https://www.mediamarkt.de]"
+    );
+    expect(login?.kind).toBe("login");
+    expect(login?.origin).toBe("https://www.mediamarkt.de");
+
+    const natural = detectBotVaultRequest(
+      "Die Bestellung steht fertig an der Kasse. Zum Bezahlen fehlt mir noch eine Karte – trag sie bitte ins sichere Formular ein."
+    );
+    expect(natural?.kind).toBe("payment");
+    expect(natural?.explicit).toBe(false);
+  });
+
+  it("extracts [DEAL_CARD] entries and strips them from prose", () => {
+    const raw =
+      "Hier ist der aktuelle Bestpreis:\n[DEAL_CARD: BeispielShop DE | PS5 Spiel (Disc) | 24,99 € | 65,00 € | https://example.com/product]";
+    const deals = extractProductDeals(raw);
+    expect(deals).toEqual([
+      {
+        shop: "BeispielShop DE",
+        title: "PS5 Spiel (Disc)",
+        price: "24,99 €",
+        oldPrice: "65,00 €",
+        url: "https://example.com/product",
+      },
+    ]);
+    expect(stripSecretRequestTag(raw)).toBe("Hier ist der aktuelle Bestpreis:");
   });
 
   it("detects natural German bot requests and extracts explicit or inferred env var names", () => {

@@ -2,15 +2,19 @@ import React, { useMemo, useState } from "react";
 import {
   AlertTriangle,
   Check,
+  CreditCard,
+  ExternalLink,
   Eye,
   EyeOff,
   HelpCircle,
   KeyRound,
   Lock,
+  MapPin,
   RefreshCw,
   Send,
   ShieldAlert,
   ShieldCheck,
+  ShoppingBag,
   Sparkles,
   X,
 } from "lucide-react";
@@ -22,7 +26,19 @@ import type {
   HermesUsageLimitError,
 } from "../../shared/types";
 import { saveProfileSecret } from "../lib/hermesApi";
+import {
+  isPlaintextFormFieldKey,
+  type DetectedDealCard,
+  type DetectedSecretRequest,
+  type DetectedVaultRequest,
+} from "../lib/secretDetection";
 import { formatResetCountdown } from "../lib/usageLimits";
+import {
+  addVaultItem,
+  addVaultItemToProfiles,
+  buildSafeCardLabel,
+  type VaultAddPayload,
+} from "../lib/vaultClient";
 
 // ── 1. Clarify (Interactive Yes/No & Multiple-Choice Card) ────────────────────
 
@@ -571,14 +587,16 @@ export const SecretPromptCard: React.FC<SecretPromptCardProps> = ({
   );
 };
 
-// ── 4. Proactive Inline Manual Secret Box (/secret or + menu) ─────────────────
+// ── 4. Proactive Inline Manual Secret Box & Multi-Field Secure Form ──────────
 
 interface ManualSecretCardProps {
   profileName: string;
   botLabel: string;
+  formTitle?: string;
   initialKey?: string;
   promptText?: string;
-  onSaved: (keyName: string, envPathHint?: string) => void;
+  fields?: DetectedSecretRequest[];
+  onSaved: (savedKeys: string[], envPathHint?: string) => void;
   onClose: () => void;
 }
 
@@ -592,22 +610,70 @@ const COMMON_SECRET_PRESETS = [
 export const ManualSecretCard: React.FC<ManualSecretCardProps> = ({
   profileName,
   botLabel,
+  formTitle,
   initialKey = "",
   promptText,
+  fields,
   onSaved,
   onClose,
 }) => {
+  const isMultiField = Array.isArray(fields) && fields.length > 1;
   const [keyName, setKeyName] = useState(initialKey.toUpperCase());
   const [secretValue, setSecretValue] = useState("");
   const [showValue, setShowValue] = useState(false);
+  const [multiValues, setMultiValues] = useState<Record<string, string>>(() => {
+    const init: Record<string, string> = {};
+    if (Array.isArray(fields)) {
+      for (const f of fields) init[f.keyName] = "";
+    }
+    return init;
+  });
+  const [visibleKeys, setVisibleKeys] = useState<Record<string, boolean>>(() => {
+    const init: Record<string, boolean> = {};
+    if (Array.isArray(fields)) {
+      for (const f of fields) init[f.keyName] = isPlaintextFormFieldKey(f.keyName);
+    }
+    return init;
+  });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const allMultiFilled = isMultiField
+    ? fields.every((f) => Boolean((multiValues[f.keyName] || "").trim()))
+    : false;
+
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
+    if (isMultiField && fields) {
+      const missing = fields.find((f) => !(multiValues[f.keyName] || "").trim());
+      if (missing) {
+        setError(`Bitte fülle das Feld „${missing.prompt || missing.keyName}“ aus.`);
+        return;
+      }
+      setSaving(true);
+      setError(null);
+      try {
+        const savedKeys: string[] = [];
+        let envPathHint: string | undefined;
+        for (const field of fields) {
+          const val = multiValues[field.keyName] || "";
+          const res = await saveProfileSecret(profileName, field.keyName, val);
+          savedKeys.push(field.keyName);
+          if (res.envPathHint) envPathHint = res.envPathHint;
+        }
+        setMultiValues({});
+        onSaved(savedKeys, envPathHint);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Formular konnte nicht gespeichert werden.");
+      } finally {
+        setSaving(false);
+      }
+      return;
+    }
+
     const cleanKey = keyName.trim().toUpperCase().replace(/[^A-Z0-9_]/g, "_");
     if (!/^[A-Z][A-Z0-9_]{1,63}$/.test(cleanKey)) {
-      setError("Bitte gültigen Schlüsselnamen angeben (z. B. HOME_ASSISTANT_TOKEN).");
+      setError("Bitte gültigen Schlüsselnamen angeben (z. B. HASS_TOKEN).");
       return;
     }
     if (!secretValue.trim()) {
@@ -619,7 +685,7 @@ export const ManualSecretCard: React.FC<ManualSecretCardProps> = ({
     try {
       const res = await saveProfileSecret(profileName, cleanKey, secretValue);
       setSecretValue("");
-      onSaved(cleanKey, res.envPathHint);
+      onSaved([cleanKey], res.envPathHint);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Konnte nicht gespeichert werden.");
     } finally {
@@ -632,7 +698,10 @@ export const ManualSecretCard: React.FC<ManualSecretCardProps> = ({
       <div className="prompt-card-header">
         <div className="prompt-card-badge secret">
           <KeyRound size={14} />
-          <span>Passwort / API-Key sicher eingeben</span>
+          <span>
+            {formTitle ||
+              (isMultiField ? "Gesichertes Formular" : "Passwort / API-Key sicher eingeben")}
+          </span>
         </div>
         <button
           type="button"
@@ -646,62 +715,128 @@ export const ManualSecretCard: React.FC<ManualSecretCardProps> = ({
       </div>
 
       <div className="prompt-card-body">
-        <p className="prompt-description">
-          {promptText || (
-            <>
-              Wird direkt im geschützten <code>.env</code>-Speicher von {botLabel} abgelegt und{" "}
-              {botLabel} erfährt direkt den Variablennamen – niemals den Klartext im Chat.
-            </>
-          )}
-        </p>
+        {isMultiField && fields ? (
+          <>
+            <p className="prompt-description">
+              Alle Felder werden direkt und geschützt in der <code>.env</code> von {botLabel}{" "}
+              gespeichert – niemals als Klartext im Chatverlauf.
+            </p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {fields.map((field) => {
+                const isVisible = Boolean(visibleKeys[field.keyName]);
+                return (
+                  <div key={field.keyName}>
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        gap: 8,
+                        marginBottom: 4,
+                        fontSize: "0.78rem",
+                        color: "var(--text-secondary)",
+                      }}
+                    >
+                      <span>{field.prompt || field.keyName}</span>
+                      <code style={{ fontSize: "0.68rem", opacity: 0.72 }}>{field.keyName}</code>
+                    </div>
+                    <div className="secret-input-wrap">
+                      <input
+                        className="prompt-input"
+                        type={isVisible ? "text" : "password"}
+                        value={multiValues[field.keyName] || ""}
+                        onChange={(e) =>
+                          setMultiValues((prev) => ({
+                            ...prev,
+                            [field.keyName]: e.target.value,
+                          }))
+                        }
+                        placeholder={`${field.prompt || field.keyName}…`}
+                        autoComplete="off"
+                        autoCapitalize="none"
+                        spellCheck={false}
+                        style={{ paddingRight: 42 }}
+                        disabled={saving}
+                      />
+                      <button
+                        type="button"
+                        className="secret-eye-btn"
+                        aria-label={isVisible ? "Verbergen" : "Anzeigen"}
+                        onClick={() =>
+                          setVisibleKeys((prev) => ({
+                            ...prev,
+                            [field.keyName]: !prev[field.keyName],
+                          }))
+                        }
+                      >
+                        {isVisible ? <EyeOff size={16} /> : <Eye size={16} />}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        ) : (
+          <>
+            <p className="prompt-description">
+              {promptText || (
+                <>
+                  Wird direkt im geschützten <code>.env</code>-Speicher von {botLabel} abgelegt und{" "}
+                  {botLabel} erfährt direkt den Variablennamen – niemals den Klartext im Chat.
+                </>
+              )}
+            </p>
 
-        <div className="chip-row" style={{ marginBottom: 8 }}>
-          {COMMON_SECRET_PRESETS.map((preset) => (
-            <button
-              key={preset}
-              type="button"
-              className={`chip ${keyName === preset ? "selected" : ""}`}
-              style={{ minHeight: 28, fontSize: "0.72rem", padding: "0 9px" }}
-              onClick={() => setKeyName(preset)}
-            >
-              {preset}
-            </button>
-          ))}
-        </div>
+            <div className="chip-row" style={{ marginBottom: 8 }}>
+              {COMMON_SECRET_PRESETS.map((preset) => (
+                <button
+                  key={preset}
+                  type="button"
+                  className={`chip ${keyName === preset ? "selected" : ""}`}
+                  style={{ minHeight: 28, fontSize: "0.72rem", padding: "0 9px" }}
+                  onClick={() => setKeyName(preset)}
+                >
+                  {preset}
+                </button>
+              ))}
+            </div>
 
-        <input
-          className="prompt-input"
-          value={keyName}
-          onChange={(e) => setKeyName(e.target.value.toUpperCase())}
-          placeholder="Variablenname (z. B. MY_SERVICE_API_KEY)"
-          autoCapitalize="characters"
-          spellCheck={false}
-          style={{ marginBottom: 8 }}
-          disabled={saving}
-        />
+            <input
+              className="prompt-input"
+              value={keyName}
+              onChange={(e) => setKeyName(e.target.value.toUpperCase())}
+              placeholder="Variablenname (z. B. MY_SERVICE_API_KEY)"
+              autoCapitalize="characters"
+              spellCheck={false}
+              style={{ marginBottom: 8 }}
+              disabled={saving}
+            />
 
-        <div className="secret-input-wrap">
-          <input
-            className="prompt-input"
-            type={showValue ? "text" : "password"}
-            value={secretValue}
-            onChange={(e) => setSecretValue(e.target.value)}
-            placeholder="Passwort oder API-Key…"
-            autoComplete="off"
-            autoCapitalize="none"
-            spellCheck={false}
-            style={{ paddingRight: 42 }}
-            disabled={saving}
-          />
-          <button
-            type="button"
-            className="secret-eye-btn"
-            aria-label={showValue ? "Verbergen" : "Anzeigen"}
-            onClick={() => setShowValue((v) => !v)}
-          >
-            {showValue ? <EyeOff size={16} /> : <Eye size={16} />}
-          </button>
-        </div>
+            <div className="secret-input-wrap">
+              <input
+                className="prompt-input"
+                type={showValue ? "text" : "password"}
+                value={secretValue}
+                onChange={(e) => setSecretValue(e.target.value)}
+                placeholder="Passwort oder API-Key…"
+                autoComplete="off"
+                autoCapitalize="none"
+                spellCheck={false}
+                style={{ paddingRight: 42 }}
+                disabled={saving}
+              />
+              <button
+                type="button"
+                className="secret-eye-btn"
+                aria-label={showValue ? "Verbergen" : "Anzeigen"}
+                onClick={() => setShowValue((v) => !v)}
+              >
+                {showValue ? <EyeOff size={16} /> : <Eye size={16} />}
+              </button>
+            </div>
+          </>
+        )}
 
         {error && (
           <div style={{ marginTop: 8, fontSize: "0.8rem", color: "var(--status-err)" }}>
@@ -717,9 +852,17 @@ export const ManualSecretCard: React.FC<ManualSecretCardProps> = ({
         <button
           type="submit"
           className="btn sm primary"
-          disabled={saving || !keyName.trim() || !secretValue.trim()}
+          disabled={
+            saving ||
+            (isMultiField ? !allMultiFilled : !keyName.trim() || !secretValue.trim())
+          }
         >
-          <Lock size={13} /> {saving ? "Speichere…" : "Sicher speichern & weiter"}
+          <Lock size={13} />{" "}
+          {saving
+            ? "Speichere…"
+            : isMultiField
+              ? "Formular sicher speichern & weiter"
+              : "Sicher speichern & weiter"}
         </button>
       </div>
     </form>
@@ -794,6 +937,401 @@ export const UsageLimitCard: React.FC<UsageLimitCardProps> = ({
           <span>Anderes Modell wählen…</span>
         </button>
       </div>
+    </div>
+  );
+};
+
+// ── 6. Native Encrypted Hermes Vault In-Chat Form (Payment / Address / Login) ─
+
+interface VaultFormCardProps {
+  profileName: string;
+  botLabel: string;
+  allPublicProfileNames?: string[];
+  isPrivateBot?: boolean;
+  request: DetectedVaultRequest;
+  onSaved: (safeSummary: string, kind: DetectedVaultRequest["kind"]) => void;
+  onClose: () => void;
+}
+
+export const VaultFormCard: React.FC<VaultFormCardProps> = ({
+  profileName,
+  botLabel,
+  allPublicProfileNames = [],
+  isPrivateBot = false,
+  request,
+  onSaved,
+  onClose,
+}) => {
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [syncAllBots, setSyncAllBots] = useState(!isPrivateBot && allPublicProfileNames.length > 1);
+
+  // Payment
+  const [cardHolder, setCardHolder] = useState("");
+  const [cardNumber, setCardNumber] = useState("");
+  const [expMonth, setExpMonth] = useState("");
+  const [expYear, setExpYear] = useState("");
+  const [cvc, setCvc] = useState("");
+  const [billingZip, setBillingZip] = useState("");
+
+  // Address
+  const [addrLabel, setAddrLabel] = useState("Lieferadresse");
+  const [addrLine1, setAddrLine1] = useState("");
+  const [addrLine2, setAddrLine2] = useState("");
+  const [addrZip, setAddrZip] = useState("");
+  const [addrCity, setAddrCity] = useState("");
+  const [addrCountry, setAddrCountry] = useState("Deutschland");
+
+  // Login
+  const [loginOrigin, setLoginOrigin] = useState(request.origin || "");
+  const [loginIdentifier, setLoginIdentifier] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
+  const [showPass, setShowPass] = useState(false);
+
+  const badgeTitle =
+    request.kind === "payment"
+      ? "Tresor · Zahlungskarte"
+      : request.kind === "address"
+        ? "Tresor · Lieferadresse"
+        : "Tresor · Shop-Login";
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+
+    let payload: VaultAddPayload | null = null;
+    if (request.kind === "payment") {
+      const digits = cardNumber.replace(/\D+/g, "");
+      if (digits.length < 12 || !expMonth.trim() || !expYear.trim() || !cvc.trim()) {
+        setError("Bitte Kartennummer, Monat (MM), Jahr (JJJJ) und CVC eingeben.");
+        return;
+      }
+      const normYear = expYear.trim().length === 2 ? `20${expYear.trim()}` : expYear.trim();
+      payload = {
+        kind: "payment",
+        label: buildSafeCardLabel(digits),
+        secret: {
+          card_number: digits,
+          ...(cardHolder.trim() ? { cardholder_name: cardHolder.trim() } : {}),
+          exp_month: expMonth.trim().padStart(2, "0"),
+          exp_year: normYear,
+          cvc: cvc.trim(),
+          ...(billingZip.trim() ? { billing_postal_code: billingZip.trim() } : {}),
+        },
+      };
+    } else if (request.kind === "address") {
+      if (!addrLine1.trim() || !addrZip.trim() || !addrCity.trim() || !addrCountry.trim()) {
+        setError("Bitte Straße & Hausnummer, PLZ, Stadt und Land ausfüllen.");
+        return;
+      }
+      payload = {
+        kind: "address",
+        label: addrLabel.trim() || "Lieferadresse",
+        secret: {
+          address_line1: addrLine1.trim(),
+          ...(addrLine2.trim() ? { address_line2: addrLine2.trim() } : {}),
+          postal_code: addrZip.trim(),
+          city: addrCity.trim(),
+          country: addrCountry.trim(),
+        },
+      };
+    } else {
+      const rawOrigin = loginOrigin.trim();
+      if (!rawOrigin || !loginIdentifier.trim() || !loginPassword) {
+        setError("Bitte Shop-Website, E-Mail/Benutzername und Passwort eingeben.");
+        return;
+      }
+      const cleanOrigin = rawOrigin.startsWith("http") ? rawOrigin : `https://${rawOrigin}`;
+      payload = {
+        kind: "login",
+        label: rawOrigin.replace(/^https?:\/\//i, "").replace(/\/.*$/, ""),
+        origin: cleanOrigin,
+        secret: {
+          identifier_type: loginIdentifier.includes("@") ? "email" : "username",
+          identifier: loginIdentifier.trim(),
+          password: loginPassword,
+        },
+      };
+    }
+
+    setSaving(true);
+    try {
+      if (syncAllBots && !isPrivateBot && allPublicProfileNames.length > 0) {
+        const targets = Array.from(new Set([profileName, "default", ...allPublicProfileNames]));
+        await addVaultItemToProfiles(targets, payload);
+      } else {
+        await addVaultItem(profileName, payload);
+      }
+      setCardNumber("");
+      setCvc("");
+      setLoginPassword("");
+      onSaved(payload.label, request.kind);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Konnte nicht im Tresor gespeichert werden.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <form className="prompt-card secret" onSubmit={(e) => void handleSubmit(e)} autoComplete="off">
+      <div className="prompt-card-header">
+        <div className="prompt-card-badge secret">
+          {request.kind === "payment" ? (
+            <CreditCard size={14} />
+          ) : request.kind === "address" ? (
+            <MapPin size={14} />
+          ) : (
+            <KeyRound size={14} />
+          )}
+          <span>{badgeTitle}</span>
+        </div>
+        <button
+          type="button"
+          className="prompt-card-dismiss"
+          aria-label="Schließen"
+          disabled={saving}
+          onClick={onClose}
+        >
+          <X size={15} />
+        </button>
+      </div>
+
+      <div className="prompt-card-body">
+        <p className="prompt-description">
+          {request.prompt} · Wird verschlüsselt im Hermes-Tresor abgelegt – {botLabel} füllt damit
+          Bestellformulare direkt im Browser aus, ohne jemals Klartextdaten im Chat zu sehen.
+        </p>
+
+        {request.kind === "payment" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <input
+              className="prompt-input"
+              placeholder="Karteninhaber"
+              value={cardHolder}
+              onChange={(e) => setCardHolder(e.target.value)}
+              disabled={saving}
+            />
+            <input
+              className="prompt-input"
+              inputMode="numeric"
+              placeholder="Kartennummer"
+              value={cardNumber}
+              onChange={(e) => setCardNumber(e.target.value)}
+              disabled={saving}
+            />
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+              <input
+                className="prompt-input"
+                inputMode="numeric"
+                placeholder="MM"
+                maxLength={2}
+                value={expMonth}
+                onChange={(e) => setExpMonth(e.target.value)}
+                disabled={saving}
+              />
+              <input
+                className="prompt-input"
+                inputMode="numeric"
+                placeholder="JJJJ"
+                maxLength={4}
+                value={expYear}
+                onChange={(e) => setExpYear(e.target.value)}
+                disabled={saving}
+              />
+              <input
+                className="prompt-input"
+                type="password"
+                inputMode="numeric"
+                placeholder="CVC"
+                maxLength={4}
+                value={cvc}
+                onChange={(e) => setCvc(e.target.value)}
+                disabled={saving}
+              />
+            </div>
+            <input
+              className="prompt-input"
+              inputMode="numeric"
+              placeholder="Rechnungs-PLZ (optional)"
+              value={billingZip}
+              onChange={(e) => setBillingZip(e.target.value)}
+              disabled={saving}
+            />
+          </div>
+        )}
+
+        {request.kind === "address" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <input
+              className="prompt-input"
+              placeholder="Bezeichnung (z. B. Zuhause)"
+              value={addrLabel}
+              onChange={(e) => setAddrLabel(e.target.value)}
+              disabled={saving}
+            />
+            <input
+              className="prompt-input"
+              placeholder="Straße und Hausnummer"
+              value={addrLine1}
+              onChange={(e) => setAddrLine1(e.target.value)}
+              disabled={saving}
+            />
+            <input
+              className="prompt-input"
+              placeholder="Adresszusatz (optional)"
+              value={addrLine2}
+              onChange={(e) => setAddrLine2(e.target.value)}
+              disabled={saving}
+            />
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", gap: 8 }}>
+              <input
+                className="prompt-input"
+                placeholder="PLZ"
+                value={addrZip}
+                onChange={(e) => setAddrZip(e.target.value)}
+                disabled={saving}
+              />
+              <input
+                className="prompt-input"
+                placeholder="Stadt"
+                value={addrCity}
+                onChange={(e) => setAddrCity(e.target.value)}
+                disabled={saving}
+              />
+            </div>
+            <input
+              className="prompt-input"
+              placeholder="Land"
+              value={addrCountry}
+              onChange={(e) => setAddrCountry(e.target.value)}
+              disabled={saving}
+            />
+          </div>
+        )}
+
+        {request.kind === "login" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <input
+              className="prompt-input"
+              placeholder="Shop-Website (z. B. https://www.mediamarkt.de)"
+              value={loginOrigin}
+              onChange={(e) => setLoginOrigin(e.target.value)}
+              autoCapitalize="none"
+              disabled={saving}
+            />
+            <input
+              className="prompt-input"
+              placeholder="E-Mail oder Benutzername"
+              value={loginIdentifier}
+              onChange={(e) => setLoginIdentifier(e.target.value)}
+              autoCapitalize="none"
+              disabled={saving}
+            />
+            <div className="secret-input-wrap">
+              <input
+                className="prompt-input"
+                type={showPass ? "text" : "password"}
+                placeholder="Passwort"
+                value={loginPassword}
+                onChange={(e) => setLoginPassword(e.target.value)}
+                style={{ paddingRight: 42 }}
+                disabled={saving}
+              />
+              <button
+                type="button"
+                className="secret-eye-btn"
+                aria-label={showPass ? "Verbergen" : "Anzeigen"}
+                onClick={() => setShowPass((v) => !v)}
+              >
+                {showPass ? <EyeOff size={16} /> : <Eye size={16} />}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {!isPrivateBot && allPublicProfileNames.length > 1 && (
+          <label
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              marginTop: 10,
+              fontSize: "0.76rem",
+              color: "var(--text-secondary)",
+              cursor: "pointer",
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={syncAllBots}
+              onChange={(e) => setSyncAllBots(e.target.checked)}
+              disabled={saving}
+            />
+            <span>Auch für alle anderen Bots im Tresor speichern</span>
+          </label>
+        )}
+
+        {error && (
+          <div style={{ marginTop: 8, fontSize: "0.8rem", color: "var(--status-err)" }}>
+            {error}
+          </div>
+        )}
+      </div>
+
+      <div className="prompt-card-footer">
+        <button type="button" className="btn sm" disabled={saving} onClick={onClose}>
+          Abbrechen
+        </button>
+        <button type="submit" className="btn sm primary" disabled={saving}>
+          <Lock size={13} /> {saving ? "Speichere im Tresor…" : "Im Tresor speichern & weiter"}
+        </button>
+      </div>
+    </form>
+  );
+};
+
+// ── 7. Interactive Product Deal Card inside Chat Messages ────────────────────
+
+interface ProductDealCardProps {
+  deal: DetectedDealCard;
+  disabled?: boolean;
+  onBuy: (deal: DetectedDealCard) => void;
+}
+
+export const ProductDealCard: React.FC<ProductDealCardProps> = ({ deal, disabled, onBuy }) => {
+  return (
+    <div className="deal-card">
+      <div className="deal-card-top">
+        <span className="deal-card-shop">
+          <ShoppingBag size={13} />
+          <span>{deal.shop}</span>
+        </span>
+        {deal.url && (
+          <a
+            href={deal.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="deal-card-ext"
+            aria-label={`Angebot bei ${deal.shop} öffnen`}
+          >
+            <ExternalLink size={13} />
+          </a>
+        )}
+      </div>
+      <div className="deal-card-title">{deal.title}</div>
+      <div className="deal-card-prices">
+        <span className="deal-card-price">{deal.price}</span>
+        {deal.oldPrice && <span className="deal-card-old">{deal.oldPrice}</span>}
+      </div>
+      <button
+        type="button"
+        className="btn primary full deal-card-buy"
+        disabled={disabled}
+        onClick={() => onBuy(deal)}
+      >
+        Jetzt kaufen
+      </button>
     </div>
   );
 };

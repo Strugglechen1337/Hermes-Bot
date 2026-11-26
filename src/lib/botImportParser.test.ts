@@ -37,6 +37,7 @@ describe("botImportParser", () => {
     expect(soulDoc).toContain("## Importierte Erinnerungen");
     expect(soulDoc).toContain("- Trainiert 3x pro Woche");
     expect(soulDoc).toContain("Standardmäßig pausiert");
+    expect(soulDoc).toContain("## Eigenständige Arbeitsweise (Hermes Pocket)");
   });
 
   it("falls back cleanly to Markdown/free-text export", () => {

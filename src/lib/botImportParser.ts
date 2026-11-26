@@ -2,6 +2,7 @@
  * Clean, user-driven Bot Import parser for migrating a bot's role, instructions,
  * exported memories, and optional routine drafts (always imported PAUSED) into Hermes.
  */
+import { appendAutonomousGuidance } from "../../shared/botAutonomy";
 
 export interface ImportedRoutineDraft {
   name: string;
@@ -205,5 +206,5 @@ export function buildHermesSoulDocument(parsed: ParsedBotImport): string {
     );
   }
 
-  return sections.join("\n\n").trim();
+  return appendAutonomousGuidance(sections.join("\n\n").trim());
 }
