@@ -7,9 +7,10 @@ import {
   isSameOriginRequest,
 } from "./security.js";
 
-const MAX_BODY_BYTES = 2 * 1024 * 1024; // 2 MiB limit for API payloads
+const MAX_BODY_BYTES = 2 * 1024 * 1024; // 2 MiB limit for JSON API payloads
+const MAX_UPLOAD_BODY_BYTES = 18 * 1024 * 1024; // 18 MiB limit for /api/chat/file-upload (Hermes cap: 16 MiB)
 
-async function readBody(req: IncomingMessage): Promise<Buffer | undefined> {
+async function readBody(req: IncomingMessage, maxBytes = MAX_BODY_BYTES): Promise<Buffer | undefined> {
   const method = (req.method || "GET").toUpperCase();
   if (method === "GET" || method === "HEAD") return undefined;
 
@@ -18,7 +19,7 @@ async function readBody(req: IncomingMessage): Promise<Buffer | undefined> {
   for await (const chunk of req) {
     const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     total += buf.length;
-    if (total > MAX_BODY_BYTES) {
+    if (total > maxBytes) {
       throw new Error("BODY_TOO_LARGE");
     }
     chunks.push(buf);
@@ -69,8 +70,9 @@ export async function handleHermesHttpProxy(
   }
 
   let body: Buffer | undefined;
+  const maxBytes = pathname === "/api/chat/file-upload" ? MAX_UPLOAD_BODY_BYTES : MAX_BODY_BYTES;
   try {
-    body = await readBody(req);
+    body = await readBody(req, maxBytes);
   } catch (err) {
     if (err instanceof Error && err.message === "BODY_TOO_LARGE") {
       sendJson(res, 413, { error: "payload_too_large", detail: "Anfrage zu groß." });

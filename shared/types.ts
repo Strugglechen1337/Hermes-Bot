@@ -54,6 +54,12 @@ export interface HermesSessionSummary {
   preview?: string | null;
 }
 
+export interface HermesChatAttachmentPreview {
+  name: string;
+  isImage: boolean;
+  previewUrl?: string;
+}
+
 export interface HermesChatMessage {
   id?: string | number;
   row_id?: number;
@@ -65,6 +71,7 @@ export interface HermesChatMessage {
   display_kind?: string | null;
   streaming?: boolean;
   error?: string | null;
+  attachments?: HermesChatAttachmentPreview[];
 }
 
 export interface HermesRoomMember {

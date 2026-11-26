@@ -248,6 +248,85 @@ export async function deleteSession(sessionId: string, profile?: string): Promis
   });
 }
 
+export async function uploadChatFile(
+  file: File,
+  profile?: string
+): Promise<{
+  ok: boolean;
+  path: string;
+  size: number;
+  staged_upload?: Record<string, unknown>;
+}> {
+  const params = new URLSearchParams();
+  if (profile) params.set("profile", profile);
+  const query = params.toString() ? `?${params.toString()}` : "";
+
+  const form = new FormData();
+  form.append("file", file, file.name);
+
+  const res = await fetch(`/api/chat/file-upload${query}`, {
+    method: "POST",
+    credentials: "same-origin",
+    body: form,
+  });
+
+  const text = await res.text();
+  let parsed: unknown = null;
+  if (text) {
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      parsed = null;
+    }
+  }
+  if (!res.ok) {
+    const errObj = (parsed && typeof parsed === "object" ? parsed : {}) as Record<string, unknown>;
+    const detail =
+      (typeof errObj.detail === "string" && errObj.detail) ||
+      (typeof errObj.message === "string" && errObj.message) ||
+      `Upload fehlgeschlagen (HTTP ${res.status})`;
+    throw new ApiError(detail, res.status);
+  }
+  return parsed as {
+    ok: boolean;
+    path: string;
+    size: number;
+    staged_upload?: Record<string, unknown>;
+  };
+}
+
+/**
+ * Scales large camera/iPhone images cleanly to max 1600px JPEG data URL so they
+ * transfer fast over Tailscale and work reliably with Hermes image.attach_bytes.
+ */
+export async function prepareChatImageDataUrl(file: File, maxDim = 1600): Promise<string> {
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const el = new Image();
+      el.onload = () => resolve(el);
+      el.onerror = () => reject(new Error(`Bild „${file.name}“ konnte nicht gelesen werden.`));
+      el.src = objectUrl;
+    });
+
+    const srcW = img.naturalWidth || img.width;
+    const srcH = img.naturalHeight || img.height;
+    const scale = Math.min(1, maxDim / Math.max(srcW, srcH, 1));
+    const width = Math.max(1, Math.round(srcW * scale));
+    const height = Math.max(1, Math.round(srcH * scale));
+
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Canvas nicht verfügbar.");
+    ctx.drawImage(img, 0, 0, width, height);
+    return canvas.toDataURL("image/jpeg", 0.86);
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
 // ── Routines (Cron) ───────────────────────────────────────────────────────────
 
 export async function fetchCronJobs(profile = "all"): Promise<HermesCronJob[]> {

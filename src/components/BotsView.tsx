@@ -5,9 +5,12 @@ import {
   Camera,
   Check,
   ChevronLeft,
+  FileText,
   History,
+  Image as ImageIcon,
   MessageSquarePlus,
   MoreHorizontal,
+  Paperclip,
   Plug,
   Plus,
   RefreshCw,
@@ -43,8 +46,10 @@ import {
   fetchSessionMessages,
   fetchSessions,
   normalizeMessages,
+  prepareChatImageDataUrl,
   updateProfileDescription,
   updateProfileSoul,
+  uploadChatFile,
 } from "../lib/hermesApi";
 import { hermesWs, type WsConnectionState } from "../lib/hermesWs";
 import { BotAvatar } from "./BotAvatar";
@@ -766,6 +771,13 @@ interface DirectChatViewProps {
   onOpenConnectors?: () => void;
 }
 
+interface QueuedAttachment {
+  id: string;
+  file: File;
+  isImage: boolean;
+  previewUrl?: string;
+}
+
 const DirectChatView: React.FC<DirectChatViewProps> = ({
   profile,
   avatarUrl,
@@ -784,6 +796,8 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
   const [chatError, setChatError] = useState<string | null>(null);
 
   const [input, setInput] = useState("");
+  const [attachments, setAttachments] = useState<QueuedAttachment[]>([]);
+  const [uploadingAttachments, setUploadingAttachments] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
   const [liveStatus, setLiveStatus] = useState<string | null>(null);
   const [activeTool, setActiveTool] = useState<string | null>(null);
@@ -799,6 +813,8 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const imagePickerRef = useRef<HTMLInputElement | null>(null);
+  const filePickerRef = useRef<HTMLInputElement | null>(null);
   const activeSessionRef = useRef<string | null>(null);
   const attachedOnWsRef = useRef<boolean>(false);
   const execGenerationRef = useRef<number>(0);
@@ -1099,9 +1115,33 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
     attachedOnWsRef.current = false;
   }
 
+  function handleAddFiles(fileList: FileList | null, forceImage = false) {
+    if (!fileList || fileList.length === 0) return;
+    const added: QueuedAttachment[] = [];
+    for (const file of Array.from(fileList).slice(0, 6)) {
+      const isImage = forceImage || file.type.startsWith("image/");
+      added.push({
+        id: randomClientId("att"),
+        file,
+        isImage,
+        previewUrl: isImage ? URL.createObjectURL(file) : undefined,
+      });
+    }
+    setAttachments((prev) => [...prev, ...added].slice(0, 8));
+  }
+
+  function removeAttachment(id: string) {
+    setAttachments((prev) => {
+      const target = prev.find((a) => a.id === id);
+      if (target?.previewUrl) URL.revokeObjectURL(target.previewUrl);
+      return prev.filter((a) => a.id !== id);
+    });
+  }
+
   async function handleSend() {
     const text = input.trim();
-    if (!text) return;
+    const pendingFiles = [...attachments];
+    if (!text && pendingFiles.length === 0) return;
     if (wsState !== "connected") {
       setChatError("Keine Live-Verbindung zum Hermes-Gateway. Bitte kurz warten.");
       return;
@@ -1109,6 +1149,7 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
 
     setChatError(null);
     setInput("");
+    setAttachments([]);
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
     }
@@ -1133,7 +1174,7 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
         }
         attachedOnWsRef.current = true;
         setActiveSessionId(sid);
-        setActiveTitle(text.slice(0, 48));
+        setActiveTitle((text || pendingFiles[0]?.file.name || "Chat").slice(0, 48));
         void refreshSessionsList(false);
       } else if (!attachedOnWsRef.current) {
         const resumed = await hermesWs.call<{
@@ -1151,6 +1192,62 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
         attachedOnWsRef.current = true;
       }
 
+      // Stage any selected images and files natively in Hermes before prompt.submit
+      const imageAttachments: Array<{ path: string; mime: string }> = [];
+      const fileRefs: string[] = [];
+
+      if (pendingFiles.length > 0) {
+        setUploadingAttachments(true);
+        for (const item of pendingFiles) {
+          if (item.isImage) {
+            const dataUrl = await prepareChatImageDataUrl(item.file, 1600);
+            const staged = await hermesWs.call<{ path?: string; mime?: string }>(
+              "image.attach_bytes",
+              {
+                session_id: sid,
+                profile: profile.name,
+                content_base64: dataUrl,
+                filename: item.file.name || "photo.jpg",
+              },
+              30_000
+            );
+            if (staged?.path) {
+              imageAttachments.push({
+                path: staged.path,
+                mime: staged.mime || "image/jpeg",
+              });
+            }
+          } else {
+            const uploaded = await uploadChatFile(item.file, profile.name);
+            const attached = await hermesWs.call<{ ref_text?: string; path?: string }>(
+              "file.attach",
+              {
+                session_id: sid,
+                profile: profile.name,
+                ...(uploaded.staged_upload
+                  ? { staged_upload: uploaded.staged_upload }
+                  : { path: uploaded.path }),
+                name: item.file.name,
+              },
+              30_000
+            );
+            if (attached?.ref_text) {
+              fileRefs.push(attached.ref_text);
+            } else if (uploaded.path) {
+              fileRefs.push(`[Datei: ${item.file.name} (${uploaded.path})]`);
+            }
+          }
+        }
+        setUploadingAttachments(false);
+      }
+
+      const combinedText = [
+        ...fileRefs,
+        text || (imageAttachments.length > 0 ? "Bitte schau dir dieses Bild an." : ""),
+      ]
+        .filter(Boolean)
+        .join("\n\n");
+
       setMessages((prev) => [
         ...prev,
         {
@@ -1158,6 +1255,11 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
           role: "user",
           content: text,
           timestamp: Date.now(),
+          attachments: pendingFiles.map((a) => ({
+            name: a.file.name,
+            isImage: a.isImage,
+            previewUrl: a.previewUrl,
+          })),
         },
       ]);
       appendedOptimistic = true;
@@ -1168,14 +1270,17 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
         session_id: sid,
         profile: profile.name,
         submission_id: randomClientId("sub"),
-        text,
+        text: combinedText,
+        ...(imageAttachments.length > 0 ? { attachments: imageAttachments } : {}),
       });
     } catch (err) {
+      setUploadingAttachments(false);
       setIsStreaming(false);
       if (appendedOptimistic) {
         setMessages((prev) => prev.filter((m) => m.id !== optimisticId));
-        setInput(text);
       }
+      setInput(text);
+      if (pendingFiles.length > 0) setAttachments(pendingFiles);
       setChatError(err instanceof Error ? err.message : "Nachricht konnte nicht gesendet werden.");
     }
   }
@@ -1336,6 +1441,25 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
                     </div>
                   )}
                   <div className="msg-bubble">
+                    {msg.attachments && msg.attachments.length > 0 && (
+                      <div className="msg-attachments">
+                        {msg.attachments.map((att, attIdx) =>
+                          att.isImage && att.previewUrl ? (
+                            <img
+                              key={attIdx}
+                              src={att.previewUrl}
+                              alt={att.name}
+                              className="msg-attachment-img"
+                            />
+                          ) : (
+                            <span key={attIdx} className="msg-attachment-file">
+                              <FileText size={14} />
+                              {att.name}
+                            </span>
+                          )
+                        )}
+                      </div>
+                    )}
                     {msg.reasoning && (
                       <details className="reasoning-box">
                         <summary>Gedankengang</summary>
@@ -1453,11 +1577,38 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
       </div>
 
       <div className="composer-wrap">
+        {attachments.length > 0 && (
+          <div className="attachment-tray">
+            {attachments.map((att) => (
+              <div key={att.id} className="attachment-chip">
+                {att.isImage && att.previewUrl ? (
+                  <img
+                    src={att.previewUrl}
+                    alt={att.file.name}
+                    className="attachment-chip-thumb"
+                  />
+                ) : (
+                  <FileText size={16} style={{ flexShrink: 0, color: "var(--accent-indigo)" }} />
+                )}
+                <span className="attachment-chip-name">{att.file.name}</span>
+                <button
+                  type="button"
+                  className="attachment-chip-remove"
+                  aria-label="Anhang entfernen"
+                  onClick={() => removeAttachment(att.id)}
+                >
+                  <X size={12} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
         <div className="composer-box">
           <button
             type="button"
             className="composer-plus-btn"
-            aria-label="Aktionen"
+            aria-label="Anhang oder Aktionen"
             onClick={() => setShowActionsSheet(true)}
           >
             <Plus size={19} />
@@ -1475,10 +1626,12 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
-                if (!isStreaming) void handleSend();
+                if (!isStreaming && !uploadingAttachments) void handleSend();
               }
             }}
-            placeholder={`${visual.label} fragen`}
+            placeholder={
+              uploadingAttachments ? "Lade Anhang hoch…" : `${visual.label} fragen`
+            }
           />
           {isStreaming ? (
             <button
@@ -1494,7 +1647,11 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
               type="button"
               className="send-btn"
               aria-label="Nachricht senden"
-              disabled={!input.trim() || wsState !== "connected"}
+              disabled={
+                uploadingAttachments ||
+                (!input.trim() && attachments.length === 0) ||
+                wsState !== "connected"
+              }
               onClick={() => void handleSend()}
             >
               <ArrowUp size={18} strokeWidth={2.5} />
@@ -1502,6 +1659,28 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
           )}
         </div>
       </div>
+
+      <input
+        ref={imagePickerRef}
+        type="file"
+        accept="image/*"
+        multiple
+        style={{ display: "none" }}
+        onChange={(e) => {
+          handleAddFiles(e.target.files, true);
+          e.target.value = "";
+        }}
+      />
+      <input
+        ref={filePickerRef}
+        type="file"
+        multiple
+        style={{ display: "none" }}
+        onChange={(e) => {
+          handleAddFiles(e.target.files, false);
+          e.target.value = "";
+        }}
+      />
 
       <Sheet open={showActionsSheet} onClose={() => setShowActionsSheet(false)}>
         <div className="sheet-header">
@@ -1517,6 +1696,26 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
         </div>
 
         <div className="card-stack">
+          <button
+            type="button"
+            className="btn primary full"
+            onClick={() => {
+              setShowActionsSheet(false);
+              imagePickerRef.current?.click();
+            }}
+          >
+            <ImageIcon size={17} /> Foto / Bild senden
+          </button>
+          <button
+            type="button"
+            className="btn full"
+            onClick={() => {
+              setShowActionsSheet(false);
+              filePickerRef.current?.click();
+            }}
+          >
+            <Paperclip size={17} /> Datei oder PDF senden
+          </button>
           <button
             type="button"
             className="btn full"

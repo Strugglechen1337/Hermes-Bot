@@ -18,6 +18,7 @@ describe("isAllowedHermesPath", () => {
     expect(isAllowedHermesPath("PUT", "/api/profiles/coach/description")).toBe(true);
     expect(isAllowedHermesPath("GET", "/api/sessions")).toBe(true);
     expect(isAllowedHermesPath("GET", "/api/sessions/abc-123/messages")).toBe(true);
+    expect(isAllowedHermesPath("POST", "/api/chat/file-upload")).toBe(true);
     expect(isAllowedHermesPath("GET", "/api/cron/jobs")).toBe(true);
     expect(isAllowedHermesPath("POST", "/api/cron/jobs/job1/pause")).toBe(true);
     expect(isAllowedHermesPath("POST", "/api/cron/jobs/job1/resume")).toBe(true);

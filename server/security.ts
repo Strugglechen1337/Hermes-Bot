@@ -25,6 +25,7 @@ const ALLOWED_HTTP_RULES: Array<{ methods: Set<string>; pattern: RegExp }> = [
   { methods: new Set(["GET", "PATCH", "DELETE"]), pattern: /^\/api\/sessions\/[^/]+$/ },
   { methods: new Set(["GET"]), pattern: /^\/api\/sessions\/[^/]+\/messages$/ },
   { methods: new Set(["GET"]), pattern: /^\/api\/sessions\/[^/]+\/timeline$/ },
+  { methods: new Set(["POST"]), pattern: /^\/api\/chat\/file-upload$/ },
 
   // Routines (cron)
   { methods: new Set(["GET", "POST"]), pattern: /^\/api\/cron\/jobs$/ },
