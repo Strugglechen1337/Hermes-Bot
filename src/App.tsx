@@ -1,0 +1,360 @@
+import React, { useCallback, useEffect, useState } from "react";
+import {
+  Bot,
+  CalendarClock,
+  LogOut,
+  Mail,
+  Smartphone,
+  User,
+  Users,
+  Wifi,
+  WifiOff,
+  X,
+} from "lucide-react";
+import type {
+  HermesAuthUser,
+  HermesProfile,
+  HermesStatusResponse,
+} from "../shared/types";
+import { BotsView } from "./components/BotsView";
+import { EmailView } from "./components/EmailView";
+import { GroupsView } from "./components/GroupsView";
+import { LoginView } from "./components/LoginView";
+import { RoutinesView } from "./components/RoutinesView";
+import {
+  fetchCurrentUser,
+  fetchProfiles,
+  fetchStatus,
+  logout,
+} from "./lib/hermesApi";
+import { hermesWs, type WsConnectionState } from "./lib/hermesWs";
+
+type TabKey = "bots" | "groups" | "routines" | "email";
+
+const TAB_TITLES: Record<TabKey, string> = {
+  bots: "Hermes Pocket",
+  groups: "Gruppen",
+  routines: "Routinen",
+  email: "E-Mail",
+};
+
+export const App: React.FC = () => {
+  const [booting, setBooting] = useState(true);
+  const [status, setStatus] = useState<HermesStatusResponse | null>(null);
+  const [statusError, setStatusError] = useState<string | null>(null);
+  const [user, setUser] = useState<HermesAuthUser | null>(null);
+  const [wsState, setWsState] = useState<WsConnectionState>("disconnected");
+
+  const [tab, setTab] = useState<TabKey>("bots");
+  const [selectedBotName, setSelectedBotName] = useState<string | null>(null);
+  const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null);
+
+  const [profiles, setProfiles] = useState<HermesProfile[]>([]);
+  const [profilesLoading, setProfilesLoading] = useState(false);
+  const [profilesError, setProfilesError] = useState<string | null>(null);
+
+  const [showAccountSheet, setShowAccountSheet] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
+
+  const loadProfiles = useCallback(async () => {
+    setProfilesLoading(true);
+    setProfilesError(null);
+    try {
+      const list = await fetchProfiles();
+      setProfiles(list);
+    } catch (err) {
+      setProfilesError(
+        err instanceof Error ? err.message : "Hermes-Profile konnten nicht geladen werden."
+      );
+    } finally {
+      setProfilesLoading(false);
+    }
+  }, []);
+
+  const bootstrap = useCallback(async () => {
+    setBooting(true);
+    setStatusError(null);
+    try {
+      const [srvStatus, me] = await Promise.all([fetchStatus(), fetchCurrentUser()]);
+      setStatus(srvStatus);
+      setUser(me);
+      if (me || !srvStatus.auth_required) {
+        hermesWs.connect();
+        await loadProfiles();
+      } else {
+        hermesWs.disconnect();
+      }
+    } catch (err) {
+      setStatusError(
+        err instanceof Error
+          ? err.message
+          : "Hermes-Server ist aktuell nicht erreichbar."
+      );
+      setUser(null);
+      hermesWs.disconnect();
+    } finally {
+      setBooting(false);
+    }
+  }, [loadProfiles]);
+
+  useEffect(() => {
+    void bootstrap();
+  }, [bootstrap]);
+
+  useEffect(() => {
+    return hermesWs.onStateChange((next) => {
+      setWsState(next);
+      if (next === "unauthorized") {
+        setUser(null);
+      }
+    });
+  }, []);
+
+  async function handleLogout() {
+    setLoggingOut(true);
+    try {
+      hermesWs.disconnect();
+      await logout();
+    } finally {
+      setLoggingOut(false);
+      setShowAccountSheet(false);
+      setUser(null);
+      setProfiles([]);
+      setSelectedBotName(null);
+      setSelectedRoomId(null);
+    }
+  }
+
+  if (booting) {
+    return (
+      <div className="login-shell">
+        <div style={{ textAlign: "center", color: "var(--text-secondary)" }}>
+          <img
+            src="/icon.svg"
+            alt="Hermes Pocket"
+            width={56}
+            height={56}
+            style={{ borderRadius: 16, marginBottom: 14 }}
+          />
+          <div style={{ fontWeight: 700, color: "var(--text-primary)" }}>Hermes Pocket</div>
+          <div style={{ fontSize: "0.84rem", marginTop: 4 }}>Verbinde mit Hermes…</div>
+        </div>
+      </div>
+    );
+  }
+
+  const isAuthenticated = Boolean(user) || (status !== null && !status.auth_required);
+  if (!isAuthenticated) {
+    return (
+      <LoginView
+        status={status}
+        statusError={statusError}
+        onLoginSuccess={() => void bootstrap()}
+      />
+    );
+  }
+
+  const inFullscreenChat =
+    (tab === "bots" && Boolean(selectedBotName)) ||
+    (tab === "groups" && Boolean(selectedRoomId));
+
+  return (
+    <div className="app-shell">
+      {!inFullscreenChat && (
+        <header className="topbar">
+          <div className="topbar-title-group">
+            <img
+              src="/icon.svg"
+              alt=""
+              width={30}
+              height={30}
+              style={{ borderRadius: 9, flexShrink: 0 }}
+            />
+            <div style={{ minWidth: 0 }}>
+              <h1 className="topbar-title">{TAB_TITLES[tab]}</h1>
+              <div className="topbar-subtitle">
+                {status ? `Hermes v${status.version}` : "Hermes Gateway"}
+              </div>
+            </div>
+          </div>
+
+          <div className="topbar-actions">
+            <span
+              className={`pill ${wsState === "connected" ? "ok" : "warn"}`}
+              title="Gateway-Liveverbindung"
+            >
+              {wsState === "connected" ? <Wifi size={13} /> : <WifiOff size={13} />}
+              {wsState === "connected" ? "Live" : "Sync…"}
+            </span>
+            <button
+              type="button"
+              className="icon-btn"
+              aria-label="Konto und Info"
+              onClick={() => setShowAccountSheet(true)}
+            >
+              <User size={18} />
+            </button>
+          </div>
+        </header>
+      )}
+
+      {inFullscreenChat ? (
+        tab === "bots" ? (
+          <BotsView
+            profiles={profiles}
+            loading={profilesLoading}
+            error={profilesError}
+            wsState={wsState}
+            selectedBotName={selectedBotName}
+            onSelectBot={setSelectedBotName}
+            onRefreshProfiles={() => void loadProfiles()}
+          />
+        ) : (
+          <GroupsView
+            profiles={profiles}
+            wsState={wsState}
+            selectedRoomId={selectedRoomId}
+            onSelectRoom={setSelectedRoomId}
+          />
+        )
+      ) : (
+        <main className="main-scroll">
+          {tab === "bots" && (
+            <BotsView
+              profiles={profiles}
+              loading={profilesLoading}
+              error={profilesError}
+              wsState={wsState}
+              selectedBotName={selectedBotName}
+              onSelectBot={setSelectedBotName}
+              onRefreshProfiles={() => void loadProfiles()}
+            />
+          )}
+          {tab === "groups" && (
+            <GroupsView
+              profiles={profiles}
+              wsState={wsState}
+              selectedRoomId={selectedRoomId}
+              onSelectRoom={setSelectedRoomId}
+            />
+          )}
+          {tab === "routines" && <RoutinesView profiles={profiles} />}
+          {tab === "email" && (
+            <EmailView
+              profiles={profiles}
+              onOpenBotChat={(name) => {
+                setTab("bots");
+                setSelectedBotName(name);
+              }}
+            />
+          )}
+        </main>
+      )}
+
+      {!inFullscreenChat && (
+        <nav className="tabbar" aria-label="Hauptnavigation">
+          <button
+            type="button"
+            className={`tabbar-item ${tab === "bots" ? "active" : ""}`}
+            onClick={() => {
+              setTab("bots");
+              setSelectedBotName(null);
+            }}
+          >
+            <Bot size={21} />
+            <span>Bots</span>
+          </button>
+
+          <button
+            type="button"
+            className={`tabbar-item ${tab === "groups" ? "active" : ""}`}
+            onClick={() => {
+              setTab("groups");
+              setSelectedRoomId(null);
+            }}
+          >
+            <Users size={21} />
+            <span>Gruppen</span>
+          </button>
+
+          <button
+            type="button"
+            className={`tabbar-item ${tab === "routines" ? "active" : ""}`}
+            onClick={() => setTab("routines")}
+          >
+            <CalendarClock size={21} />
+            <span>Routinen</span>
+          </button>
+
+          <button
+            type="button"
+            className={`tabbar-item ${tab === "email" ? "active" : ""}`}
+            onClick={() => setTab("email")}
+          >
+            <Mail size={21} />
+            <span>E-Mail</span>
+          </button>
+        </nav>
+      )}
+
+      {showAccountSheet && (
+        <div
+          className="sheet-backdrop"
+          role="dialog"
+          aria-modal="true"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowAccountSheet(false);
+          }}
+        >
+          <div className="sheet">
+            <div className="sheet-header">
+              <h2 className="sheet-title">Konto &amp; Verbindung</h2>
+              <button
+                type="button"
+                className="icon-btn ghost"
+                aria-label="Schließen"
+                onClick={() => setShowAccountSheet(false)}
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="card" style={{ marginBottom: 12 }}>
+              <div style={{ fontWeight: 700 }}>
+                {user?.display_name || user?.user_id || "Angemeldet"}
+              </div>
+              <div style={{ fontSize: "0.8rem", color: "var(--text-secondary)", marginTop: 4 }}>
+                Anmeldung: {user?.provider || "hermes"} · Hermes{" "}
+                {status ? `v${status.version}` : ""}
+              </div>
+              <div className="bot-card-tags" style={{ marginTop: 10 }}>
+                <span className={`pill ${wsState === "connected" ? "ok" : "warn"}`}>
+                  WebSocket: {wsState === "connected" ? "verbunden" : wsState}
+                </span>
+                <span className="pill">{profiles.length} Profile</span>
+              </div>
+            </div>
+
+            <div className="notice" style={{ marginBottom: 14 }}>
+              <Smartphone size={18} style={{ flexShrink: 0, marginTop: 2, color: "var(--accent-primary)" }} />
+              <span>
+                <strong>iPhone Home-Bildschirm:</strong> In Safari auf <em>Teilen</em> tippen und{" "}
+                <em>„Zum Home-Bildschirm“</em> wählen – Hermes Pocket startet dann im Vollbildmodus.
+              </span>
+            </div>
+
+            <button
+              type="button"
+              className="btn danger full"
+              disabled={loggingOut}
+              onClick={() => void handleLogout()}
+            >
+              <LogOut size={16} />
+              {loggingOut ? "Wird abgemeldet…" : "Von Hermes abmelden"}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
