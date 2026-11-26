@@ -51,6 +51,7 @@ import { BotAvatar } from "./BotAvatar";
 import { ConfirmSheet } from "./ConfirmSheet";
 import { InChatConnectionCard } from "./InChatConnectionCard";
 import { SafeMarkdown } from "./SafeMarkdown";
+import { Sheet } from "./Sheet";
 
 interface BotsViewProps {
   profiles: HermesProfile[];
@@ -473,109 +474,103 @@ export const BotsView: React.FC<BotsViewProps> = ({
       />
 
       {/* Create Bot Sheet */}
-      {showCreateSheet && (
-        <div
-          className="sheet-backdrop"
-          role="dialog"
-          aria-modal="true"
-          onClick={(e) => {
-            if (e.target === e.currentTarget && !creating) setShowCreateSheet(false);
-          }}
-        >
-          <div className="sheet">
-            <div className="sheet-header">
-              <h2 className="sheet-title">Neuer Bot</h2>
-              <button
-                type="button"
-                className="icon-btn ghost"
-                aria-label="Schließen"
-                disabled={creating}
-                onClick={() => setShowCreateSheet(false)}
-              >
-                <X size={20} />
-              </button>
-            </div>
-
-            <form onSubmit={handleCreateBot}>
-              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, marginBottom: 16 }}>
-                <button
-                  type="button"
-                  className="avatar-edit-btn"
-                  onClick={() => createFileInputRef.current?.click()}
-                >
-                  <BotAvatar
-                    visual={getBotVisual({
-                      name: createName || "bot",
-                      display_name: createName,
-                      bot_title: "",
-                      description: "",
-                      model: null,
-                    })}
-                    imageUrl={createAvatarPreview}
-                    size="lg"
-                  />
-                  <span className="avatar-camera-badge" style={{ width: 24, height: 24 }}>
-                    <Camera size={13} />
-                  </span>
-                </button>
-                <span style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
-                  Optionales Profilbild wählen
-                </span>
-              </div>
-
-              <div className="field">
-                <label htmlFor="new-bot-name">Name</label>
-                <input
-                  id="new-bot-name"
-                  className="input"
-                  value={createName}
-                  onChange={(e) => setCreateName(e.target.value)}
-                  placeholder="z. B. Coach, Finanzen, Assistent"
-                  required
-                />
-                {createName.trim() && (
-                  <span style={{ fontSize: "0.73rem", color: "var(--text-muted)" }}>
-                    Hermes-Profil: <code>{slugifyProfileName(createName) || "—"}</code>
-                  </span>
-                )}
-              </div>
-
-              <div className="field">
-                <label htmlFor="new-bot-desc">Kurzbeschreibung</label>
-                <input
-                  id="new-bot-desc"
-                  className="input"
-                  value={createDesc}
-                  onChange={(e) => setCreateDesc(e.target.value)}
-                  placeholder="Wofür ist dieser Bot zuständig?"
-                />
-              </div>
-
-              <div className="field">
-                <label htmlFor="new-bot-soul">Persönlichkeit &amp; Anweisungen (optional)</label>
-                <textarea
-                  id="new-bot-soul"
-                  className="textarea"
-                  value={createSoul}
-                  onChange={(e) => setCreateSoul(e.target.value)}
-                  placeholder="Beschreibe Rolle, Tonfall und Aufgaben des Bots…"
-                />
-              </div>
-
-              {createError && (
-                <div className="notice err" style={{ marginBottom: 12 }}>
-                  <AlertCircle size={16} style={{ flexShrink: 0, marginTop: 2 }} />
-                  <span>{createError}</span>
-                </div>
-              )}
-
-              <button type="submit" className="btn primary full" disabled={creating}>
-                {creating ? "Erstelle Bot…" : "Bot erstellen"}
-              </button>
-            </form>
-          </div>
+      <Sheet
+        open={showCreateSheet}
+        onClose={() => {
+          if (!creating) setShowCreateSheet(false);
+        }}
+      >
+        <div className="sheet-header">
+          <h2 className="sheet-title">Neuer Bot</h2>
+          <button
+            type="button"
+            className="icon-btn ghost"
+            aria-label="Schließen"
+            disabled={creating}
+            onClick={() => setShowCreateSheet(false)}
+          >
+            <X size={20} />
+          </button>
         </div>
-      )}
+
+        <form onSubmit={handleCreateBot}>
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, marginBottom: 16 }}>
+            <button
+              type="button"
+              className="avatar-edit-btn"
+              onClick={() => createFileInputRef.current?.click()}
+            >
+              <BotAvatar
+                visual={getBotVisual({
+                  name: createName || "bot",
+                  display_name: createName,
+                  bot_title: "",
+                  description: "",
+                  model: null,
+                })}
+                imageUrl={createAvatarPreview}
+                size="lg"
+              />
+              <span className="avatar-camera-badge" style={{ width: 24, height: 24 }}>
+                <Camera size={13} />
+              </span>
+            </button>
+            <span style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
+              Optionales Profilbild wählen
+            </span>
+          </div>
+
+          <div className="field">
+            <label htmlFor="new-bot-name">Name</label>
+            <input
+              id="new-bot-name"
+              className="input"
+              value={createName}
+              onChange={(e) => setCreateName(e.target.value)}
+              placeholder="z. B. Coach, Finanzen, Assistent"
+              required
+            />
+            {createName.trim() && (
+              <span style={{ fontSize: "0.73rem", color: "var(--text-muted)" }}>
+                Hermes-Profil: <code>{slugifyProfileName(createName) || "—"}</code>
+              </span>
+            )}
+          </div>
+
+          <div className="field">
+            <label htmlFor="new-bot-desc">Kurzbeschreibung</label>
+            <input
+              id="new-bot-desc"
+              className="input"
+              value={createDesc}
+              onChange={(e) => setCreateDesc(e.target.value)}
+              placeholder="Wofür ist dieser Bot zuständig?"
+            />
+          </div>
+
+          <div className="field">
+            <label htmlFor="new-bot-soul">Persönlichkeit &amp; Anweisungen (optional)</label>
+            <textarea
+              id="new-bot-soul"
+              className="textarea"
+              value={createSoul}
+              onChange={(e) => setCreateSoul(e.target.value)}
+              placeholder="Beschreibe Rolle, Tonfall und Aufgaben des Bots…"
+            />
+          </div>
+
+          {createError && (
+            <div className="notice err" style={{ marginBottom: 12 }}>
+              <AlertCircle size={16} style={{ flexShrink: 0, marginTop: 2 }} />
+              <span>{createError}</span>
+            </div>
+          )}
+
+          <button type="submit" className="btn primary full" disabled={creating}>
+            {creating ? "Erstelle Bot…" : "Bot erstellen"}
+          </button>
+        </form>
+      </Sheet>
 
       {manageProfile && (
         <BotManageSheet
@@ -652,115 +647,111 @@ const BotManageSheet: React.FC<BotManageSheetProps> = ({
   const vis = getBotVisual(profile);
 
   return (
-    <div
-      className="sheet-backdrop"
-      role="dialog"
-      aria-modal="true"
-      onClick={(e) => {
-        if (e.target === e.currentTarget && !saving) onClose();
+    <Sheet
+      open
+      onClose={() => {
+        if (!saving) onClose();
       }}
     >
-      <div className="sheet">
-        <div className="sheet-header">
-          <h2 className="sheet-title">{vis.label}</h2>
-          <button
-            type="button"
-            className="icon-btn ghost"
-            aria-label="Schließen"
-            disabled={saving}
-            onClick={onClose}
-          >
-            <X size={20} />
-          </button>
-        </div>
+      <div className="sheet-header">
+        <h2 className="sheet-title">{vis.label}</h2>
+        <button
+          type="button"
+          className="icon-btn ghost"
+          aria-label="Schließen"
+          disabled={saving}
+          onClick={onClose}
+        >
+          <X size={20} />
+        </button>
+      </div>
 
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10, marginBottom: 16 }}>
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10, marginBottom: 16 }}>
+        <button
+          type="button"
+          className="avatar-edit-btn"
+          disabled={saving || wsState !== "connected"}
+          onClick={onPickImage}
+        >
+          <BotAvatar visual={vis} imageUrl={avatarUrl} size="lg" />
+          <span className="avatar-camera-badge" style={{ width: 24, height: 24 }}>
+            <Camera size={13} />
+          </span>
+        </button>
+        <div style={{ display: "flex", gap: 8 }}>
           <button
             type="button"
-            className="avatar-edit-btn"
+            className="btn sm"
             disabled={saving || wsState !== "connected"}
             onClick={onPickImage}
           >
-            <BotAvatar visual={vis} imageUrl={avatarUrl} size="lg" />
-            <span className="avatar-camera-badge" style={{ width: 24, height: 24 }}>
-              <Camera size={13} />
-            </span>
+            <Camera size={14} /> Bild ändern
           </button>
-          <div style={{ display: "flex", gap: 8 }}>
+          {avatarUrl && (
             <button
               type="button"
               className="btn sm"
               disabled={saving || wsState !== "connected"}
-              onClick={onPickImage}
+              onClick={onClearImage}
             >
-              <Camera size={14} /> Bild ändern
+              Entfernen
             </button>
-            {avatarUrl && (
-              <button
-                type="button"
-                className="btn sm"
-                disabled={saving || wsState !== "connected"}
-                onClick={onClearImage}
-              >
-                Entfernen
-              </button>
-            )}
-          </div>
-          {profile.model && (
-            <span className="mini-tag">Modell: {profile.model} · Profil: {profile.name}</span>
           )}
         </div>
-
-        <form onSubmit={onSave}>
-          <div className="field">
-            <label htmlFor="edit-bot-desc">Kurzbeschreibung</label>
-            <input
-              id="edit-bot-desc"
-              className="input"
-              value={editDesc}
-              onChange={(e) => onChangeDesc(e.target.value)}
-              placeholder="Rolle des Bots"
-            />
-          </div>
-
-          <div className="field">
-            <label htmlFor="edit-bot-soul">Persönlichkeit / Anweisungen (SOUL)</label>
-            <textarea
-              id="edit-bot-soul"
-              className="textarea"
-              value={loadingSoul ? "Lade…" : editSoul}
-              disabled={loadingSoul}
-              onChange={(e) => onChangeSoul(e.target.value)}
-              placeholder="Anweisungen für diesen Bot…"
-            />
-          </div>
-
-          {error && (
-            <div className="notice err" style={{ marginBottom: 12 }}>
-              <AlertCircle size={16} style={{ flexShrink: 0, marginTop: 2 }} />
-              <span>{error}</span>
-            </div>
-          )}
-
-          <button type="submit" className="btn primary full" disabled={saving || loadingSoul}>
-            {saving ? "Speichere…" : "Änderungen speichern"}
-          </button>
-        </form>
-
-        {!profile.is_default && (
-          <div style={{ marginTop: 16, paddingTop: 14, borderTop: "1px solid var(--border-subtle)" }}>
-            <button
-              type="button"
-              className="btn danger full"
-              disabled={saving}
-              onClick={onRequestDelete}
-            >
-              <Trash2 size={15} /> Bot aus Hermes entfernen
-            </button>
-          </div>
+        {profile.model && (
+          <span className="mini-tag">Modell: {profile.model} · Profil: {profile.name}</span>
         )}
       </div>
-    </div>
+
+      <form onSubmit={onSave}>
+        <div className="field">
+          <label htmlFor="edit-bot-desc">Kurzbeschreibung</label>
+          <input
+            id="edit-bot-desc"
+            className="input"
+            value={editDesc}
+            onChange={(e) => onChangeDesc(e.target.value)}
+            placeholder="Rolle des Bots"
+          />
+        </div>
+
+        <div className="field">
+          <label htmlFor="edit-bot-soul">Persönlichkeit / Anweisungen (SOUL)</label>
+          <textarea
+            id="edit-bot-soul"
+            className="textarea"
+            value={loadingSoul ? "Lade…" : editSoul}
+            disabled={loadingSoul}
+            onChange={(e) => onChangeSoul(e.target.value)}
+            placeholder="Anweisungen für diesen Bot…"
+          />
+        </div>
+
+        {error && (
+          <div className="notice err" style={{ marginBottom: 12 }}>
+            <AlertCircle size={16} style={{ flexShrink: 0, marginTop: 2 }} />
+            <span>{error}</span>
+          </div>
+        )}
+
+        <button type="submit" className="btn primary full" disabled={saving || loadingSoul}>
+          {saving ? "Speichere…" : "Änderungen speichern"}
+        </button>
+      </form>
+
+      {!profile.is_default && (
+        <div style={{ marginTop: 16, paddingTop: 14, borderTop: "1px solid var(--border-subtle)" }}>
+          <button
+            type="button"
+            className="btn danger full"
+            disabled={saving}
+            onClick={onRequestDelete}
+          >
+            <Trash2 size={15} /> Bot aus Hermes entfernen
+          </button>
+        </div>
+      )}
+    </Sheet>
   );
 };
 
@@ -1512,160 +1503,138 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
         </div>
       </div>
 
-      {showActionsSheet && (
-        <div
-          className="sheet-backdrop"
-          role="dialog"
-          aria-modal="true"
-          onClick={(e) => {
-            if (e.target === e.currentTarget) setShowActionsSheet(false);
-          }}
-        >
-          <div className="sheet">
-            <div className="sheet-header">
-              <h2 className="sheet-title">{visual.label}</h2>
-              <button
-                type="button"
-                className="icon-btn ghost"
-                aria-label="Schließen"
-                onClick={() => setShowActionsSheet(false)}
-              >
-                <X size={20} />
-              </button>
-            </div>
-
-            <div className="card-stack">
-              <button
-                type="button"
-                className="btn full"
-                onClick={() => {
-                  setShowActionsSheet(false);
-                  void startNewChat();
-                }}
-              >
-                <MessageSquarePlus size={17} /> Neuen Chat starten
-              </button>
-              <button
-                type="button"
-                className="btn full"
-                onClick={() => {
-                  setShowActionsSheet(false);
-                  void refreshSessionsList(false);
-                  setShowSessionsSheet(true);
-                }}
-              >
-                <History size={17} /> Chat-Verlauf ({sessions.length})
-              </button>
-              {onOpenConnectors && (
-                <button
-                  type="button"
-                  className="btn full"
-                  onClick={() => {
-                    setShowActionsSheet(false);
-                    onOpenConnectors();
-                  }}
-                >
-                  <Plug size={17} /> Connectoren &amp; E-Mail
-                </button>
-              )}
-              <button
-                type="button"
-                className="btn full"
-                onClick={() => {
-                  setShowActionsSheet(false);
-                  onOpenBotSettings();
-                }}
-              >
-                <Settings2 size={17} /> Bot &amp; Profilbild bearbeiten
-              </button>
-            </div>
-          </div>
+      <Sheet open={showActionsSheet} onClose={() => setShowActionsSheet(false)}>
+        <div className="sheet-header">
+          <h2 className="sheet-title">{visual.label}</h2>
+          <button
+            type="button"
+            className="icon-btn ghost"
+            aria-label="Schließen"
+            onClick={() => setShowActionsSheet(false)}
+          >
+            <X size={20} />
+          </button>
         </div>
-      )}
 
-      {showSessionsSheet && (
-        <div
-          className="sheet-backdrop"
-          role="dialog"
-          aria-modal="true"
-          onClick={(e) => {
-            if (e.target === e.currentTarget) setShowSessionsSheet(false);
-          }}
-        >
-          <div className="sheet">
-            <div className="sheet-header">
-              <h2 className="sheet-title">Chats mit {visual.label}</h2>
-              <button
-                type="button"
-                className="icon-btn ghost"
-                aria-label="Schließen"
-                onClick={() => setShowSessionsSheet(false)}
-              >
-                <X size={20} />
-              </button>
-            </div>
-
+        <div className="card-stack">
+          <button
+            type="button"
+            className="btn full"
+            onClick={() => {
+              setShowActionsSheet(false);
+              void startNewChat();
+            }}
+          >
+            <MessageSquarePlus size={17} /> Neuen Chat starten
+          </button>
+          <button
+            type="button"
+            className="btn full"
+            onClick={() => {
+              setShowActionsSheet(false);
+              void refreshSessionsList(false);
+              setShowSessionsSheet(true);
+            }}
+          >
+            <History size={17} /> Chat-Verlauf ({sessions.length})
+          </button>
+          {onOpenConnectors && (
             <button
               type="button"
-              className="btn primary full"
-              style={{ marginBottom: 12 }}
-              onClick={() => void startNewChat()}
+              className="btn full"
+              onClick={() => {
+                setShowActionsSheet(false);
+                onOpenConnectors();
+              }}
             >
-              <MessageSquarePlus size={17} /> Neuen Chat starten
+              <Plug size={17} /> Connectoren &amp; E-Mail
             </button>
-
-            {sessions.length === 0 ? (
-              <div className="empty-state">
-                <p>Noch keine gespeicherten Chats für {visual.label}.</p>
-              </div>
-            ) : (
-              <div className="card-stack">
-                {sessions.map((s) => {
-                  const isCurrent = s.id === activeSessionId;
-                  return (
-                    <div
-                      key={s.id}
-                      className="card"
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 10,
-                        padding: "10px 12px",
-                        borderColor: isCurrent ? "rgba(255,255,255,0.4)" : undefined,
-                      }}
-                    >
-                      <button
-                        type="button"
-                        style={{ flex: 1, textAlign: "left", minWidth: 0 }}
-                        onClick={() => {
-                          setShowSessionsSheet(false);
-                          void loadSessionHistory(s.id, s.title);
-                        }}
-                      >
-                        <div style={{ fontWeight: 600, fontSize: "0.9rem", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                          {s.title?.trim() || `Chat ${s.id.slice(0, 8)}`}
-                        </div>
-                        <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 2 }}>
-                          {s.message_count ? `${s.message_count} Nachrichten` : "Session"}
-                          {s.last_active ? ` · ${formatRelativeTime(s.last_active)}` : ""}
-                        </div>
-                      </button>
-                      <button
-                        type="button"
-                        className="icon-btn ghost"
-                        aria-label="Chat löschen"
-                        onClick={() => setSessionToDelete(s)}
-                      >
-                        <Trash2 size={16} style={{ color: "var(--text-muted)" }} />
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
+          )}
+          <button
+            type="button"
+            className="btn full"
+            onClick={() => {
+              setShowActionsSheet(false);
+              onOpenBotSettings();
+            }}
+          >
+            <Settings2 size={17} /> Bot &amp; Profilbild bearbeiten
+          </button>
         </div>
-      )}
+      </Sheet>
+
+      <Sheet open={showSessionsSheet} onClose={() => setShowSessionsSheet(false)}>
+        <div className="sheet-header">
+          <h2 className="sheet-title">Chats mit {visual.label}</h2>
+          <button
+            type="button"
+            className="icon-btn ghost"
+            aria-label="Schließen"
+            onClick={() => setShowSessionsSheet(false)}
+          >
+            <X size={20} />
+          </button>
+        </div>
+
+        <button
+          type="button"
+          className="btn primary full"
+          style={{ marginBottom: 12 }}
+          onClick={() => void startNewChat()}
+        >
+          <MessageSquarePlus size={17} /> Neuen Chat starten
+        </button>
+
+        {sessions.length === 0 ? (
+          <div className="empty-state">
+            <p>Noch keine gespeicherten Chats für {visual.label}.</p>
+          </div>
+        ) : (
+          <div className="card-stack">
+            {sessions.map((s) => {
+              const isCurrent = s.id === activeSessionId;
+              return (
+                <div
+                  key={s.id}
+                  className="card"
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 10,
+                    padding: "10px 12px",
+                    borderColor: isCurrent ? "rgba(255,255,255,0.4)" : undefined,
+                  }}
+                >
+                  <button
+                    type="button"
+                    style={{ flex: 1, textAlign: "left", minWidth: 0 }}
+                    onClick={() => {
+                      setShowSessionsSheet(false);
+                      void loadSessionHistory(s.id, s.title);
+                    }}
+                  >
+                    <div style={{ fontWeight: 600, fontSize: "0.9rem", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {s.title?.trim() || `Chat ${s.id.slice(0, 8)}`}
+                    </div>
+                    <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 2 }}>
+                      {s.message_count ? `${s.message_count} Nachrichten` : "Session"}
+                      {s.last_active ? ` · ${formatRelativeTime(s.last_active)}` : ""}
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    className="icon-btn ghost"
+                    aria-label="Chat löschen"
+                    onClick={() => setSessionToDelete(s)}
+                  >
+                    <Trash2 size={16} style={{ color: "var(--text-muted)" }} />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </Sheet>
 
       <ConfirmSheet
         open={Boolean(sessionToDelete)}

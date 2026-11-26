@@ -21,6 +21,7 @@ import { ConnectorsView } from "./components/ConnectorsView";
 import { GroupsView } from "./components/GroupsView";
 import { LoginView } from "./components/LoginView";
 import { RoutinesView } from "./components/RoutinesView";
+import { Sheet } from "./components/Sheet";
 import { fetchBotAvatar } from "./lib/avatarStore";
 import {
   fetchCurrentUser,
@@ -361,64 +362,53 @@ export const App: React.FC = () => {
         </nav>
       )}
 
-      {showAccountSheet && (
-        <div
-          className="sheet-backdrop"
-          role="dialog"
-          aria-modal="true"
-          onClick={(e) => {
-            if (e.target === e.currentTarget) setShowAccountSheet(false);
-          }}
-        >
-          <div className="sheet">
-            <div className="sheet-header">
-              <h2 className="sheet-title">Konto &amp; Verbindung</h2>
-              <button
-                type="button"
-                className="icon-btn ghost"
-                aria-label="Schließen"
-                onClick={() => setShowAccountSheet(false)}
-              >
-                <X size={20} />
-              </button>
-            </div>
+      <Sheet open={showAccountSheet} onClose={() => setShowAccountSheet(false)}>
+        <div className="sheet-header">
+          <h2 className="sheet-title">Konto &amp; Verbindung</h2>
+          <button
+            type="button"
+            className="icon-btn ghost"
+            aria-label="Schließen"
+            onClick={() => setShowAccountSheet(false)}
+          >
+            <X size={20} />
+          </button>
+        </div>
 
-            <div className="card" style={{ marginBottom: 12 }}>
-              <div style={{ fontWeight: 700 }}>
-                {user?.display_name || user?.user_id || "Angemeldet"}
-              </div>
-              <div style={{ fontSize: "0.8rem", color: "var(--text-secondary)", marginTop: 4 }}>
-                Anmeldung: {user?.provider || "hermes"} · Hermes{" "}
-                {status ? `v${status.version}` : ""}
-              </div>
-              <div className="bot-card-tags" style={{ marginTop: 10 }}>
-                <span className={`pill ${wsState === "connected" ? "ok" : "warn"}`}>
-                  WebSocket: {wsState === "connected" ? "verbunden" : wsState}
-                </span>
-                <span className="pill">{profiles.length} Profile</span>
-              </div>
-            </div>
-
-            <div className="notice" style={{ marginBottom: 14 }}>
-              <Smartphone size={18} style={{ flexShrink: 0, marginTop: 2 }} />
-              <span>
-                <strong>iPhone Home-Bildschirm:</strong> In Safari auf <em>Teilen</em> tippen und{" "}
-                <em>„Zum Home-Bildschirm“</em> wählen – Hermes Pocket startet dann im Vollbildmodus.
-              </span>
-            </div>
-
-            <button
-              type="button"
-              className="btn danger full"
-              disabled={loggingOut}
-              onClick={() => void handleLogout()}
-            >
-              <LogOut size={16} />
-              {loggingOut ? "Wird abgemeldet…" : "Von Hermes abmelden"}
-            </button>
+        <div className="card" style={{ marginBottom: 12 }}>
+          <div style={{ fontWeight: 700 }}>
+            {user?.display_name || user?.user_id || "Angemeldet"}
+          </div>
+          <div style={{ fontSize: "0.8rem", color: "var(--text-secondary)", marginTop: 4 }}>
+            Anmeldung: {user?.provider || "hermes"} · Hermes{" "}
+            {status ? `v${status.version}` : ""}
+          </div>
+          <div className="bot-card-tags" style={{ marginTop: 10 }}>
+            <span className={`pill ${wsState === "connected" ? "ok" : "warn"}`}>
+              WebSocket: {wsState === "connected" ? "verbunden" : wsState}
+            </span>
+            <span className="pill">{profiles.length} Profile</span>
           </div>
         </div>
-      )}
+
+        <div className="notice" style={{ marginBottom: 14 }}>
+          <Smartphone size={18} style={{ flexShrink: 0, marginTop: 2 }} />
+          <span>
+            <strong>iPhone Home-Bildschirm:</strong> In Safari auf <em>Teilen</em> tippen und{" "}
+            <em>„Zum Home-Bildschirm“</em> wählen – Hermes Pocket startet dann im Vollbildmodus.
+          </span>
+        </div>
+
+        <button
+          type="button"
+          className="btn danger full"
+          disabled={loggingOut}
+          onClick={() => void handleLogout()}
+        >
+          <LogOut size={16} />
+          {loggingOut ? "Wird abgemeldet…" : "Von Hermes abmelden"}
+        </button>
+      </Sheet>
     </div>
   );
 };

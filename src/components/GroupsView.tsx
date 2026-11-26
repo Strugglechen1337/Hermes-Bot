@@ -27,6 +27,7 @@ import { hermesWs, type WsConnectionState } from "../lib/hermesWs";
 import { BotAvatar } from "./BotAvatar";
 import { ConfirmSheet } from "./ConfirmSheet";
 import { SafeMarkdown } from "./SafeMarkdown";
+import { Sheet } from "./Sheet";
 
 interface GroupsViewProps {
   profiles: HermesProfile[];
@@ -308,104 +309,98 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
         </div>
       )}
 
-      {showCreateSheet && (
-        <div
-          className="sheet-backdrop"
-          role="dialog"
-          aria-modal="true"
-          onClick={(e) => {
-            if (e.target === e.currentTarget && !creating) setShowCreateSheet(false);
-          }}
-        >
-          <div className="sheet">
-            <div className="sheet-header">
-              <h2 className="sheet-title">Neue Bot-Gruppe</h2>
-              <button
-                type="button"
-                className="icon-btn ghost"
-                aria-label="Schließen"
-                disabled={creating}
-                onClick={() => setShowCreateSheet(false)}
-              >
-                <X size={20} />
-              </button>
-            </div>
-
-            <form onSubmit={handleCreateGroup}>
-              <div className="field">
-                <label htmlFor="grp-name">Gruppenname</label>
-                <input
-                  id="grp-name"
-                  className="input"
-                  value={newName}
-                  onChange={(e) => setNewName(e.target.value)}
-                  placeholder="z. B. Morgen-Briefing oder Projektteam"
-                  required
-                />
-              </div>
-
-              <div className="field">
-                <label>Teilnehmende Bots (mind. 2)</label>
-                <div className="chip-row">
-                  {seatableProfiles.map((p) => {
-                    const vis = getBotVisual(p);
-                    const picked = selectedMembers.includes(p.name);
-                    return (
-                      <button
-                        key={p.name}
-                        type="button"
-                        className={`chip ${picked ? "selected" : ""}`}
-                        onClick={() => toggleMember(p.name)}
-                      >
-                        <BotAvatar visual={vis} imageUrl={avatars[p.name]} size="xs" />
-                        {vis.label}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div className="field">
-                <label htmlFor="grp-routing">Zusammenarbeits-Modus</label>
-                <select
-                  id="grp-routing"
-                  className="select"
-                  value={newRouting}
-                  onChange={(e) =>
-                    setNewRouting(e.target.value as "auto" | "everyone" | "lead")
-                  }
-                >
-                  <option value="auto">Automatisch (passende Bots antworten)</option>
-                  <option value="everyone">Alle Bots antworten nacheinander</option>
-                  <option value="lead">Lead-Bot koordiniert die Runde</option>
-                </select>
-              </div>
-
-              <div className="field">
-                <label htmlFor="grp-purpose">Ziel / Kontext (optional)</label>
-                <textarea
-                  id="grp-purpose"
-                  className="textarea"
-                  value={newPurpose}
-                  onChange={(e) => setNewPurpose(e.target.value)}
-                  placeholder="Woran soll diese Gruppe gemeinsam arbeiten?"
-                />
-              </div>
-
-              {createError && (
-                <div className="notice err" style={{ marginBottom: 12 }}>
-                  <AlertCircle size={17} style={{ flexShrink: 0, marginTop: 2 }} />
-                  <span>{createError}</span>
-                </div>
-              )}
-
-              <button type="submit" className="btn primary full" disabled={creating}>
-                {creating ? "Erstelle Gruppe…" : "Gruppe erstellen"}
-              </button>
-            </form>
-          </div>
+      <Sheet
+        open={showCreateSheet}
+        onClose={() => {
+          if (!creating) setShowCreateSheet(false);
+        }}
+      >
+        <div className="sheet-header">
+          <h2 className="sheet-title">Neue Bot-Gruppe</h2>
+          <button
+            type="button"
+            className="icon-btn ghost"
+            aria-label="Schließen"
+            disabled={creating}
+            onClick={() => setShowCreateSheet(false)}
+          >
+            <X size={20} />
+          </button>
         </div>
-      )}
+
+        <form onSubmit={handleCreateGroup}>
+          <div className="field">
+            <label htmlFor="grp-name">Gruppenname</label>
+            <input
+              id="grp-name"
+              className="input"
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              placeholder="z. B. Morgen-Briefing oder Projektteam"
+              required
+            />
+          </div>
+
+          <div className="field">
+            <label>Teilnehmende Bots (mind. 2)</label>
+            <div className="chip-row">
+              {seatableProfiles.map((p) => {
+                const vis = getBotVisual(p);
+                const picked = selectedMembers.includes(p.name);
+                return (
+                  <button
+                    key={p.name}
+                    type="button"
+                    className={`chip ${picked ? "selected" : ""}`}
+                    onClick={() => toggleMember(p.name)}
+                  >
+                    <BotAvatar visual={vis} imageUrl={avatars[p.name]} size="xs" />
+                    {vis.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="field">
+            <label htmlFor="grp-routing">Zusammenarbeits-Modus</label>
+            <select
+              id="grp-routing"
+              className="select"
+              value={newRouting}
+              onChange={(e) =>
+                setNewRouting(e.target.value as "auto" | "everyone" | "lead")
+              }
+            >
+              <option value="auto">Automatisch (passende Bots antworten)</option>
+              <option value="everyone">Alle Bots antworten nacheinander</option>
+              <option value="lead">Lead-Bot koordiniert die Runde</option>
+            </select>
+          </div>
+
+          <div className="field">
+            <label htmlFor="grp-purpose">Ziel / Kontext (optional)</label>
+            <textarea
+              id="grp-purpose"
+              className="textarea"
+              value={newPurpose}
+              onChange={(e) => setNewPurpose(e.target.value)}
+              placeholder="Woran soll diese Gruppe gemeinsam arbeiten?"
+            />
+          </div>
+
+          {createError && (
+            <div className="notice err" style={{ marginBottom: 12 }}>
+              <AlertCircle size={17} style={{ flexShrink: 0, marginTop: 2 }} />
+              <span>{createError}</span>
+            </div>
+          )}
+
+          <button type="submit" className="btn primary full" disabled={creating}>
+            {creating ? "Erstelle Gruppe…" : "Gruppe erstellen"}
+          </button>
+        </form>
+      </Sheet>
     </div>
   );
 };
@@ -770,85 +765,79 @@ const GroupRoomView: React.FC<GroupRoomViewProps> = ({
         </div>
       </div>
 
-      {showContextSheet && (
-        <div
-          className="sheet-backdrop"
-          role="dialog"
-          aria-modal="true"
-          onClick={(e) => {
-            if (e.target === e.currentTarget && !savingContext) setShowContextSheet(false);
-          }}
-        >
-          <div className="sheet">
-            <div className="sheet-header">
-              <h2 className="sheet-title">Gruppen-Einstellungen</h2>
-              <button
-                type="button"
-                className="icon-btn ghost"
-                aria-label="Schließen"
-                onClick={() => setShowContextSheet(false)}
-              >
-                <X size={20} />
-              </button>
-            </div>
-
-            <form onSubmit={handleSaveContext}>
-              <div className="field">
-                <label htmlFor="edit-routing">Routing</label>
-                <select
-                  id="edit-routing"
-                  className="select"
-                  value={routing}
-                  onChange={(e) =>
-                    setRouting(e.target.value as "auto" | "everyone" | "lead")
-                  }
-                >
-                  <option value="auto">Automatisch</option>
-                  <option value="everyone">Alle Bots</option>
-                  <option value="lead">Lead-Bot</option>
-                </select>
-              </div>
-              <div className="field">
-                <label htmlFor="edit-purpose">Ziel</label>
-                <input
-                  id="edit-purpose"
-                  className="input"
-                  value={purpose}
-                  onChange={(e) => setPurpose(e.target.value)}
-                  placeholder="Gemeinsames Ziel der Gruppe"
-                />
-              </div>
-              <div className="field">
-                <label htmlFor="edit-notes">Geteilte Notizen</label>
-                <textarea
-                  id="edit-notes"
-                  className="textarea"
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                  placeholder="Hinweise für alle Bots ab der nächsten Nachricht"
-                />
-              </div>
-
-              <button type="submit" className="btn primary full" disabled={savingContext}>
-                {savingContext ? "Speichere…" : "Kontext speichern"}
-              </button>
-            </form>
-
-            <div style={{ marginTop: 18, paddingTop: 14, borderTop: "1px solid var(--border-subtle)" }}>
-              <button
-                type="button"
-                className="btn danger full"
-                onClick={() => {
-                  setShowContextSheet(false);
-                  setConfirmDisband(true);
-                }}
-              >
-                <Trash2 size={16} /> Gruppe auflösen
-              </button>
-            </div>
-          </div>
+      <Sheet
+        open={showContextSheet}
+        onClose={() => {
+          if (!savingContext) setShowContextSheet(false);
+        }}
+      >
+        <div className="sheet-header">
+          <h2 className="sheet-title">Gruppen-Einstellungen</h2>
+          <button
+            type="button"
+            className="icon-btn ghost"
+            aria-label="Schließen"
+            onClick={() => setShowContextSheet(false)}
+          >
+            <X size={20} />
+          </button>
         </div>
-      )}
+
+        <form onSubmit={handleSaveContext}>
+          <div className="field">
+            <label htmlFor="edit-routing">Routing</label>
+            <select
+              id="edit-routing"
+              className="select"
+              value={routing}
+              onChange={(e) =>
+                setRouting(e.target.value as "auto" | "everyone" | "lead")
+              }
+            >
+              <option value="auto">Automatisch</option>
+              <option value="everyone">Alle Bots</option>
+              <option value="lead">Lead-Bot</option>
+            </select>
+          </div>
+          <div className="field">
+            <label htmlFor="edit-purpose">Ziel</label>
+            <input
+              id="edit-purpose"
+              className="input"
+              value={purpose}
+              onChange={(e) => setPurpose(e.target.value)}
+              placeholder="Gemeinsames Ziel der Gruppe"
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="edit-notes">Geteilte Notizen</label>
+            <textarea
+              id="edit-notes"
+              className="textarea"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="Hinweise für alle Bots ab der nächsten Nachricht"
+            />
+          </div>
+
+          <button type="submit" className="btn primary full" disabled={savingContext}>
+            {savingContext ? "Speichere…" : "Kontext speichern"}
+          </button>
+        </form>
+
+        <div style={{ marginTop: 18, paddingTop: 14, borderTop: "1px solid var(--border-subtle)" }}>
+          <button
+            type="button"
+            className="btn danger full"
+            onClick={() => {
+              setShowContextSheet(false);
+              setConfirmDisband(true);
+            }}
+          >
+            <Trash2 size={16} /> Gruppe auflösen
+          </button>
+        </div>
+      </Sheet>
 
       <ConfirmSheet
         open={confirmDisband}

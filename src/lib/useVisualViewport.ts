@@ -5,9 +5,10 @@ interface VisualViewportState {
 }
 
 /**
- * Locks the mobile app shell cleanly to window.visualViewport on iOS Safari
- * and Home-Screen PWAs so opening the software keyboard never drags the header
- * off-screen or leaves stale viewport offset drift.
+ * Keeps the fixed mobile app shell full-bleed (100% height) on iOS Home-Screen
+ * PWAs when the keyboard is closed (avoiding iOS WebKit's visualViewport.height
+ * under-reporting safe-area insets), and locks cleanly to visualViewport only
+ * while the software keyboard is open.
  */
 export function useVisualViewport(): VisualViewportState {
   const [keyboardOpen, setKeyboardOpen] = useState(false);
@@ -19,15 +20,22 @@ export function useVisualViewport(): VisualViewportState {
 
     const syncNow = () => {
       rafId = 0;
-      const height = vv ? Math.round(vv.height) : window.innerHeight;
-      const offsetTop = vv ? Math.max(0, Math.round(vv.offsetTop)) : 0;
+      const layoutHeight = window.innerHeight;
+      const vvHeight = vv ? Math.round(vv.height) : layoutHeight;
+      const vvOffsetTop = vv ? Math.max(0, Math.round(vv.offsetTop)) : 0;
 
-      root.style.setProperty("--vvh", `${height}px`);
-      root.style.setProperty("--vvt", `${offsetTop}px`);
-
-      const kbOpen = window.innerHeight - height > 110;
+      // Only treat as keyboard-open when visualViewport shrinks substantially (> 130px)
+      const kbOpen = layoutHeight - vvHeight > 130;
       setKeyboardOpen(kbOpen);
       root.classList.toggle("kb-open", kbOpen);
+
+      if (kbOpen) {
+        root.style.setProperty("--vvh", `${vvHeight}px`);
+        root.style.setProperty("--vvt", `${vvOffsetTop}px`);
+      } else {
+        root.style.setProperty("--vvh", "100%");
+        root.style.setProperty("--vvt", "0px");
+      }
 
       if (window.scrollY !== 0) {
         window.scrollTo(0, 0);
@@ -41,7 +49,6 @@ export function useVisualViewport(): VisualViewportState {
 
     const handleFocusChange = () => {
       scheduleSync();
-      // iOS keyboard animation settles over ~250ms; re-sync once settled
       window.setTimeout(scheduleSync, 120);
       window.setTimeout(scheduleSync, 320);
     };

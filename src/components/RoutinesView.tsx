@@ -22,6 +22,7 @@ import {
   triggerCronJob,
 } from "../lib/hermesApi";
 import { ConfirmSheet } from "./ConfirmSheet";
+import { Sheet } from "./Sheet";
 
 interface RoutinesViewProps {
   profiles: HermesProfile[];
@@ -300,16 +301,9 @@ export const RoutinesView: React.FC<RoutinesViewProps> = ({ profiles }) => {
         </div>
       )}
 
-      {detailJob && (
-        <div
-          className="sheet-backdrop"
-          role="dialog"
-          aria-modal="true"
-          onClick={(e) => {
-            if (e.target === e.currentTarget) setDetailJob(null);
-          }}
-        >
-          <div className="sheet">
+      <Sheet open={Boolean(detailJob)} onClose={() => setDetailJob(null)}>
+        {detailJob && (
+          <>
             <div className="sheet-header">
               <h2 className="sheet-title">{detailJob.name || detailJob.id}</h2>
               <button
@@ -369,9 +363,9 @@ export const RoutinesView: React.FC<RoutinesViewProps> = ({ profiles }) => {
                 ))}
               </div>
             )}
-          </div>
-        </div>
-      )}
+          </>
+        )}
+      </Sheet>
 
       <ConfirmSheet
         open={Boolean(pendingAction)}

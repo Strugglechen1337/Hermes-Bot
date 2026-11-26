@@ -22,6 +22,7 @@ import {
   testMessagingPlatform,
   updateMessagingPlatform,
 } from "../lib/hermesApi";
+import { Sheet } from "./Sheet";
 
 interface EmailViewProps {
   profiles: HermesProfile[];
@@ -367,16 +368,14 @@ export const EmailView: React.FC<EmailViewProps> = ({ profiles, onOpenBotChat })
         </div>
       )}
 
-      {showConfigSheet && emailPlatform && (
-        <div
-          className="sheet-backdrop"
-          role="dialog"
-          aria-modal="true"
-          onClick={(e) => {
-            if (e.target === e.currentTarget && !saving) setShowConfigSheet(false);
-          }}
-        >
-          <div className="sheet">
+      <Sheet
+        open={Boolean(showConfigSheet && emailPlatform)}
+        onClose={() => {
+          if (!saving) setShowConfigSheet(false);
+        }}
+      >
+        {emailPlatform && (
+          <>
             <div className="sheet-header">
               <h2 className="sheet-title">
                 E-Mail für {activeVisual?.label || selectedProfile} konfigurieren
@@ -438,9 +437,9 @@ export const EmailView: React.FC<EmailViewProps> = ({ profiles, onOpenBotChat })
                 {saving ? "Speichere in Hermes…" : "In Hermes speichern"}
               </button>
             </form>
-          </div>
-        </div>
-      )}
+          </>
+        )}
+      </Sheet>
     </div>
   );
 };
