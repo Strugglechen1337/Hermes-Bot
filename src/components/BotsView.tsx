@@ -44,6 +44,7 @@ import type {
   HermesUsageLimitError,
 } from "../../shared/types";
 import { clearBotAvatar, prepareAvatarDataUrl, saveBotAvatar } from "../lib/avatarStore";
+import { evaluateApprovalPolicy, loadAutoApproveSafe } from "../lib/approvalPolicy";
 import {
   BOT_CHAT_TITLE,
   deriveShortBotCallName,
@@ -1612,16 +1613,27 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
         });
         scrollToBottomWithSettle();
       } else if (req.method === "approval") {
-        setPendingApproval({
+        const appr: HermesPendingApproval = {
           ...(req.params as HermesPendingApproval),
           server_request_id: req.id,
-        });
-        notifyIfBackgrounded({
-          title: `${visual.label} · Freigabe`,
-          body: "Der Bot bittet um deine Freigabe.",
-          bot: profile.name,
-        });
-        scrollToBottomWithSettle();
+        };
+        const decision = evaluateApprovalPolicy(appr, loadAutoApproveSafe());
+        if (decision.action === "auto_once") {
+          hermesWs.sendResponse(req.id, { choice: "once" });
+          const label = appr.description || appr.command || appr.tool_name || "Aktion";
+          appendSystemNotice(`Automatisch freigegeben: ${String(label).slice(0, 90)}`);
+        } else {
+          setPendingApproval({
+            ...appr,
+            risk: decision.reason || appr.risk,
+          });
+          notifyIfBackgrounded({
+            title: `${visual.label} · Freigabe nötig`,
+            body: decision.reason || "Der Bot bittet um deine Freigabe.",
+            bot: profile.name,
+          });
+          scrollToBottomWithSettle();
+        }
       } else if (SECRET_REQUEST_METHODS.has(req.method)) {
         setPendingSecret(req);
         notifyIfBackgrounded({
@@ -1813,13 +1825,38 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
         void refreshAccountUsage(activeSessionRef.current);
         scrollToBottom();
       } else if (ev.type === "approval.requested") {
-        setPendingApproval(ev.payload as HermesPendingApproval);
-        notifyIfBackgrounded({
-          title: `${visual.label} · Freigabe`,
-          body: "Der Bot bittet um eine Freigabe.",
-          bot: profile.name,
-        });
-        scrollToBottomWithSettle();
+        const appr = ev.payload as HermesPendingApproval;
+        const decision = evaluateApprovalPolicy(appr, loadAutoApproveSafe());
+        const sid = activeSessionRef.current;
+        const promptId = appr.prompt_id || appr.request_id || appr.approval_id || appr.id;
+        if (decision.action === "auto_once" && sid && promptId) {
+          void hermesWs
+            .call("approval.respond", {
+              session_id: sid,
+              profile: profile.name,
+              execution_generation: appr.execution_generation ?? execGenerationRef.current,
+              prompt_id: promptId,
+              choice: "once",
+            })
+            .then(() => {
+              const label = appr.description || appr.command || appr.tool_name || "Aktion";
+              appendSystemNotice(`Automatisch freigegeben: ${String(label).slice(0, 90)}`);
+            })
+            .catch(() => {
+              setPendingApproval(appr);
+            });
+        } else {
+          setPendingApproval({
+            ...appr,
+            risk: decision.reason || appr.risk,
+          });
+          notifyIfBackgrounded({
+            title: `${visual.label} · Freigabe nötig`,
+            body: decision.reason || "Der Bot bittet um eine Freigabe.",
+            bot: profile.name,
+          });
+          scrollToBottomWithSettle();
+        }
       } else if (ev.type === "approval.cancelled") {
         setPendingApproval(null);
       } else if (ev.type === "connection.request" || ev.type === "connection.update") {
@@ -1851,10 +1888,9 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
   async function startNewChat() {
     setShowSessionsSheet(false);
     setChatError(null);
-    setActiveSessionId(null);
-    setActiveTitle("Neuer Chat");
-    setMessages([]);
     setIsStreaming(false);
+    setLiveStatus(null);
+    setActiveTool(null);
     setPendingApproval(null);
     setPendingConnection(null);
     setPendingClarify(null);
@@ -1866,6 +1902,59 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
       contextPercent: 0,
       totalTokens: null,
     }));
+
+    // Archive the current canonical chat cleanly (preserving 100% of its messages in Chat-Verlauf)
+    // and immediately create a fresh canonical Bot Chat / Privater Chat with 0% context.
+    const previousSid = activeSessionRef.current;
+    if (previousSid && activeTitle === canonicalTitle) {
+      const stamp = new Date().toLocaleString("de-DE", {
+        day: "2-digit",
+        month: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+      await renameSession(previousSid, `Chat ${stamp}`, profile.name).catch(() => null);
+    }
+
+    if (wsState === "connected") {
+      try {
+        const created = await hermesWs.call<{
+          session_id: string;
+          execution_generation?: number;
+        }>("session.create", {
+          profile: profile.name,
+          request_id: randomClientId("new"),
+          source: "gui",
+          title: canonicalTitle,
+        });
+        setActiveSessionId(created.session_id);
+        setActiveTitle(canonicalTitle);
+        if (typeof created.execution_generation === "number") {
+          execGenerationRef.current = created.execution_generation;
+        }
+        attachedOnWsRef.current = true;
+        setMessages([
+          {
+            id: `sys-new-${Date.now()}`,
+            role: "system",
+            content: previousSid
+              ? "Neue Session gestartet (vorheriger Chat bleibt im Verlauf gespeichert)."
+              : "Neue Session gestartet.",
+            timestamp: Date.now(),
+          },
+        ]);
+        void refreshSessionsList(false);
+        return;
+      } catch (err) {
+        setChatError(
+          err instanceof Error ? err.message : "Neue Session konnte nicht erstellt werden."
+        );
+      }
+    }
+
+    setActiveSessionId(null);
+    setActiveTitle(canonicalTitle);
+    setMessages([]);
     attachedOnWsRef.current = false;
   }
 

@@ -8,6 +8,7 @@ import {
   LogOut,
   Plug,
   Plus,
+  ShieldCheck,
   Smartphone,
   User,
   Users,
@@ -26,6 +27,7 @@ import { LoginView } from "./components/LoginView";
 import { PrivateVaultSheet } from "./components/PrivateVaultSheet";
 import { RoutinesView } from "./components/RoutinesView";
 import { Sheet } from "./components/Sheet";
+import { loadAutoApproveSafe, saveAutoApproveSafe } from "./lib/approvalPolicy";
 import { fetchBotAvatar } from "./lib/avatarStore";
 import {
   fetchCurrentUser,
@@ -100,6 +102,7 @@ export const App: React.FC = () => {
   const [pushStatus, setPushStatus] = useState<PushStatusInfo | null>(null);
   const [pushBusy, setPushBusy] = useState(false);
   const [pushFeedback, setPushFeedback] = useState<string | null>(null);
+  const [autoApproveSafe, setAutoApproveSafe] = useState<boolean>(() => loadAutoApproveSafe());
 
   // Open specific bot when launched or tapped from a Push Notification
   useEffect(() => {
@@ -640,6 +643,37 @@ export const App: React.FC = () => {
               {pushFeedback}
             </div>
           )}
+        </div>
+
+        <div className="card" style={{ marginBottom: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 6 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 7, fontWeight: 700, fontSize: "0.9rem" }}>
+              <ShieldCheck
+                size={16}
+                style={{ color: autoApproveSafe ? "var(--status-ok)" : "var(--text-secondary)" }}
+              />
+              <span>Sicherheitsfreigaben</span>
+            </div>
+            <span className={`pill ${autoApproveSafe ? "ok" : ""}`}>
+              {autoApproveSafe ? "Auto (sicher)" : "Manuell"}
+            </span>
+          </div>
+          <p style={{ margin: "0 0 10px", fontSize: "0.78rem", color: "var(--text-secondary)", lineHeight: 1.45 }}>
+            {autoApproveSafe
+              ? "Normale Aktionen werden automatisch akzeptiert. Bei E-Mails, Löschvorgängen und sensiblen Systemdateien wirst du weiterhin gefragt."
+              : "Jede geschützte Aktion muss einzeln per Klick im Chat bestätigt werden."}
+          </p>
+          <button
+            type="button"
+            className={`btn sm ${autoApproveSafe ? "" : "primary"}`}
+            onClick={() => {
+              const next = !autoApproveSafe;
+              setAutoApproveSafe(next);
+              saveAutoApproveSafe(next);
+            }}
+          >
+            {autoApproveSafe ? "Auf manuell umstellen" : "Automatisch aktivieren (außer Mails & Löschen)"}
+          </button>
         </div>
 
         <button
