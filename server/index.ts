@@ -60,7 +60,9 @@ function serveStaticSpa(
     "X-Content-Type-Options": "nosniff",
     "Referrer-Policy": "no-referrer",
     "X-Frame-Options": "DENY",
-    "Cache-Control": isImmutableAsset ? "public, max-age=31536000, immutable" : "no-cache",
+    "Cache-Control": isImmutableAsset
+      ? "public, max-age=31536000, immutable"
+      : "no-store, no-cache, must-revalidate",
   };
 
   res.writeHead(200, headers);
