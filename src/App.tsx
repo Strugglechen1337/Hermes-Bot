@@ -1,7 +1,8 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Bot,
   CalendarClock,
+  Lock,
   LogOut,
   Plug,
   Plus,
@@ -20,6 +21,7 @@ import { BotsView } from "./components/BotsView";
 import { ConnectorsView } from "./components/ConnectorsView";
 import { GroupsView } from "./components/GroupsView";
 import { LoginView } from "./components/LoginView";
+import { PrivateVaultSheet } from "./components/PrivateVaultSheet";
 import { RoutinesView } from "./components/RoutinesView";
 import { Sheet } from "./components/Sheet";
 import { fetchBotAvatar } from "./lib/avatarStore";
@@ -28,8 +30,15 @@ import {
   fetchProfiles,
   fetchStatus,
   logout,
+  updateProfilePrivacy,
 } from "./lib/hermesApi";
 import { hermesWs, type WsConnectionState } from "./lib/hermesWs";
+import {
+  hasVaultPin,
+  isProfilePrivate,
+  loadLocalPrivateProfiles,
+  saveLocalPrivateProfiles,
+} from "./lib/privateVault";
 import { useVisualViewport } from "./lib/useVisualViewport";
 
 type TabKey = "bots" | "groups" | "routines" | "connectors";
@@ -54,6 +63,14 @@ export const App: React.FC = () => {
   const [selectedBotName, setSelectedBotName] = useState<string | null>(null);
   const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null);
   const [createBotTrigger, setCreateBotTrigger] = useState(0);
+  const [createPrivateMode, setCreatePrivateMode] = useState(false);
+
+  // Hidden & isolated Private Bot Vault state
+  const [localPrivateProfiles, setLocalPrivateProfiles] = useState<string[]>(() =>
+    loadLocalPrivateProfiles()
+  );
+  const [showVaultSheet, setShowVaultSheet] = useState(false);
+  const [vaultUnlocked, setVaultUnlocked] = useState(false);
 
   const [profiles, setProfiles] = useState<HermesProfile[]>([]);
   const [avatars, setAvatars] = useState<Record<string, string>>({});
@@ -121,8 +138,70 @@ export const App: React.FC = () => {
 
   const handleSelectBot = useCallback((name: string | null) => {
     setCreateBotTrigger(0);
+    setCreatePrivateMode(false);
     setSelectedBotName(name);
   }, []);
+
+  const privateProfiles = useMemo(
+    () => profiles.filter((p) => isProfilePrivate(p, localPrivateProfiles)),
+    [profiles, localPrivateProfiles]
+  );
+
+  const publicProfiles = useMemo(
+    () => profiles.filter((p) => !isProfilePrivate(p, localPrivateProfiles)),
+    [profiles, localPrivateProfiles]
+  );
+
+  const privateProfileNames = useMemo(
+    () => privateProfiles.map((p) => p.name),
+    [privateProfiles]
+  );
+
+  // Automatically re-lock private vault when app goes to background
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden" && hasVaultPin()) {
+        setVaultUnlocked(false);
+        if (selectedBotName && privateProfileNames.includes(selectedBotName)) {
+          setSelectedBotName(null);
+        }
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, [privateProfileNames, selectedBotName]);
+
+  const handleToggleBotPrivate = useCallback(
+    async (profile: HermesProfile, makePrivate: boolean) => {
+      if (profile.is_default || profile.name === "default") return;
+      // 1. Real Hermes isolation: disable/enable bot_mode_protocol in profile config.yaml
+      await updateProfilePrivacy(profile.name, makePrivate);
+      // 2. Persist private marker in Hermes profile.yaml so it syncs across devices
+      if (wsState === "connected") {
+        await hermesWs
+          .call("profiles.configure", {
+            name: profile.name,
+            ui_meta: {
+              "hermes-pocket": makePrivate ? { private: true } : null,
+            },
+          })
+          .catch(() => null);
+      }
+      // 3. Mirror locally for instant UI update
+      setLocalPrivateProfiles((prev) => {
+        const next = makePrivate
+          ? Array.from(new Set([...prev, profile.name]))
+          : prev.filter((n) => n !== profile.name);
+        saveLocalPrivateProfiles(next);
+        return next;
+      });
+      if (makePrivate && selectedBotName === profile.name && !vaultUnlocked) {
+        setSelectedBotName(null);
+      }
+      await loadProfiles();
+    },
+    [loadProfiles, selectedBotName, vaultUnlocked, wsState]
+  );
 
   const handleToggleHideProfile = useCallback((profileName: string) => {
     setHiddenProfiles((prev) => {
@@ -277,15 +356,19 @@ export const App: React.FC = () => {
             profiles={profiles}
             avatars={avatars}
             hiddenProfiles={hiddenProfiles}
+            privateProfileNames={privateProfileNames}
             loading={profilesLoading}
             error={profilesError}
             wsState={wsState}
             selectedBotName={selectedBotName}
             openCreateTrigger={createBotTrigger}
+            createAsPrivate={createPrivateMode}
             onSelectBot={handleSelectBot}
             onRefreshProfiles={() => loadProfiles()}
             onAvatarChange={handleAvatarChange}
             onToggleHideProfile={handleToggleHideProfile}
+            onToggleBotPrivate={handleToggleBotPrivate}
+            onOpenPrivateVault={() => setShowVaultSheet(true)}
             onOpenConnectors={() => {
               setSelectedBotName(null);
               setTab("connectors");
@@ -293,7 +376,7 @@ export const App: React.FC = () => {
           />
         ) : (
           <GroupsView
-            profiles={profiles}
+            profiles={publicProfiles}
             avatars={avatars}
             wsState={wsState}
             selectedRoomId={selectedRoomId}
@@ -307,31 +390,35 @@ export const App: React.FC = () => {
               profiles={profiles}
               avatars={avatars}
               hiddenProfiles={hiddenProfiles}
+              privateProfileNames={privateProfileNames}
               loading={profilesLoading}
               error={profilesError}
               wsState={wsState}
               selectedBotName={selectedBotName}
               openCreateTrigger={createBotTrigger}
-              onSelectBot={setSelectedBotName}
+              createAsPrivate={createPrivateMode}
+              onSelectBot={handleSelectBot}
               onRefreshProfiles={() => loadProfiles()}
               onAvatarChange={handleAvatarChange}
               onToggleHideProfile={handleToggleHideProfile}
+              onToggleBotPrivate={handleToggleBotPrivate}
+              onOpenPrivateVault={() => setShowVaultSheet(true)}
               onOpenConnectors={() => setTab("connectors")}
             />
           )}
           {tab === "groups" && (
             <GroupsView
-              profiles={profiles}
+              profiles={publicProfiles}
               avatars={avatars}
               wsState={wsState}
               selectedRoomId={selectedRoomId}
               onSelectRoom={setSelectedRoomId}
             />
           )}
-          {tab === "routines" && <RoutinesView profiles={profiles} />}
+          {tab === "routines" && <RoutinesView profiles={publicProfiles} />}
           {tab === "connectors" && (
             <ConnectorsView
-              profiles={profiles}
+              profiles={publicProfiles}
               avatars={avatars}
               wsState={wsState}
               onOpenBotChat={(name) => {
@@ -426,6 +513,19 @@ export const App: React.FC = () => {
           </span>
         </div>
 
+        <button
+          type="button"
+          className="btn full"
+          style={{ marginBottom: 10, borderColor: "rgba(52, 211, 153, 0.3)" }}
+          onClick={() => {
+            setShowAccountSheet(false);
+            setShowVaultSheet(true);
+          }}
+        >
+          <Lock size={15} style={{ color: "var(--status-ok)" }} />
+          Privater Bereich
+        </button>
+
         {hiddenProfiles.length > 0 && (
           <button
             type="button"
@@ -454,6 +554,33 @@ export const App: React.FC = () => {
           {loggingOut ? "Wird abgemeldet…" : "Von Hermes abmelden"}
         </button>
       </Sheet>
+
+      <PrivateVaultSheet
+        open={showVaultSheet}
+        unlocked={vaultUnlocked}
+        privateProfiles={privateProfiles}
+        regularProfiles={publicProfiles.filter((p) => !p.is_default && p.name !== "default")}
+        avatars={avatars}
+        onUnlocked={() => setVaultUnlocked(true)}
+        onLock={() => {
+          setVaultUnlocked(false);
+          if (selectedBotName && privateProfileNames.includes(selectedBotName)) {
+            setSelectedBotName(null);
+          }
+        }}
+        onOpenPrivateBot={(name) => {
+          setTab("bots");
+          setSelectedBotName(name);
+        }}
+        onToggleBotPrivate={handleToggleBotPrivate}
+        onCreatePrivateBot={() => {
+          setTab("bots");
+          setSelectedBotName(null);
+          setCreatePrivateMode(true);
+          setCreateBotTrigger((n) => n + 1);
+        }}
+        onClose={() => setShowVaultSheet(false)}
+      />
     </div>
   );
 };

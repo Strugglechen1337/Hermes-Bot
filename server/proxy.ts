@@ -267,6 +267,94 @@ async function handlePocketSecret(
   }
 }
 
+async function handlePocketPrivacy(
+  req: IncomingMessage,
+  res: ServerResponse,
+  config: ServerConfig,
+  parsedUrl: URL
+): Promise<void> {
+  const method = (req.method || "GET").toUpperCase();
+  if (method !== "PUT") {
+    sendJson(res, 405, { error: "method_not_allowed", detail: "Nur PUT erlaubt." });
+    return;
+  }
+  if (!isSameOriginRequest(req)) {
+    sendJson(res, 403, { error: "forbidden_origin", detail: "Cross-Origin-Anfrage abgelehnt." });
+    return;
+  }
+
+  let parsedBody: Record<string, unknown> = {};
+  try {
+    const rawBody = await readBody(req, 16 * 1024);
+    parsedBody = rawBody ? (JSON.parse(rawBody.toString("utf8")) as Record<string, unknown>) : {};
+  } catch {
+    sendJson(res, 400, { error: "bad_request", detail: "Ungültiger Request-Body." });
+    return;
+  }
+
+  const isPrivate = Boolean(parsedBody.private);
+  const profile =
+    (typeof parsedBody.profile === "string" ? parsedBody.profile.trim() : "") ||
+    parsedUrl.searchParams.get("profile")?.trim() ||
+    "";
+
+  if (!profile || profile === "default") {
+    sendJson(res, 400, {
+      error: "invalid_profile",
+      detail: "Nur benannte Bot-Profile können isoliert werden.",
+    });
+    return;
+  }
+
+  const upstreamHeaders: Record<string, string> = {
+    Accept: "application/json",
+    "Content-Type": "application/json",
+    "User-Agent": "hermes-pocket-bff/0.1",
+  };
+  if (req.headers.cookie) {
+    upstreamHeaders.Cookie = String(req.headers.cookie);
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15_000);
+  try {
+    const qs = new URLSearchParams({ profile });
+    const putUrl = `${config.hermesBaseUrl}/api/config?${qs.toString()}`;
+    const upstreamRes = await fetch(putUrl, {
+      method: "PUT",
+      headers: upstreamHeaders,
+      body: JSON.stringify({
+        profile,
+        config: {
+          agent: {
+            bot_mode_protocol: !isPrivate,
+          },
+        },
+      }),
+      redirect: "manual",
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    if (!upstreamRes.ok) {
+      const text = await upstreamRes.text();
+      res.writeHead(upstreamRes.status, {
+        "Content-Type": upstreamRes.headers.get("content-type") || "application/json",
+        "Cache-Control": "no-store",
+      });
+      res.end(text);
+      return;
+    }
+    sendJson(res, 200, { ok: true, profile, private: isPrivate });
+  } catch (err) {
+    clearTimeout(timeout);
+    const isTimeout = err instanceof Error && err.name === "AbortError";
+    sendJson(res, isTimeout ? 504 : 502, {
+      error: isTimeout ? "upstream_timeout" : "upstream_unreachable",
+      detail: "Hermes-Konfiguration konnte nicht aktualisiert werden.",
+    });
+  }
+}
+
 export async function handleHermesHttpProxy(
   req: IncomingMessage,
   res: ServerResponse,
@@ -296,6 +384,11 @@ export async function handleHermesHttpProxy(
 
   if (pathname === "/api/pocket/secret") {
     await handlePocketSecret(req, res, config, parsedUrl);
+    return true;
+  }
+
+  if (pathname === "/api/pocket/privacy") {
+    await handlePocketPrivacy(req, res, config, parsedUrl);
     return true;
   }
 

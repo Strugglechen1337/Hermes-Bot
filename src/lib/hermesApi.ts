@@ -9,6 +9,7 @@ import type {
   HermesMessagingPlatform,
   HermesModelOptionsResponse,
   HermesProfile,
+  HermesSessionSearchHit,
   HermesSessionSummary,
   HermesStatusResponse,
 } from "../../shared/types";
@@ -208,6 +209,43 @@ export async function saveProfileSecret(
       body: JSON.stringify({ profile: profileName, key, value }),
     }
   );
+}
+
+export async function updateProfilePrivacy(
+  profileName: string,
+  isPrivate: boolean
+): Promise<{ ok: boolean; profile: string; private: boolean }> {
+  const params = new URLSearchParams({ profile: profileName });
+  return requestJson<{ ok: boolean; profile: string; private: boolean }>(
+    `/api/pocket/privacy?${params.toString()}`,
+    {
+      method: "PUT",
+      body: JSON.stringify({ profile: profileName, private: isPrivate }),
+    }
+  );
+}
+
+export async function searchSessions(
+  query: string,
+  profile?: string,
+  limit = 8
+): Promise<HermesSessionSearchHit[]> {
+  const trimmed = query.trim();
+  if (!trimmed) return [];
+  const params = new URLSearchParams({ q: trimmed, limit: String(limit) });
+  if (profile) params.set("profile", profile);
+  const data = await requestJson<{ results?: HermesSessionSearchHit[] }>(
+    `/api/sessions/search?${params.toString()}`
+  );
+  const rows = Array.isArray(data?.results) ? data.results : [];
+  return rows
+    .map((r) => ({
+      ...r,
+      id: r.id || r.session_id || "",
+      session_id: r.session_id || r.id || "",
+      profile: r.profile || profile || "default",
+    }))
+    .filter((r) => Boolean(r.session_id));
 }
 
 export async function fetchSessions(profile?: string, limit = 40): Promise<HermesSessionSummary[]> {

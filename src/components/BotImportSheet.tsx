@@ -17,9 +17,15 @@ import {
   parseBotImportText,
   slugifyBotName,
 } from "../lib/botImportParser";
+import { deriveShortBotCallName } from "../lib/botCollaboration";
 import { getBotVisual } from "../lib/botTheme";
-import { createProfile, fetchProfileFallback, updateProfileFallback } from "../lib/hermesApi";
-import type { WsConnectionState } from "../lib/hermesWs";
+import {
+  createProfile,
+  fetchProfileFallback,
+  updateProfileFallback,
+  updateProfilePrivacy,
+} from "../lib/hermesApi";
+import { hermesWs, type WsConnectionState } from "../lib/hermesWs";
 import { RECOMMENDED_ANTHROPIC_FALLBACK } from "../lib/usageLimits";
 import { BotAvatar } from "./BotAvatar";
 import { Sheet } from "./Sheet";
@@ -27,6 +33,7 @@ import { Sheet } from "./Sheet";
 interface BotImportSheetProps {
   open: boolean;
   wsState: WsConnectionState;
+  asPrivate?: boolean;
   onClose: () => void;
   onImported: (profileName: string, avatarDataUrl: string | null) => Promise<void> | void;
 }
@@ -34,6 +41,7 @@ interface BotImportSheetProps {
 export const BotImportSheet: React.FC<BotImportSheetProps> = ({
   open,
   wsState,
+  asPrivate = false,
   onClose,
   onImported,
 }) => {
@@ -122,6 +130,24 @@ export const BotImportSheet: React.FC<BotImportSheetProps> = ({
       const targetFallbacks =
         defaultFallbacks.length > 0 ? defaultFallbacks : [RECOMMENDED_ANTHROPIC_FALLBACK];
       await updateProfileFallback(finalName, targetFallbacks).catch(() => null);
+
+      // Register clean short call name (e.g. "Clara") in Hermes Bot Mode metadata so
+      // other bots recognize mentions without @ or suffix (e.g. "Frag Clara ...").
+      const shortCallName = deriveShortBotCallName(effectiveName || finalName);
+      if (asPrivate) {
+        await updateProfilePrivacy(finalName, true).catch(() => null);
+      }
+      if (wsState === "connected") {
+        await hermesWs
+          .call("profiles.configure", {
+            name: finalName,
+            ui_meta: {
+              ...(shortCallName ? { "hermes-bots": { title: shortCallName } } : {}),
+              ...(asPrivate ? { "hermes-pocket": { private: true } } : {}),
+            },
+          })
+          .catch(() => null);
+      }
 
       if (avatarPreview && wsState === "connected") {
         await saveBotAvatar(finalName, avatarPreview).catch(() => null);

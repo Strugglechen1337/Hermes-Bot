@@ -3,6 +3,7 @@ import type { HermesProfile, HermesSessionSummary } from "../../shared/types";
 import {
   BOT_CHAT_TITLE,
   buildGroupMembersPayload,
+  deriveShortBotCallName,
   getBotHandle,
   pickPreferredBotSession,
 } from "./botCollaboration";
@@ -75,5 +76,13 @@ describe("botCollaboration", () => {
       { id: "s-chat", title: "PowerShell", source: "local" },
     ];
     expect(pickPreferredBotSession(withoutCanonical)?.id).toBe("s-chat");
+  });
+
+  it("derives short call names for natural teammate mentions without @", () => {
+    expect(deriveShortBotCallName("clara-it")).toBe("Clara");
+    expect(deriveShortBotCallName("Anna-coding")).toBe("Anna");
+    expect(deriveShortBotCallName("nina-recherche")).toBe("Nina");
+    expect(deriveShortBotCallName("mika")).toBe("Mika");
+    expect(deriveShortBotCallName("default")).toBe("Hermes");
   });
 });

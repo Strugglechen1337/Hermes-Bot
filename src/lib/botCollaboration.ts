@@ -19,6 +19,20 @@ export function getBotHandle(profileName: string, allProfileNames: string[]): st
   return profileName;
 }
 
+/**
+ * Derives a clean, natural call name (without @ or role suffix) for Hermes
+ * `ui_meta["hermes-bots"].title` so bots recognize natural names like "Clara",
+ * "Anna", "Nina", or "Mika" in plain sentences without needing "@clara-it".
+ */
+export function deriveShortBotCallName(rawName: string): string {
+  const cleaned = rawName.trim();
+  if (!cleaned) return "";
+  if (cleaned.toLowerCase() === "default") return "Hermes";
+  // Split on hyphen/underscore/whitespace: "Clara-it" -> "Clara", "Anna Coding" -> "Anna"
+  const firstToken = cleaned.split(/[-_\s]+/).filter(Boolean)[0] || cleaned;
+  return firstToken.charAt(0).toUpperCase() + firstToken.slice(1);
+}
+
 export interface HermesGroupMemberInput {
   member_id: string;
   profile: string;

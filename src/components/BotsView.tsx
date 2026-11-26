@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   AlertCircle,
   ArrowUp,
@@ -12,6 +13,8 @@ import {
   History,
   Image as ImageIcon,
   KeyRound,
+  Lock,
+  MessageSquare,
   MessageSquarePlus,
   MoreHorizontal,
   Paperclip,
@@ -23,6 +26,7 @@ import {
   ShieldCheck,
   Square,
   Trash2,
+  Unlock,
   Wrench,
   X,
 } from "lucide-react";
@@ -35,12 +39,14 @@ import type {
   HermesPendingApproval,
   HermesProfile,
   HermesServerRequest,
+  HermesSessionSearchHit,
   HermesSessionSummary,
   HermesUsageLimitError,
 } from "../../shared/types";
 import { clearBotAvatar, prepareAvatarDataUrl, saveBotAvatar } from "../lib/avatarStore";
 import {
   BOT_CHAT_TITLE,
+  deriveShortBotCallName,
   getBotHandle,
   pickPreferredBotSession,
 } from "../lib/botCollaboration";
@@ -63,13 +69,16 @@ import {
   normalizeMessages,
   prepareChatImageDataUrl,
   renameSession,
+  searchSessions,
   updateProfileDescription,
   updateProfileFallback,
   updateProfileModel,
+  updateProfilePrivacy,
   updateProfileSoul,
   uploadChatFile,
 } from "../lib/hermesApi";
 import { hermesWs, type WsConnectionState } from "../lib/hermesWs";
+import { cleanSearchSnippet, PRIVATE_CHAT_TITLE } from "../lib/privateVault";
 import {
   EMPTY_CHAT_USAGE,
   formatCompactWindowLabel,
@@ -100,15 +109,19 @@ interface BotsViewProps {
   profiles: HermesProfile[];
   avatars: Record<string, string>;
   hiddenProfiles?: string[];
+  privateProfileNames?: string[];
   loading: boolean;
   error: string | null;
   wsState: WsConnectionState;
   selectedBotName: string | null;
   openCreateTrigger?: number;
+  createAsPrivate?: boolean;
   onSelectBot: (name: string | null) => void;
   onRefreshProfiles: () => Promise<void> | void;
   onAvatarChange: (profileName: string, dataUrl: string | null) => void;
   onToggleHideProfile?: (profileName: string) => void;
+  onToggleBotPrivate?: (profile: HermesProfile, makePrivate: boolean) => Promise<void>;
+  onOpenPrivateVault?: () => void;
   onOpenConnectors?: () => void;
 }
 
@@ -129,18 +142,29 @@ export const BotsView: React.FC<BotsViewProps> = ({
   profiles,
   avatars,
   hiddenProfiles = [],
+  privateProfileNames = [],
   loading,
   error,
   wsState,
   selectedBotName,
   openCreateTrigger = 0,
+  createAsPrivate = false,
   onSelectBot,
   onRefreshProfiles,
   onAvatarChange,
   onToggleHideProfile,
+  onToggleBotPrivate,
+  onOpenPrivateVault,
   onOpenConnectors,
 }) => {
   const [query, setQuery] = useState("");
+  const [searchHits, setSearchHits] = useState<HermesSessionSearchHit[]>([]);
+  const [searchingMessages, setSearchingMessages] = useState(false);
+  const [openTargetSession, setOpenTargetSession] = useState<{
+    botName: string;
+    sessionId: string;
+    title?: string | null;
+  } | null>(null);
   const [recentByProfile, setRecentByProfile] = useState<Record<string, HermesSessionSummary>>({});
 
   // Create Bot & Import Sheets
@@ -160,6 +184,7 @@ export const BotsView: React.FC<BotsViewProps> = ({
 
   // Manage / Edit Bot Sheet
   const [manageProfile, setManageProfile] = useState<HermesProfile | null>(null);
+  const [editTitle, setEditTitle] = useState("");
   const [editDesc, setEditDesc] = useState("");
   const [editSoul, setEditSoul] = useState("");
   const [loadingSoul, setLoadingSoul] = useState(false);
@@ -214,11 +239,16 @@ export const BotsView: React.FC<BotsViewProps> = ({
     [profiles, selectedBotName]
   );
 
+  const privateSet = useMemo(() => new Set(privateProfileNames), [privateProfileNames]);
+
+  const publicProfiles = useMemo(() => {
+    const hiddenSet = new Set(hiddenProfiles);
+    return profiles.filter((p) => !hiddenSet.has(p.name) && !privateSet.has(p.name));
+  }, [profiles, hiddenProfiles, privateSet]);
+
   const filteredProfiles = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const hiddenSet = new Set(hiddenProfiles);
-    const visible = profiles.filter((p) => !hiddenSet.has(p.name));
-    const sorted = [...visible].sort((a, b) => {
+    const sorted = [...publicProfiles].sort((a, b) => {
       const rank = (n: string) => (n === "mika" ? 0 : n === "default" ? 1 : 2);
       const diff = rank(a.name) - rank(b.name);
       if (diff !== 0) return diff;
@@ -233,10 +263,56 @@ export const BotsView: React.FC<BotsViewProps> = ({
         (p.description || "").toLowerCase().includes(q)
       );
     });
-  }, [profiles, hiddenProfiles, query]);
+  }, [publicProfiles, query]);
+
+  // Debounced full-text search across all non-private bot conversations
+  useEffect(() => {
+    const trimmed = query.trim();
+    if (trimmed.toLowerCase() === "/privat" && onOpenPrivateVault) {
+      setQuery("");
+      setSearchHits([]);
+      onOpenPrivateVault();
+      return;
+    }
+    if (trimmed.length < 2 || publicProfiles.length === 0) {
+      setSearchHits([]);
+      setSearchingMessages(false);
+      return;
+    }
+    let cancelled = false;
+    setSearchingMessages(true);
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const perBot = await Promise.all(
+            publicProfiles.map((p) => searchSessions(trimmed, p.name, 5).catch(() => []))
+          );
+          if (cancelled) return;
+          const merged = perBot
+            .flat()
+            .filter((hit) => !privateSet.has(hit.profile))
+            .sort((a, b) => {
+              const ta = toTimestampMs(a.last_active ?? a.session_started ?? a.started_at) ?? 0;
+              const tb = toTimestampMs(b.last_active ?? b.session_started ?? b.started_at) ?? 0;
+              return tb - ta;
+            })
+            .slice(0, 20);
+          setSearchHits(merged);
+        } finally {
+          if (!cancelled) setSearchingMessages(false);
+        }
+      })();
+    }, 280);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [onOpenPrivateVault, privateSet, publicProfiles, query]);
 
   async function openManageSheet(profile: HermesProfile) {
     setManageProfile(profile);
+    const vis = getBotVisual(profile);
+    setEditTitle(profile.bot_title?.trim() || profile.display_name?.trim() || vis.label);
     setEditDesc(profile.description || "");
     setEditSoul("");
     setManageError(null);
@@ -286,6 +362,22 @@ export const BotsView: React.FC<BotsViewProps> = ({
       const targetFallbacks =
         defaultFallbacks.length > 0 ? defaultFallbacks : [RECOMMENDED_ANTHROPIC_FALLBACK];
       await updateProfileFallback(finalName, targetFallbacks).catch(() => null);
+
+      const shortCallName = deriveShortBotCallName(createName || finalName);
+      if (createAsPrivate) {
+        await updateProfilePrivacy(finalName, true).catch(() => null);
+      }
+      if (wsState === "connected") {
+        await hermesWs
+          .call("profiles.configure", {
+            name: finalName,
+            ui_meta: {
+              ...(shortCallName ? { "hermes-bots": { title: shortCallName } } : {}),
+              ...(createAsPrivate ? { "hermes-pocket": { private: true } } : {}),
+            },
+          })
+          .catch(() => null);
+      }
 
       if (createAvatarPreview && wsState === "connected") {
         await saveBotAvatar(finalName, createAvatarPreview).catch(() => null);
@@ -338,9 +430,29 @@ export const BotsView: React.FC<BotsViewProps> = ({
     setSavingBot(true);
     setManageError(null);
     try {
+      const cleanTitle = editTitle.trim();
+      const existingBotsMeta =
+        manageProfile.ui_meta &&
+        typeof manageProfile.ui_meta["hermes-bots"] === "object" &&
+        manageProfile.ui_meta["hermes-bots"] !== null
+          ? (manageProfile.ui_meta["hermes-bots"] as Record<string, unknown>)
+          : {};
       await Promise.all([
         updateProfileDescription(manageProfile.name, editDesc.trim()),
         updateProfileSoul(manageProfile.name, editSoul),
+        wsState === "connected" && cleanTitle
+          ? hermesWs
+              .call("profiles.configure", {
+                name: manageProfile.name,
+                ui_meta: {
+                  "hermes-bots": {
+                    ...existingBotsMeta,
+                    title: cleanTitle,
+                  },
+                },
+              })
+              .catch(() => null)
+          : Promise.resolve(),
       ]);
       setManageProfile(null);
       await onRefreshProfiles();
@@ -372,15 +484,25 @@ export const BotsView: React.FC<BotsViewProps> = ({
   }
 
   if (selectedProfile) {
-    const allProfileNames = profiles.map((p) => p.name);
+    const isPrivateSelected = privateSet.has(selectedProfile.name);
+    const matchingTargetSession =
+      openTargetSession && openTargetSession.botName === selectedProfile.name
+        ? openTargetSession
+        : null;
     return (
       <>
         <DirectChatView
           profile={selectedProfile}
-          allProfileNames={allProfileNames}
+          allProfiles={publicProfiles}
+          isPrivateBot={isPrivateSelected}
+          initialSessionId={matchingTargetSession?.sessionId || null}
+          initialSessionTitle={matchingTargetSession?.title || null}
           avatarUrl={avatars[selectedProfile.name] || null}
           wsState={wsState}
-          onBack={() => onSelectBot(null)}
+          onBack={() => {
+            setOpenTargetSession(null);
+            onSelectBot(null);
+          }}
           onOpenBotSettings={() => void openManageSheet(selectedProfile)}
           onOpenConnectors={onOpenConnectors}
           onRefreshProfiles={onRefreshProfiles}
@@ -397,11 +519,13 @@ export const BotsView: React.FC<BotsViewProps> = ({
             profile={manageProfile}
             avatarUrl={avatars[manageProfile.name] || null}
             wsState={wsState}
+            editTitle={editTitle}
             editDesc={editDesc}
             editSoul={editSoul}
             loadingSoul={loadingSoul}
             saving={savingBot}
             error={manageError}
+            onChangeTitle={setEditTitle}
             onChangeDesc={setEditDesc}
             onChangeSoul={setEditSoul}
             onPickImage={() => editFileInputRef.current?.click()}
@@ -413,6 +537,17 @@ export const BotsView: React.FC<BotsViewProps> = ({
             }}
             onSave={handleSaveBotDetails}
             onRequestDelete={() => setConfirmDeleteBot(manageProfile)}
+            isPrivate={privateSet.has(manageProfile.name)}
+            onTogglePrivate={
+              onToggleBotPrivate && !manageProfile.is_default
+                ? async () => {
+                    const target = manageProfile;
+                    const makePriv = !privateSet.has(target.name);
+                    setManageProfile(null);
+                    await onToggleBotPrivate(target, makePriv);
+                  }
+                : undefined
+            }
             onRequestHide={
               onToggleHideProfile
                 ? () => {
@@ -461,7 +596,7 @@ export const BotsView: React.FC<BotsViewProps> = ({
           type="search"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Suchen"
+          placeholder="Bots & Gespräche durchsuchen"
         />
       </div>
 
@@ -550,6 +685,76 @@ export const BotsView: React.FC<BotsViewProps> = ({
         </div>
       )}
 
+      {query.trim().length >= 2 && (
+        <div style={{ marginTop: 14 }}>
+          <div className="section-header" style={{ marginTop: 4 }}>
+            <span className="section-title">
+              Treffer in Gesprächen ({searchingMessages ? "…" : searchHits.length})
+            </span>
+          </div>
+          {searchingMessages && searchHits.length === 0 ? (
+            <div className="empty-state" style={{ padding: "18px 14px" }}>
+              <p style={{ margin: 0 }}>Durchsuche alle Bot-Gespräche…</p>
+            </div>
+          ) : searchHits.length === 0 ? (
+            <div className="empty-state" style={{ padding: "16px 14px" }}>
+              <p style={{ margin: 0 }}>Keine passenden Nachrichten gefunden.</p>
+            </div>
+          ) : (
+            <div className="card-stack">
+              {searchHits.map((hit) => {
+                const prof = profiles.find((p) => p.name === hit.profile);
+                const vis = prof
+                  ? getBotVisual(prof)
+                  : getBotVisual({
+                      name: hit.profile,
+                      display_name: hit.profile,
+                      bot_title: "",
+                      description: "",
+                      model: null,
+                    });
+                const snippet = cleanSearchSnippet(hit.snippet || hit.preview);
+                const ts = hit.last_active ?? hit.session_started ?? hit.started_at;
+                return (
+                  <button
+                    key={`${hit.profile}:${hit.session_id}`}
+                    type="button"
+                    className="search-hit-card"
+                    onClick={() => {
+                      setOpenTargetSession({
+                        botName: hit.profile,
+                        sessionId: hit.session_id,
+                        title: hit.title,
+                      });
+                      onSelectBot(hit.profile);
+                    }}
+                  >
+                    <BotAvatar visual={vis} imageUrl={avatars[hit.profile]} size="sm" />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div className="bot-card-row">
+                        <span style={{ fontWeight: 700, fontSize: "0.9rem" }}>{vis.label}</span>
+                        {ts && (
+                          <span className="bot-list-time">{formatRelativeTime(ts)}</span>
+                        )}
+                      </div>
+                      {hit.title && (
+                        <div style={{ fontSize: "0.74rem", color: "var(--accent-indigo)", marginTop: 1, display: "flex", alignItems: "center", gap: 4 }}>
+                          <MessageSquare size={11} />
+                          <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                            {hit.title}
+                          </span>
+                        </div>
+                      )}
+                      {snippet && <div className="search-hit-snippet">{snippet}</div>}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
       <input
         ref={createFileInputRef}
         type="file"
@@ -573,7 +778,9 @@ export const BotsView: React.FC<BotsViewProps> = ({
         }}
       >
         <div className="sheet-header">
-          <h2 className="sheet-title">Bot hinzufügen</h2>
+          <h2 className="sheet-title">
+            {createAsPrivate ? "Privaten Bot hinzufügen" : "Bot hinzufügen"}
+          </h2>
           <button
             type="button"
             className="icon-btn ghost"
@@ -683,11 +890,13 @@ export const BotsView: React.FC<BotsViewProps> = ({
           profile={manageProfile}
           avatarUrl={avatars[manageProfile.name] || null}
           wsState={wsState}
+          editTitle={editTitle}
           editDesc={editDesc}
           editSoul={editSoul}
           loadingSoul={loadingSoul}
           saving={savingBot}
           error={manageError}
+          onChangeTitle={setEditTitle}
           onChangeDesc={setEditDesc}
           onChangeSoul={setEditSoul}
           onPickImage={() => editFileInputRef.current?.click()}
@@ -699,6 +908,17 @@ export const BotsView: React.FC<BotsViewProps> = ({
           }}
           onSave={handleSaveBotDetails}
           onRequestDelete={() => setConfirmDeleteBot(manageProfile)}
+          isPrivate={privateSet.has(manageProfile.name)}
+          onTogglePrivate={
+            onToggleBotPrivate && !manageProfile.is_default
+              ? async () => {
+                  const target = manageProfile;
+                  const makePriv = !privateSet.has(target.name);
+                  setManageProfile(null);
+                  await onToggleBotPrivate(target, makePriv);
+                }
+              : undefined
+          }
           onRequestHide={
             onToggleHideProfile
               ? () => {
@@ -714,6 +934,7 @@ export const BotsView: React.FC<BotsViewProps> = ({
       <BotImportSheet
         open={showImportSheet}
         wsState={wsState}
+        asPrivate={createAsPrivate}
         onClose={() => setShowImportSheet(false)}
         onImported={async (name, avatarData) => {
           if (avatarData) onAvatarChange(name, avatarData);
@@ -756,11 +977,13 @@ interface BotManageSheetProps {
   profile: HermesProfile;
   avatarUrl: string | null;
   wsState: WsConnectionState;
+  editTitle: string;
   editDesc: string;
   editSoul: string;
   loadingSoul: boolean;
   saving: boolean;
   error: string | null;
+  onChangeTitle: (val: string) => void;
   onChangeDesc: (val: string) => void;
   onChangeSoul: (val: string) => void;
   onPickImage: () => void;
@@ -768,6 +991,8 @@ interface BotManageSheetProps {
   onOpenModelPicker: () => void;
   onSave: (e: React.FormEvent) => void;
   onRequestDelete: () => void;
+  isPrivate?: boolean;
+  onTogglePrivate?: () => Promise<void> | void;
   onRequestHide?: () => void;
   onClose: () => void;
 }
@@ -776,11 +1001,13 @@ const BotManageSheet: React.FC<BotManageSheetProps> = ({
   profile,
   avatarUrl,
   wsState,
+  editTitle,
   editDesc,
   editSoul,
   loadingSoul,
   saving,
   error,
+  onChangeTitle,
   onChangeDesc,
   onChangeSoul,
   onPickImage,
@@ -788,6 +1015,8 @@ const BotManageSheet: React.FC<BotManageSheetProps> = ({
   onOpenModelPicker,
   onSave,
   onRequestDelete,
+  isPrivate = false,
+  onTogglePrivate,
   onRequestHide,
   onClose,
 }) => {
@@ -859,6 +1088,17 @@ const BotManageSheet: React.FC<BotManageSheetProps> = ({
 
       <form onSubmit={onSave}>
         <div className="field">
+          <label htmlFor="edit-bot-title">Rufname (Anzeigename · funktioniert ohne @)</label>
+          <input
+            id="edit-bot-title"
+            className="input"
+            value={editTitle}
+            onChange={(e) => onChangeTitle(e.target.value)}
+            placeholder="z. B. Clara, Anna, Nina, Mika"
+          />
+        </div>
+
+        <div className="field">
           <label htmlFor="edit-bot-desc">Kurzbeschreibung</label>
           <input
             id="edit-bot-desc"
@@ -894,6 +1134,20 @@ const BotManageSheet: React.FC<BotManageSheetProps> = ({
       </form>
 
       <div style={{ marginTop: 16, paddingTop: 14, borderTop: "1px solid var(--border-subtle)", display: "flex", flexDirection: "column", gap: 8 }}>
+        {!profile.is_default && onTogglePrivate && (
+          <button
+            type="button"
+            className="btn full"
+            style={{ borderColor: isPrivate ? "rgba(52, 211, 153, 0.35)" : undefined }}
+            disabled={saving}
+            onClick={() => void onTogglePrivate()}
+          >
+            {isPrivate ? <Unlock size={15} /> : <Lock size={15} />}
+            {isPrivate
+              ? "Aus privatem Bereich holen (sichtbar machen)"
+              : "In privaten Bereich verschieben (isoliert)"}
+          </button>
+        )}
         {!profile.is_default ? (
           <button
             type="button"
@@ -929,7 +1183,10 @@ const BotManageSheet: React.FC<BotManageSheetProps> = ({
 
 interface DirectChatViewProps {
   profile: HermesProfile;
-  allProfileNames: string[];
+  allProfiles: HermesProfile[];
+  isPrivateBot?: boolean;
+  initialSessionId?: string | null;
+  initialSessionTitle?: string | null;
   avatarUrl: string | null;
   wsState: WsConnectionState;
   onBack: () => void;
@@ -947,7 +1204,10 @@ interface QueuedAttachment {
 
 const DirectChatView: React.FC<DirectChatViewProps> = ({
   profile,
-  allProfileNames,
+  allProfiles,
+  isPrivateBot = false,
+  initialSessionId = null,
+  initialSessionTitle = null,
   avatarUrl,
   wsState,
   onBack,
@@ -956,6 +1216,9 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
   onRefreshProfiles,
 }) => {
   const visual = getBotVisual(profile);
+  const allProfileNames = useMemo(() => allProfiles.map((p) => p.name), [allProfiles]);
+  const canonicalTitle = isPrivateBot ? PRIVATE_CHAT_TITLE : BOT_CHAT_TITLE;
+  const [showAvatarLightbox, setShowAvatarLightbox] = useState(false);
 
   const [sessions, setSessions] = useState<HermesSessionSummary[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
@@ -1190,11 +1453,11 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
         // interactive chat (e.g. from before Bot Mode) to "Bot Chat" first so its
         // message history stays right on screen instead of starting blank.
         const list = existingSessions ?? sessions;
-        const hasCanonical = list.some((s) => (s.title || "").trim() === BOT_CHAT_TITLE);
+        const hasCanonical = list.some((s) => (s.title || "").trim() === canonicalTitle);
         if (!hasCanonical) {
           const existing = pickPreferredBotSession(list);
           if (existing) {
-            await renameSession(existing.id, BOT_CHAT_TITLE, profile.name).catch(() => null);
+            await renameSession(existing.id, canonicalTitle, profile.name).catch(() => null);
           }
         }
 
@@ -1211,14 +1474,14 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
           info?: { usage?: Record<string, unknown> | null } | null;
         }>("session.create", {
           profile: profile.name,
-          request_id: randomClientId("botchat"),
+          request_id: randomClientId(isPrivateBot ? "privchat" : "botchat"),
           source: "gui",
-          title: BOT_CHAT_TITLE,
+          title: canonicalTitle,
         });
 
         const resolvedSid = snapshot?.session_id || null;
         setActiveSessionId(resolvedSid);
-        setActiveTitle(BOT_CHAT_TITLE);
+        setActiveTitle(canonicalTitle);
         if (typeof snapshot?.execution_generation === "number") {
           execGenerationRef.current = snapshot.execution_generation;
         }
@@ -1268,9 +1531,11 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
         const list = await fetchSessions(profile.name, 30);
         setSessions(list);
         if (autoOpenFirst) {
+          if (initialSessionId) {
+            await loadSessionHistory(initialSessionId, initialSessionTitle || "Suchtreffer");
+            return;
+          }
           if (wsState === "connected") {
-            // Use Hermes's official idempotent canonical "Bot Chat" create/resume so
-            // every bot always gets the live teammate roster & `message_agent` tool!
             await openCanonicalBotChat(list, false);
             const refreshed = await fetchSessions(profile.name, 30).catch(() => list);
             setSessions(refreshed);
@@ -1278,10 +1543,10 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
           }
           const preferred = pickPreferredBotSession(list);
           if (preferred) {
-            await loadSessionHistory(preferred.id, preferred.title || BOT_CHAT_TITLE);
+            await loadSessionHistory(preferred.id, preferred.title || canonicalTitle);
           } else {
             setActiveSessionId(null);
-            setActiveTitle(BOT_CHAT_TITLE);
+            setActiveTitle(canonicalTitle);
             setMessages([]);
             attachedOnWsRef.current = false;
             setLoadingChat(false);
@@ -1292,12 +1557,20 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
         setLoadingChat(false);
       }
     },
-    [loadSessionHistory, openCanonicalBotChat, profile.name, wsState]
+    [
+      canonicalTitle,
+      initialSessionId,
+      initialSessionTitle,
+      loadSessionHistory,
+      openCanonicalBotChat,
+      profile.name,
+      wsState,
+    ]
   );
 
   useEffect(() => {
     void refreshSessionsList(true);
-  }, [profile.name]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [profile.name, initialSessionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (wsState !== "connected") {
@@ -1306,7 +1579,7 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
       return;
     }
     if (!attachedOnWsRef.current) {
-      if (activeSessionId && activeTitle !== BOT_CHAT_TITLE) {
+      if (activeSessionId && activeTitle !== canonicalTitle) {
         void loadSessionHistory(activeSessionId, activeTitle);
       } else {
         void openCanonicalBotChat(undefined, messages.length > 0);
@@ -1722,7 +1995,7 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
     let appendedOptimistic = false;
     try {
       if (!sid) {
-        const hasCanonical = sessions.some((s) => (s.title || "").trim() === BOT_CHAT_TITLE);
+        const hasCanonical = sessions.some((s) => (s.title || "").trim() === canonicalTitle);
         const created = await hermesWs.call<{
           session_id: string;
           stored_session_id?: string;
@@ -1731,7 +2004,7 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
           profile: profile.name,
           request_id: randomClientId("req"),
           source: "gui",
-          ...(!hasCanonical ? { title: BOT_CHAT_TITLE } : {}),
+          ...(!hasCanonical ? { title: canonicalTitle } : {}),
         });
         sid = created.session_id;
         if (typeof created.execution_generation === "number") {
@@ -1740,7 +2013,7 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
         attachedOnWsRef.current = true;
         setActiveSessionId(sid);
         setActiveTitle(
-          !hasCanonical ? BOT_CHAT_TITLE : (text || pendingFiles[0]?.file.name || "Chat").slice(0, 48)
+          !hasCanonical ? canonicalTitle : (text || pendingFiles[0]?.file.name || "Chat").slice(0, 48)
         );
         void refreshSessionsList(false);
       } else if (!attachedOnWsRef.current) {
@@ -1962,16 +2235,19 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
     }
   }
 
-  const teammates = useMemo(
-    () =>
-      allProfileNames
-        .filter((name) => name !== profile.name)
-        .map((name) => ({
-          name,
-          handle: getBotHandle(name, allProfileNames),
-        })),
-    [allProfileNames, profile.name]
-  );
+  const teammates = useMemo(() => {
+    if (isPrivateBot) return [];
+    return allProfiles
+      .filter((p) => p.name !== profile.name)
+      .map((p) => {
+        const vis = getBotVisual(p);
+        return {
+          name: p.name,
+          label: vis.label,
+          handle: getBotHandle(p.name, allProfileNames),
+        };
+      });
+  }, [allProfileNames, allProfiles, isPrivateBot, profile.name]);
 
   const limitSummary = useMemo(() => getPrimaryLimitSummary(usage), [usage]);
   const primaryFallback = fallbacks[0] || RECOMMENDED_ANTHROPIC_FALLBACK;
@@ -1995,14 +2271,26 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
           <ChevronLeft size={22} />
         </button>
 
-        <button
-          type="button"
-          className="glass-title-pill"
-          onClick={onOpenBotSettings}
-        >
-          <BotAvatar visual={visual} imageUrl={avatarUrl} size="sm" />
-          <span className="glass-title-pill-label">{visual.label}</span>
-        </button>
+        <div className="glass-title-pill-group">
+          <button
+            type="button"
+            className="glass-avatar-trigger"
+            aria-label={`Profilbild von ${visual.label} groß anzeigen`}
+            onClick={() => setShowAvatarLightbox(true)}
+          >
+            <BotAvatar visual={visual} imageUrl={avatarUrl} size="sm" />
+          </button>
+          <button
+            type="button"
+            className="glass-title-trigger"
+            onClick={onOpenBotSettings}
+          >
+            {isPrivateBot && (
+              <Lock size={12} style={{ color: "var(--status-ok)", flexShrink: 0 }} />
+            )}
+            <span className="glass-title-pill-label">{visual.label}</span>
+          </button>
+        </div>
 
         <button
           type="button"
@@ -2367,12 +2655,12 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
                     onClick={() => {
                       setShowActionsSheet(false);
                       setInput((prev) =>
-                        prev.trim() ? `${prev.trim()} @${tm.handle} ` : `Frag @${tm.handle}: `
+                        prev.trim() ? `${prev.trim()} ${tm.label} ` : `Frag ${tm.label}: `
                       );
                       requestAnimationFrame(() => textareaRef.current?.focus());
                     }}
                   >
-                    @{tm.handle}
+                    {tm.label}
                   </button>
                 ))}
               </div>
@@ -2593,6 +2881,78 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
         onCancel={() => setSessionToDelete(null)}
         onConfirm={() => void handleConfirmDeleteSession()}
       />
+
+      {showAvatarLightbox &&
+        createPortal(
+          <div
+            className="avatar-lightbox-backdrop"
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Profilbild von ${visual.label}`}
+            onClick={() => setShowAvatarLightbox(false)}
+          >
+            <div
+              className="avatar-lightbox-content"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {avatarUrl ? (
+                <img
+                  src={avatarUrl}
+                  alt={visual.label}
+                  className="avatar-lightbox-photo"
+                />
+              ) : (
+                <div
+                  className="avatar-lightbox-photo"
+                  style={{
+                    background: visual.gradient,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: "4rem",
+                    fontWeight: 800,
+                    color: "#090b10",
+                  }}
+                >
+                  {visual.initials}
+                </div>
+              )}
+
+              <div>
+                <div style={{ fontSize: "1.2rem", fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 6 }}>
+                  {isPrivateBot && <Lock size={15} style={{ color: "var(--status-ok)" }} />}
+                  <span>{visual.label}</span>
+                </div>
+                {profile.description && (
+                  <p style={{ margin: "6px 0 0", fontSize: "0.85rem", color: "var(--text-secondary)", lineHeight: 1.45 }}>
+                    {profile.description}
+                  </p>
+                )}
+              </div>
+
+              <div style={{ display: "flex", gap: 10 }}>
+                <button
+                  type="button"
+                  className="btn sm"
+                  onClick={() => {
+                    setShowAvatarLightbox(false);
+                    onOpenBotSettings();
+                  }}
+                >
+                  <Settings2 size={14} /> Bot bearbeiten
+                </button>
+                <button
+                  type="button"
+                  className="btn sm primary"
+                  onClick={() => setShowAvatarLightbox(false)}
+                >
+                  Schließen
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
     </div>
   );
 };

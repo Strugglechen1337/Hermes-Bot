@@ -157,4 +157,22 @@ describe("Hermes Pocket BFF HTTP Proxy", () => {
     });
     expect(okRes.status).toBe(200);
   });
+
+  it("updates agent.bot_mode_protocol safely via /api/pocket/privacy and refuses default profile", async () => {
+    const badDefault = await fetch(`${bffUrl}/api/pocket/privacy?profile=default`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ private: true }),
+    });
+    expect(badDefault.status).toBe(400);
+
+    const okRes = await fetch(`${bffUrl}/api/pocket/privacy?profile=privat-bot`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ private: true }),
+    });
+    expect(okRes.status).toBe(200);
+    const data = (await okRes.json()) as { ok: boolean; private: boolean };
+    expect(data).toMatchObject({ ok: true, private: true });
+  });
 });

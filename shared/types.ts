@@ -54,6 +54,20 @@ export interface HermesSessionSummary {
   preview?: string | null;
 }
 
+export interface HermesSessionSearchHit {
+  id: string;
+  session_id: string;
+  profile: string;
+  title?: string | null;
+  snippet?: string | null;
+  preview?: string | null;
+  role?: string | null;
+  source?: string | null;
+  last_active?: number | string | null;
+  session_started?: number | string | null;
+  started_at?: number | string | null;
+}
+
 export interface HermesChatAttachmentPreview {
   name: string;
   isImage: boolean;
