@@ -24,7 +24,7 @@ const MAIL_ACTION_RE =
   /\b(e-?mail|mails?|imap|smtp|gmail|outlook|sendmail|mailx|postfach|inbox|send_email|reply_email|forward_email|delete_email|compose_email|draft_email|newsletter)\b/i;
 
 const DESTRUCTIVE_ACTION_RE =
-  /(?:^|[\s;|&`(])(rm\s|rm$|rmdir\b|unlink\b|shred\b|wipe\b|dd\s+if=|mkfs\b|fdisk\b|parted\b|truncate\b|wipefs\b)|\bfind\b[^;\n]*\s-delete\b|\bxargs\b[^;\n]*\brm\b|\bgit\s+(?:reset\s+--hard|clean\s+-[a-z]*f|push\s+(?:--force|-f))\b|\b(?:drop\s+(?:table|database|schema)|delete\s+from|truncate\s+table)\b|\b(?:delete|purge|destroy|format|uninstall|remove_all|löschen|loeschen|entfernen)\b|\b(?:hermes\s+update|systemctl\s+(?:stop|restart|disable)\s+hermes)\b/i;
+  /(?:^|[\s;|&`(])(rm\s+-[a-z]*[rf]|rm\s+\/|rmdir\b|unlink\b|shred\b|wipe\b|dd\s+if=|mkfs\b|fdisk\b|parted\b|truncate\b|wipefs\b)|\bfind\b[^;\n]*\s-delete\b|\bxargs\b[^;\n]*\brm\b|\bgit\s+(?:reset\s+--hard|clean\s+-[a-z]*f|push\s+(?:--force|-f))\b|\b(?:drop\s+(?:table|database|schema)|delete\s+from|truncate\s+table)\b|\b(?:recursive\s+delete|delete\s+in\s+root|purge\s+all|destroy|uninstall|format\s+\/|löschen|loeschen)\b|\b(?:hermes\s+update|systemctl\s+(?:stop|restart|disable)\s+hermes)\b/i;
 
 const SENSITIVE_SYSTEM_PATH_RE =
   /(\.ssh\/|authorized_keys|\/etc\/passwd|\/etc\/shadow|\/etc\/sudoers|\bid_rsa\b|\bid_ed25519\b)/i;

@@ -348,7 +348,10 @@ export async function renameSession(
   title: string,
   profile?: string
 ): Promise<void> {
-  await requestJson(`/api/sessions/${encodeURIComponent(sessionId)}`, {
+  const params = new URLSearchParams();
+  if (profile) params.set("profile", profile);
+  const query = params.toString() ? `?${params.toString()}` : "";
+  await requestJson(`/api/sessions/${encodeURIComponent(sessionId)}${query}`, {
     method: "PATCH",
     body: JSON.stringify({ title, ...(profile ? { profile } : {}) }),
   });

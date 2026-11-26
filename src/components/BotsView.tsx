@@ -1904,7 +1904,7 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
     }));
 
     // Archive the current canonical chat cleanly (preserving 100% of its messages in Chat-Verlauf)
-    // and immediately create a fresh canonical Bot Chat / Privater Chat with 0% context.
+    // and immediately create a genuinely new canonical Bot Chat / Privater Chat with 0% context.
     const previousSid = activeSessionRef.current;
     if (previousSid && activeTitle === canonicalTitle) {
       const stamp = new Date().toLocaleString("de-DE", {
@@ -1913,12 +1913,25 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
         hour: "2-digit",
         minute: "2-digit",
       });
-      await renameSession(previousSid, `Chat ${stamp}`, profile.name).catch(() => null);
+      const archiveTitle = `Chat ${stamp}`;
+      // Update both REST (?profile=...) and WS gateway title so canonical title is freed immediately
+      await Promise.all([
+        renameSession(previousSid, archiveTitle, profile.name).catch(() => null),
+        wsState === "connected"
+          ? hermesWs
+              .call("session.title", {
+                session_id: previousSid,
+                profile: profile.name,
+                title: archiveTitle,
+              })
+              .catch(() => null)
+          : Promise.resolve(),
+      ]);
     }
 
     if (wsState === "connected") {
       try {
-        const created = await hermesWs.call<{
+        let created = await hermesWs.call<{
           session_id: string;
           execution_generation?: number;
         }>("session.create", {
@@ -1927,6 +1940,17 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
           source: "gui",
           title: canonicalTitle,
         });
+        // Safety net: if gateway still resolved to the previous session ID, mint an untitled fresh session
+        if (previousSid && created.session_id === previousSid) {
+          created = await hermesWs.call<{
+            session_id: string;
+            execution_generation?: number;
+          }>("session.create", {
+            profile: profile.name,
+            request_id: randomClientId("fresh"),
+            source: "gui",
+          });
+        }
         setActiveSessionId(created.session_id);
         setActiveTitle(canonicalTitle);
         if (typeof created.execution_generation === "number") {

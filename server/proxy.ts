@@ -470,6 +470,10 @@ async function bootstrapNewProfileDefaults(
       body: JSON.stringify({
         profile: profileName,
         config: {
+          approvals: {
+            mode: "smart",
+            timeout: 120,
+          },
           command_allowlist: SAFE_BOT_COMMAND_ALLOWLIST,
         },
       }),
