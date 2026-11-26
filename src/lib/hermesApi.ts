@@ -94,6 +94,52 @@ export async function fetchProfiles(): Promise<HermesProfile[]> {
   return Array.isArray(data?.profiles) ? data.profiles : [];
 }
 
+export async function createProfile(payload: {
+  name: string;
+  description?: string;
+  soul?: string;
+  model?: string;
+  provider?: string;
+  mirror_credentials?: boolean;
+  share_auth?: boolean;
+}): Promise<{ ok: boolean; name: string }> {
+  return requestJson<{ ok: boolean; name: string }>("/api/profiles", {
+    method: "POST",
+    body: JSON.stringify({
+      mirror_credentials: true,
+      share_auth: true,
+      ...payload,
+    }),
+  });
+}
+
+export async function deleteProfile(name: string): Promise<void> {
+  await requestJson(`/api/profiles/${encodeURIComponent(name)}`, {
+    method: "DELETE",
+  });
+}
+
+export async function fetchProfileSoul(name: string): Promise<string> {
+  const data = await requestJson<{ soul?: string; content?: string }>(
+    `/api/profiles/${encodeURIComponent(name)}/soul`
+  );
+  return data?.soul ?? data?.content ?? "";
+}
+
+export async function updateProfileSoul(name: string, soul: string): Promise<void> {
+  await requestJson(`/api/profiles/${encodeURIComponent(name)}/soul`, {
+    method: "PUT",
+    body: JSON.stringify({ content: soul, soul }),
+  });
+}
+
+export async function updateProfileDescription(name: string, description: string): Promise<void> {
+  await requestJson(`/api/profiles/${encodeURIComponent(name)}/description`, {
+    method: "PUT",
+    body: JSON.stringify({ description }),
+  });
+}
+
 export async function fetchSessions(profile?: string, limit = 40): Promise<HermesSessionSummary[]> {
   const params = new URLSearchParams({ limit: String(limit) });
   if (profile) params.set("profile", profile);

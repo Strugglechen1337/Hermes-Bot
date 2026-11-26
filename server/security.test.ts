@@ -12,6 +12,10 @@ describe("isAllowedHermesPath", () => {
     expect(isAllowedHermesPath("POST", "/auth/password-login")).toBe(true);
     expect(isAllowedHermesPath("GET", "/api/auth/me")).toBe(true);
     expect(isAllowedHermesPath("GET", "/api/profiles")).toBe(true);
+    expect(isAllowedHermesPath("POST", "/api/profiles")).toBe(true);
+    expect(isAllowedHermesPath("DELETE", "/api/profiles/coach")).toBe(true);
+    expect(isAllowedHermesPath("PUT", "/api/profiles/coach/soul")).toBe(true);
+    expect(isAllowedHermesPath("PUT", "/api/profiles/coach/description")).toBe(true);
     expect(isAllowedHermesPath("GET", "/api/sessions")).toBe(true);
     expect(isAllowedHermesPath("GET", "/api/sessions/abc-123/messages")).toBe(true);
     expect(isAllowedHermesPath("GET", "/api/cron/jobs")).toBe(true);

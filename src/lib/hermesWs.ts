@@ -1,4 +1,8 @@
-import type { JsonRpcEventFrame, JsonRpcResponse } from "../../shared/types";
+import type {
+  HermesServerRequest,
+  JsonRpcEventFrame,
+  JsonRpcResponse,
+} from "../../shared/types";
 
 export type WsConnectionState = "disconnected" | "connecting" | "connected" | "unauthorized";
 
@@ -11,6 +15,7 @@ export interface HermesGatewayEvent {
 
 type EventListener = (event: HermesGatewayEvent) => void;
 type StateListener = (state: WsConnectionState) => void;
+type ServerRequestListener = (req: HermesServerRequest) => void;
 
 interface PendingRpc {
   resolve: (value: unknown) => void;
@@ -29,6 +34,7 @@ export class HermesWsClient {
   private pending = new Map<string, PendingRpc>();
   private eventListeners = new Set<EventListener>();
   private stateListeners = new Set<StateListener>();
+  private serverRequestListeners = new Set<ServerRequestListener>();
 
   getState(): WsConnectionState {
     return this.state;
@@ -43,6 +49,11 @@ export class HermesWsClient {
     this.stateListeners.add(listener);
     listener(this.state);
     return () => this.stateListeners.delete(listener);
+  }
+
+  onServerRequest(listener: ServerRequestListener): () => void {
+    this.serverRequestListeners.add(listener);
+    return () => this.serverRequestListeners.delete(listener);
   }
 
   private setState(next: WsConnectionState): void {
@@ -112,18 +123,24 @@ export class HermesWsClient {
       this.reconnectAttempt = 0;
       this.setState("connected");
       this.startHeartbeat();
+      // Announce interactive client capabilities so Hermes sends server->client
+      // requests (clarify, connection prompts) instead of skipping them.
+      this.call("client.capabilities", { server_requests: true }, 10_000).catch(() => {
+        // Optional on older servers
+      });
     };
 
     ws.onmessage = (ev) => {
       if (typeof ev.data !== "string") return;
-      let frame: JsonRpcResponse & Partial<JsonRpcEventFrame>;
+      let frame: JsonRpcResponse & Partial<JsonRpcEventFrame> & { method?: string; params?: Record<string, unknown> };
       try {
-        frame = JSON.parse(ev.data) as JsonRpcResponse & Partial<JsonRpcEventFrame>;
+        frame = JSON.parse(ev.data) as JsonRpcResponse &
+          Partial<JsonRpcEventFrame> & { method?: string; params?: Record<string, unknown> };
       } catch {
         return;
       }
 
-      // Server -> Client event frame
+      // Server -> Client event notification
       if (frame.method === "event" && frame.params && typeof frame.params.type === "string") {
         const event: HermesGatewayEvent = {
           type: frame.params.type,
@@ -135,6 +152,24 @@ export class HermesWsClient {
         };
         for (const listener of this.eventListeners) {
           listener(event);
+        }
+        return;
+      }
+
+      // Server -> Client RPC request (has both method and id, e.g. clarify)
+      if (typeof frame.method === "string" && frame.id !== undefined && frame.id !== null) {
+        const req: HermesServerRequest = {
+          id: frame.id,
+          method: frame.method,
+          params: (frame.params && typeof frame.params === "object" ? frame.params : {}) as Record<string, unknown>,
+        };
+        if (this.serverRequestListeners.size > 0) {
+          for (const listener of this.serverRequestListeners) {
+            listener(req);
+          }
+        } else {
+          // Decline politely if no handler is mounted for this request
+          this.sendErrorResponse(req.id, 4404, "No active view to answer this request.");
         }
         return;
       }
@@ -191,6 +226,16 @@ export class HermesWsClient {
         });
       }
     }, 25_000);
+  }
+
+  sendResponse(id: string | number, result: Record<string, unknown>): void {
+    if (this.ws?.readyState !== WebSocket.OPEN) return;
+    this.ws.send(JSON.stringify({ jsonrpc: "2.0", id, result }));
+  }
+
+  sendErrorResponse(id: string | number, code: number, message: string): void {
+    if (this.ws?.readyState !== WebSocket.OPEN) return;
+    this.ws.send(JSON.stringify({ jsonrpc: "2.0", id, error: { code, message } }));
   }
 
   async call<T = unknown>(

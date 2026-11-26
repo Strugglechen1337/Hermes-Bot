@@ -344,7 +344,79 @@ a {
   gap: 8px;
 }
 
-/* Sleek Grok-style Bot Roster Row */
+/* Sleek seamless Grok-style Bot Roster */
+.search-wrap {
+  position: relative;
+  margin-bottom: 10px;
+}
+
+.search-icon {
+  position: absolute;
+  left: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.search-input {
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 14px 8px 38px;
+  border-radius: var(--radius-pill);
+  background: #12141a;
+  border: 1px solid transparent;
+  color: var(--text-primary);
+  font-size: 0.96rem;
+  outline: none;
+}
+
+.search-input:focus {
+  border-color: var(--border-strong);
+  background: #161922;
+}
+
+.search-input::placeholder {
+  color: var(--text-muted);
+}
+
+.bot-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.bot-list-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 11px 2px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.bot-list-item:last-child {
+  border-bottom: none;
+}
+
+.bot-list-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  text-align: left;
+  padding: 2px 0;
+}
+
+.bot-list-main:active {
+  opacity: 0.72;
+}
+
+.bot-list-time {
+  font-size: 0.73rem;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
 .bot-row {
   display: flex;
   align-items: center;

@@ -5,11 +5,11 @@ import {
   ArrowUp,
   Camera,
   Check,
-  ChevronRight,
-  ExternalLink,
   History,
-  Link2,
   MessageSquarePlus,
+  MoreHorizontal,
+  Plug,
+  Plus,
   RefreshCw,
   Search,
   ShieldAlert,
@@ -23,20 +23,27 @@ import type {
   HermesConnectionRequest,
   HermesPendingApproval,
   HermesProfile,
+  HermesServerRequest,
   HermesSessionSummary,
 } from "../../shared/types";
 import { clearBotAvatar, prepareAvatarDataUrl, saveBotAvatar } from "../lib/avatarStore";
 import { getBotVisual } from "../lib/botTheme";
 import { formatRelativeTime, formatShortTime, randomClientId } from "../lib/format";
 import {
+  createProfile,
+  deleteProfile,
   deleteSession,
+  fetchProfileSoul,
   fetchSessionMessages,
   fetchSessions,
   normalizeMessages,
+  updateProfileDescription,
+  updateProfileSoul,
 } from "../lib/hermesApi";
 import { hermesWs, type WsConnectionState } from "../lib/hermesWs";
 import { BotAvatar } from "./BotAvatar";
 import { ConfirmSheet } from "./ConfirmSheet";
+import { InChatConnectionCard } from "./InChatConnectionCard";
 import { SafeMarkdown } from "./SafeMarkdown";
 
 interface BotsViewProps {
@@ -46,9 +53,24 @@ interface BotsViewProps {
   error: string | null;
   wsState: WsConnectionState;
   selectedBotName: string | null;
+  openCreateTrigger?: number;
   onSelectBot: (name: string | null) => void;
-  onRefreshProfiles: () => void;
+  onRefreshProfiles: () => Promise<void> | void;
   onAvatarChange: (profileName: string, dataUrl: string | null) => void;
+  onOpenConnectors?: () => void;
+}
+
+function slugifyProfileName(raw: string): string {
+  return raw
+    .trim()
+    .toLowerCase()
+    .replace(/ä/g, "ae")
+    .replace(/ö/g, "oe")
+    .replace(/ü/g, "ue")
+    .replace(/ß/g, "ss")
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 32);
 }
 
 export const BotsView: React.FC<BotsViewProps> = ({
@@ -58,16 +80,46 @@ export const BotsView: React.FC<BotsViewProps> = ({
   error,
   wsState,
   selectedBotName,
+  openCreateTrigger = 0,
   onSelectBot,
   onRefreshProfiles,
   onAvatarChange,
+  onOpenConnectors,
 }) => {
   const [query, setQuery] = useState("");
   const [recentByProfile, setRecentByProfile] = useState<Record<string, HermesSessionSummary>>({});
-  const [avatarSheetProfile, setAvatarSheetProfile] = useState<HermesProfile | null>(null);
-  const [avatarBusy, setAvatarBusy] = useState(false);
-  const [avatarError, setAvatarError] = useState<string | null>(null);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Create Bot Sheet
+  const [showCreateSheet, setShowCreateSheet] = useState(false);
+  const [createName, setCreateName] = useState("");
+  const [createDesc, setCreateDesc] = useState("");
+  const [createSoul, setCreateSoul] = useState("");
+  const [createAvatarPreview, setCreateAvatarPreview] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
+  const createFileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Manage / Edit Bot Sheet
+  const [manageProfile, setManageProfile] = useState<HermesProfile | null>(null);
+  const [editDesc, setEditDesc] = useState("");
+  const [editSoul, setEditSoul] = useState("");
+  const [loadingSoul, setLoadingSoul] = useState(false);
+  const [savingBot, setSavingBot] = useState(false);
+  const [manageError, setManageError] = useState<string | null>(null);
+  const [confirmDeleteBot, setConfirmDeleteBot] = useState<HermesProfile | null>(null);
+  const [deletingBot, setDeletingBot] = useState(false);
+  const editFileInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (openCreateTrigger > 0) {
+      setCreateError(null);
+      setCreateName("");
+      setCreateDesc("");
+      setCreateSoul("");
+      setCreateAvatarPreview(null);
+      setShowCreateSheet(true);
+    }
+  }, [openCreateTrigger]);
 
   useEffect(() => {
     if (profiles.length === 0) return;
@@ -114,81 +166,203 @@ export const BotsView: React.FC<BotsViewProps> = ({
       return (
         p.name.toLowerCase().includes(q) ||
         vis.label.toLowerCase().includes(q) ||
-        (p.description || "").toLowerCase().includes(q) ||
-        (p.model || "").toLowerCase().includes(q)
+        (p.description || "").toLowerCase().includes(q)
       );
     });
   }, [profiles, query]);
 
-  async function handleFileSelected(e: React.ChangeEvent<HTMLInputElement>) {
+  async function openManageSheet(profile: HermesProfile) {
+    setManageProfile(profile);
+    setEditDesc(profile.description || "");
+    setEditSoul("");
+    setManageError(null);
+    setLoadingSoul(true);
+    try {
+      const soul = await fetchProfileSoul(profile.name);
+      setEditSoul(soul);
+    } catch {
+      setEditSoul("");
+    } finally {
+      setLoadingSoul(false);
+    }
+  }
+
+  async function handleCreatePickImage(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     e.target.value = "";
-    if (!file || !avatarSheetProfile) return;
-    setAvatarBusy(true);
-    setAvatarError(null);
+    if (!file) return;
     try {
       const dataUrl = await prepareAvatarDataUrl(file, 320);
-      await saveBotAvatar(avatarSheetProfile.name, dataUrl);
-      onAvatarChange(avatarSheetProfile.name, dataUrl);
-      setAvatarSheetProfile(null);
+      setCreateAvatarPreview(dataUrl);
     } catch (err) {
-      setAvatarError(err instanceof Error ? err.message : "Profilbild konnte nicht gespeichert werden.");
+      setCreateError(err instanceof Error ? err.message : "Bild konnte nicht verarbeitet werden.");
+    }
+  }
+
+  async function handleCreateBot(e: React.FormEvent) {
+    e.preventDefault();
+    const slug = slugifyProfileName(createName);
+    if (!slug) {
+      setCreateError("Bitte einen gültigen Bot-Namen (Buchstaben/Zahlen) eingeben.");
+      return;
+    }
+    setCreating(true);
+    setCreateError(null);
+    try {
+      const created = await createProfile({
+        name: slug,
+        description: createDesc.trim() || undefined,
+        soul: createSoul.trim() || undefined,
+        mirror_credentials: true,
+        share_auth: true,
+      });
+      const finalName = created?.name || slug;
+      if (createAvatarPreview && wsState === "connected") {
+        await saveBotAvatar(finalName, createAvatarPreview).catch(() => null);
+        onAvatarChange(finalName, createAvatarPreview);
+      }
+      setShowCreateSheet(false);
+      await onRefreshProfiles();
+      onSelectBot(finalName);
+    } catch (err) {
+      setCreateError(err instanceof Error ? err.message : "Bot konnte nicht erstellt werden.");
     } finally {
-      setAvatarBusy(false);
+      setCreating(false);
+    }
+  }
+
+  async function handleEditPickImage(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file || !manageProfile) return;
+    setSavingBot(true);
+    setManageError(null);
+    try {
+      const dataUrl = await prepareAvatarDataUrl(file, 320);
+      await saveBotAvatar(manageProfile.name, dataUrl);
+      onAvatarChange(manageProfile.name, dataUrl);
+    } catch (err) {
+      setManageError(err instanceof Error ? err.message : "Profilbild konnte nicht gespeichert werden.");
+    } finally {
+      setSavingBot(false);
     }
   }
 
   async function handleClearAvatar() {
-    if (!avatarSheetProfile) return;
-    setAvatarBusy(true);
-    setAvatarError(null);
+    if (!manageProfile) return;
+    setSavingBot(true);
+    setManageError(null);
     try {
-      await clearBotAvatar(avatarSheetProfile.name);
-      onAvatarChange(avatarSheetProfile.name, null);
-      setAvatarSheetProfile(null);
+      await clearBotAvatar(manageProfile.name);
+      onAvatarChange(manageProfile.name, null);
     } catch (err) {
-      setAvatarError(err instanceof Error ? err.message : "Profilbild konnte nicht entfernt werden.");
+      setManageError(err instanceof Error ? err.message : "Profilbild konnte nicht entfernt werden.");
     } finally {
-      setAvatarBusy(false);
+      setSavingBot(false);
+    }
+  }
+
+  async function handleSaveBotDetails(e: React.FormEvent) {
+    e.preventDefault();
+    if (!manageProfile) return;
+    setSavingBot(true);
+    setManageError(null);
+    try {
+      await Promise.all([
+        updateProfileDescription(manageProfile.name, editDesc.trim()),
+        updateProfileSoul(manageProfile.name, editSoul),
+      ]);
+      setManageProfile(null);
+      await onRefreshProfiles();
+    } catch (err) {
+      setManageError(err instanceof Error ? err.message : "Änderungen konnten nicht gespeichert werden.");
+    } finally {
+      setSavingBot(false);
+    }
+  }
+
+  async function handleConfirmDeleteBot() {
+    if (!confirmDeleteBot) return;
+    setDeletingBot(true);
+    try {
+      await deleteProfile(confirmDeleteBot.name);
+      onAvatarChange(confirmDeleteBot.name, null);
+      if (selectedBotName === confirmDeleteBot.name) {
+        onSelectBot(null);
+      }
+      setConfirmDeleteBot(null);
+      setManageProfile(null);
+      await onRefreshProfiles();
+    } catch (err) {
+      setManageError(err instanceof Error ? err.message : "Bot konnte nicht entfernt werden.");
+      setConfirmDeleteBot(null);
+    } finally {
+      setDeletingBot(false);
     }
   }
 
   if (selectedProfile) {
     return (
-      <DirectChatView
-        profile={selectedProfile}
-        avatarUrl={avatars[selectedProfile.name] || null}
-        wsState={wsState}
-        onBack={() => onSelectBot(null)}
-        onOpenAvatarPicker={() => {
-          setAvatarError(null);
-          setAvatarSheetProfile(selectedProfile);
-        }}
-      />
+      <>
+        <DirectChatView
+          profile={selectedProfile}
+          avatarUrl={avatars[selectedProfile.name] || null}
+          wsState={wsState}
+          onBack={() => onSelectBot(null)}
+          onOpenBotSettings={() => void openManageSheet(selectedProfile)}
+          onOpenConnectors={onOpenConnectors}
+        />
+        <input
+          ref={editFileInputRef}
+          type="file"
+          accept="image/*"
+          style={{ display: "none" }}
+          onChange={(e) => void handleEditPickImage(e)}
+        />
+        {manageProfile && (
+          <BotManageSheet
+            profile={manageProfile}
+            avatarUrl={avatars[manageProfile.name] || null}
+            wsState={wsState}
+            editDesc={editDesc}
+            editSoul={editSoul}
+            loadingSoul={loadingSoul}
+            saving={savingBot}
+            error={manageError}
+            onChangeDesc={setEditDesc}
+            onChangeSoul={setEditSoul}
+            onPickImage={() => editFileInputRef.current?.click()}
+            onClearImage={() => void handleClearAvatar()}
+            onSave={handleSaveBotDetails}
+            onRequestDelete={() => setConfirmDeleteBot(manageProfile)}
+            onClose={() => setManageProfile(null)}
+          />
+        )}
+        <ConfirmSheet
+          open={Boolean(confirmDeleteBot)}
+          title="Bot wirklich entfernen?"
+          description={`Das Hermes-Profil „${confirmDeleteBot?.name || ""}“ wird dauerhaft gelöscht.`}
+          warning="Gespeicherte Chats, Erinnerungen und Routinen dieses Bots gehen dabei verloren."
+          confirmLabel="Bot entfernen"
+          danger
+          busy={deletingBot}
+          onCancel={() => setConfirmDeleteBot(null)}
+          onConfirm={() => void handleConfirmDeleteBot()}
+        />
+      </>
     );
   }
 
   return (
     <div>
-      <div style={{ position: "relative", marginBottom: 14 }}>
-        <Search
-          size={15}
-          style={{
-            position: "absolute",
-            left: 14,
-            top: "50%",
-            transform: "translateY(-50%)",
-            color: "var(--text-muted)",
-            pointerEvents: "none",
-          }}
-        />
+      <div className="search-wrap">
+        <Search size={15} className="search-icon" />
         <input
-          className="input"
+          className="search-input"
           type="search"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Bots suchen…"
-          style={{ paddingLeft: 38, borderRadius: "var(--radius-pill)" }}
+          placeholder="Suchen"
         />
       </div>
 
@@ -201,7 +375,7 @@ export const BotsView: React.FC<BotsViewProps> = ({
               type="button"
               className="btn sm"
               style={{ marginTop: 8 }}
-              onClick={onRefreshProfiles}
+              onClick={() => void onRefreshProfiles()}
             >
               <RefreshCw size={14} /> Erneut laden
             </button>
@@ -209,49 +383,37 @@ export const BotsView: React.FC<BotsViewProps> = ({
         </div>
       )}
 
-      <div className="section-header">
-        <h2 className="section-title">Deine Bots ({filteredProfiles.length})</h2>
-        <button
-          type="button"
-          className="icon-btn ghost"
-          onClick={onRefreshProfiles}
-          aria-label="Bots aktualisieren"
-          style={{ minWidth: 34, minHeight: 34 }}
-        >
-          <RefreshCw size={15} />
-        </button>
-      </div>
-
       {loading && profiles.length === 0 ? (
         <div className="empty-state">
-          <p>Lade Hermes-Profile…</p>
+          <p>Lade Bots…</p>
         </div>
       ) : filteredProfiles.length === 0 ? (
         <div className="empty-state">
           <h3>Keine Bots gefunden</h3>
           <p>
             {query
-              ? `Kein Hermes-Profil passt zu „${query}“.`
-              : "Auf dem Hermes-Server wurden keine Profile gefunden."}
+              ? `Kein Bot passt zu „${query}“.`
+              : "Erstelle deinen ersten Hermes-Bot."}
           </p>
+          <button
+            type="button"
+            className="btn primary sm"
+            onClick={() => setShowCreateSheet(true)}
+          >
+            <Plus size={15} /> Neuer Bot
+          </button>
         </div>
       ) : (
-        <div className="card-stack">
+        <div className="bot-list">
           {filteredProfiles.map((profile) => {
             const visual = getBotVisual(profile);
             const recent = recentByProfile[profile.name];
             return (
-              <div key={profile.name} className="bot-row">
+              <div key={profile.name} className="bot-list-item">
                 <button
                   type="button"
-                  className="avatar-edit-btn"
-                  aria-label={`Profilbild von ${visual.label} ändern`}
-                  title="Profilbild ändern"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setAvatarError(null);
-                    setAvatarSheetProfile(profile);
-                  }}
+                  className="bot-list-main"
+                  onClick={() => onSelectBot(profile.name)}
                 >
                   <BotAvatar
                     visual={visual}
@@ -259,48 +421,29 @@ export const BotsView: React.FC<BotsViewProps> = ({
                     online={profile.gateway_running}
                     showStatus
                   />
-                  <span className="avatar-camera-badge">
-                    <Camera size={11} />
-                  </span>
-                </button>
-
-                <button
-                  type="button"
-                  style={{
-                    flex: 1,
-                    minWidth: 0,
-                    textAlign: "left",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 10,
-                  }}
-                  onClick={() => onSelectBot(profile.name)}
-                >
                   <div className="bot-card-body">
                     <div className="bot-card-row">
                       <span className="bot-card-name">{visual.label}</span>
                       {recent?.last_active && (
-                        <span style={{ fontSize: "0.72rem", color: "var(--text-muted)", flexShrink: 0 }}>
+                        <span className="bot-list-time">
                           {formatRelativeTime(recent.last_active)}
                         </span>
                       )}
                     </div>
                     <div className="bot-card-meta">
-                      {recent?.title || visual.subtitle}
-                    </div>
-                    <div className="bot-card-tags">
-                      {profile.model && <span className="mini-tag">{profile.model}</span>}
-                      {profile.name === "mika" && (
-                        <span className="mini-tag">E-Mail</span>
-                      )}
-                      {!profile.gateway_running && (
-                        <span className="mini-tag" style={{ color: "var(--status-warn)" }}>
-                          Offline
-                        </span>
-                      )}
+                      {profile.description?.trim() || recent?.title || "Bereit zum Chatten"}
                     </div>
                   </div>
-                  <ChevronRight size={17} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
+                </button>
+
+                <button
+                  type="button"
+                  className="icon-btn ghost"
+                  aria-label={`${visual.label} verwalten`}
+                  style={{ minWidth: 36, minHeight: 36, color: "var(--text-muted)" }}
+                  onClick={() => void openManageSheet(profile)}
+                >
+                  <MoreHorizontal size={18} />
                 </button>
               </div>
             );
@@ -308,83 +451,309 @@ export const BotsView: React.FC<BotsViewProps> = ({
         </div>
       )}
 
-      {/* Hidden native image picker for iPhone Photo Library / Camera */}
       <input
-        ref={fileInputRef}
+        ref={createFileInputRef}
         type="file"
         accept="image/*"
         style={{ display: "none" }}
-        onChange={(e) => void handleFileSelected(e)}
+        onChange={(e) => void handleCreatePickImage(e)}
+      />
+      <input
+        ref={editFileInputRef}
+        type="file"
+        accept="image/*"
+        style={{ display: "none" }}
+        onChange={(e) => void handleEditPickImage(e)}
       />
 
-      {avatarSheetProfile && (
+      {/* Create Bot Sheet */}
+      {showCreateSheet && (
         <div
           className="sheet-backdrop"
           role="dialog"
           aria-modal="true"
           onClick={(e) => {
-            if (e.target === e.currentTarget && !avatarBusy) setAvatarSheetProfile(null);
+            if (e.target === e.currentTarget && !creating) setShowCreateSheet(false);
           }}
         >
           <div className="sheet">
             <div className="sheet-header">
-              <h2 className="sheet-title">
-                Profilbild: {getBotVisual(avatarSheetProfile).label}
-              </h2>
+              <h2 className="sheet-title">Neuer Bot</h2>
               <button
                 type="button"
                 className="icon-btn ghost"
                 aria-label="Schließen"
-                disabled={avatarBusy}
-                onClick={() => setAvatarSheetProfile(null)}
+                disabled={creating}
+                onClick={() => setShowCreateSheet(false)}
               >
                 <X size={20} />
               </button>
             </div>
 
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12, margin: "8px 0 18px" }}>
-              <BotAvatar
-                visual={getBotVisual(avatarSheetProfile)}
-                imageUrl={avatars[avatarSheetProfile.name]}
-                size="lg"
-              />
-              <div style={{ fontSize: "0.82rem", color: "var(--text-secondary)", textAlign: "center" }}>
-                Wird direkt im Hermes-Profil gespeichert und ist geräteübergreifend sichtbar.
-              </div>
-            </div>
-
-            {avatarError && (
-              <div className="notice err" style={{ marginBottom: 12 }}>
-                <AlertCircle size={16} style={{ flexShrink: 0, marginTop: 2 }} />
-                <span>{avatarError}</span>
-              </div>
-            )}
-
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              <button
-                type="button"
-                className="btn primary full"
-                disabled={avatarBusy || wsState !== "connected"}
-                onClick={() => fileInputRef.current?.click()}
-              >
-                <Camera size={16} />
-                {avatarBusy ? "Speichere Bild…" : "Foto aus Mediathek / Kamera wählen"}
-              </button>
-
-              {avatars[avatarSheetProfile.name] && (
+            <form onSubmit={handleCreateBot}>
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, marginBottom: 16 }}>
                 <button
                   type="button"
-                  className="btn danger full"
-                  disabled={avatarBusy || wsState !== "connected"}
-                  onClick={() => void handleClearAvatar()}
+                  className="avatar-edit-btn"
+                  onClick={() => createFileInputRef.current?.click()}
                 >
-                  <Trash2 size={15} /> Profilbild entfernen
+                  <BotAvatar
+                    visual={getBotVisual({
+                      name: createName || "bot",
+                      display_name: createName,
+                      bot_title: "",
+                      description: "",
+                      model: null,
+                    })}
+                    imageUrl={createAvatarPreview}
+                    size="lg"
+                  />
+                  <span className="avatar-camera-badge" style={{ width: 24, height: 24 }}>
+                    <Camera size={13} />
+                  </span>
                 </button>
+                <span style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
+                  Optionales Profilbild wählen
+                </span>
+              </div>
+
+              <div className="field">
+                <label htmlFor="new-bot-name">Name</label>
+                <input
+                  id="new-bot-name"
+                  className="input"
+                  value={createName}
+                  onChange={(e) => setCreateName(e.target.value)}
+                  placeholder="z. B. Coach, Finanzen, Assistent"
+                  required
+                />
+                {createName.trim() && (
+                  <span style={{ fontSize: "0.73rem", color: "var(--text-muted)" }}>
+                    Hermes-Profil: <code>{slugifyProfileName(createName) || "—"}</code>
+                  </span>
+                )}
+              </div>
+
+              <div className="field">
+                <label htmlFor="new-bot-desc">Kurzbeschreibung</label>
+                <input
+                  id="new-bot-desc"
+                  className="input"
+                  value={createDesc}
+                  onChange={(e) => setCreateDesc(e.target.value)}
+                  placeholder="Wofür ist dieser Bot zuständig?"
+                />
+              </div>
+
+              <div className="field">
+                <label htmlFor="new-bot-soul">Persönlichkeit &amp; Anweisungen (optional)</label>
+                <textarea
+                  id="new-bot-soul"
+                  className="textarea"
+                  value={createSoul}
+                  onChange={(e) => setCreateSoul(e.target.value)}
+                  placeholder="Beschreibe Rolle, Tonfall und Aufgaben des Bots…"
+                />
+              </div>
+
+              {createError && (
+                <div className="notice err" style={{ marginBottom: 12 }}>
+                  <AlertCircle size={16} style={{ flexShrink: 0, marginTop: 2 }} />
+                  <span>{createError}</span>
+                </div>
               )}
-            </div>
+
+              <button type="submit" className="btn primary full" disabled={creating}>
+                {creating ? "Erstelle Bot…" : "Bot erstellen"}
+              </button>
+            </form>
           </div>
         </div>
       )}
+
+      {manageProfile && (
+        <BotManageSheet
+          profile={manageProfile}
+          avatarUrl={avatars[manageProfile.name] || null}
+          wsState={wsState}
+          editDesc={editDesc}
+          editSoul={editSoul}
+          loadingSoul={loadingSoul}
+          saving={savingBot}
+          error={manageError}
+          onChangeDesc={setEditDesc}
+          onChangeSoul={setEditSoul}
+          onPickImage={() => editFileInputRef.current?.click()}
+          onClearImage={() => void handleClearAvatar()}
+          onSave={handleSaveBotDetails}
+          onRequestDelete={() => setConfirmDeleteBot(manageProfile)}
+          onClose={() => setManageProfile(null)}
+        />
+      )}
+
+      <ConfirmSheet
+        open={Boolean(confirmDeleteBot)}
+        title="Bot wirklich entfernen?"
+        description={`Das Hermes-Profil „${confirmDeleteBot?.name || ""}“ wird dauerhaft gelöscht.`}
+        warning="Gespeicherte Chats, Erinnerungen und Routinen dieses Bots gehen dabei verloren."
+        confirmLabel="Bot entfernen"
+        danger
+        busy={deletingBot}
+        onCancel={() => setConfirmDeleteBot(null)}
+        onConfirm={() => void handleConfirmDeleteBot()}
+      />
+    </div>
+  );
+};
+
+// ── Manage / Edit Bot Bottom Sheet ────────────────────────────────────────────
+
+interface BotManageSheetProps {
+  profile: HermesProfile;
+  avatarUrl: string | null;
+  wsState: WsConnectionState;
+  editDesc: string;
+  editSoul: string;
+  loadingSoul: boolean;
+  saving: boolean;
+  error: string | null;
+  onChangeDesc: (val: string) => void;
+  onChangeSoul: (val: string) => void;
+  onPickImage: () => void;
+  onClearImage: () => void;
+  onSave: (e: React.FormEvent) => void;
+  onRequestDelete: () => void;
+  onClose: () => void;
+}
+
+const BotManageSheet: React.FC<BotManageSheetProps> = ({
+  profile,
+  avatarUrl,
+  wsState,
+  editDesc,
+  editSoul,
+  loadingSoul,
+  saving,
+  error,
+  onChangeDesc,
+  onChangeSoul,
+  onPickImage,
+  onClearImage,
+  onSave,
+  onRequestDelete,
+  onClose,
+}) => {
+  const vis = getBotVisual(profile);
+
+  return (
+    <div
+      className="sheet-backdrop"
+      role="dialog"
+      aria-modal="true"
+      onClick={(e) => {
+        if (e.target === e.currentTarget && !saving) onClose();
+      }}
+    >
+      <div className="sheet">
+        <div className="sheet-header">
+          <h2 className="sheet-title">{vis.label}</h2>
+          <button
+            type="button"
+            className="icon-btn ghost"
+            aria-label="Schließen"
+            disabled={saving}
+            onClick={onClose}
+          >
+            <X size={20} />
+          </button>
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10, marginBottom: 16 }}>
+          <button
+            type="button"
+            className="avatar-edit-btn"
+            disabled={saving || wsState !== "connected"}
+            onClick={onPickImage}
+          >
+            <BotAvatar visual={vis} imageUrl={avatarUrl} size="lg" />
+            <span className="avatar-camera-badge" style={{ width: 24, height: 24 }}>
+              <Camera size={13} />
+            </span>
+          </button>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button
+              type="button"
+              className="btn sm"
+              disabled={saving || wsState !== "connected"}
+              onClick={onPickImage}
+            >
+              <Camera size={14} /> Bild ändern
+            </button>
+            {avatarUrl && (
+              <button
+                type="button"
+                className="btn sm"
+                disabled={saving || wsState !== "connected"}
+                onClick={onClearImage}
+              >
+                Entfernen
+              </button>
+            )}
+          </div>
+          {profile.model && (
+            <span className="mini-tag">Modell: {profile.model} · Profil: {profile.name}</span>
+          )}
+        </div>
+
+        <form onSubmit={onSave}>
+          <div className="field">
+            <label htmlFor="edit-bot-desc">Kurzbeschreibung</label>
+            <input
+              id="edit-bot-desc"
+              className="input"
+              value={editDesc}
+              onChange={(e) => onChangeDesc(e.target.value)}
+              placeholder="Rolle des Bots"
+            />
+          </div>
+
+          <div className="field">
+            <label htmlFor="edit-bot-soul">Persönlichkeit / Anweisungen (SOUL)</label>
+            <textarea
+              id="edit-bot-soul"
+              className="textarea"
+              value={loadingSoul ? "Lade…" : editSoul}
+              disabled={loadingSoul}
+              onChange={(e) => onChangeSoul(e.target.value)}
+              placeholder="Anweisungen für diesen Bot…"
+            />
+          </div>
+
+          {error && (
+            <div className="notice err" style={{ marginBottom: 12 }}>
+              <AlertCircle size={16} style={{ flexShrink: 0, marginTop: 2 }} />
+              <span>{error}</span>
+            </div>
+          )}
+
+          <button type="submit" className="btn primary full" disabled={saving || loadingSoul}>
+            {saving ? "Speichere…" : "Änderungen speichern"}
+          </button>
+        </form>
+
+        {!profile.is_default && (
+          <div style={{ marginTop: 16, paddingTop: 14, borderTop: "1px solid var(--border-subtle)" }}>
+            <button
+              type="button"
+              className="btn danger full"
+              disabled={saving}
+              onClick={onRequestDelete}
+            >
+              <Trash2 size={15} /> Bot aus Hermes entfernen
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 };
@@ -396,7 +765,8 @@ interface DirectChatViewProps {
   avatarUrl: string | null;
   wsState: WsConnectionState;
   onBack: () => void;
-  onOpenAvatarPicker: () => void;
+  onOpenBotSettings: () => void;
+  onOpenConnectors?: () => void;
 }
 
 const DirectChatView: React.FC<DirectChatViewProps> = ({
@@ -404,7 +774,8 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
   avatarUrl,
   wsState,
   onBack,
-  onOpenAvatarPicker,
+  onOpenBotSettings,
+  onOpenConnectors,
 }) => {
   const visual = getBotVisual(profile);
 
@@ -421,6 +792,8 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
   const [activeTool, setActiveTool] = useState<string | null>(null);
   const [pendingApproval, setPendingApproval] = useState<HermesPendingApproval | null>(null);
   const [pendingConnection, setPendingConnection] = useState<HermesConnectionRequest | null>(null);
+  const [pendingClarify, setPendingClarify] = useState<HermesServerRequest | null>(null);
+  const [clarifyCustomAnswer, setClarifyCustomAnswer] = useState("");
 
   const [showSessionsSheet, setShowSessionsSheet] = useState(false);
   const [sessionToDelete, setSessionToDelete] = useState<HermesSessionSummary | null>(null);
@@ -453,6 +826,7 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
       setActiveTool(null);
       setPendingApproval(null);
       setPendingConnection(null);
+      setPendingClarify(null);
       attachedOnWsRef.current = false;
 
       try {
@@ -539,12 +913,30 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
     void refreshSessionsList(true);
   }, [profile.name]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Re-attach current session automatically once WS finishes connecting
   useEffect(() => {
     if (wsState === "connected" && activeSessionId && !attachedOnWsRef.current) {
       void loadSessionHistory(activeSessionId, activeTitle);
     }
   }, [wsState]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Handle server -> client requests (e.g. clarify questions from Mika)
+  useEffect(() => {
+    return hermesWs.onServerRequest((req) => {
+      const reqSid = typeof req.params.session_id === "string" ? req.params.session_id : null;
+      if (reqSid && activeSessionRef.current && reqSid !== activeSessionRef.current) {
+        hermesWs.sendErrorResponse(req.id, 4404, "Session not shown");
+        return;
+      }
+      if (req.method === "clarify" || req.method === "clarify.request") {
+        setPendingClarify(req);
+        setClarifyCustomAnswer("");
+        scrollToBottom();
+      } else {
+        // Decline desktop-only window requests cleanly so the agent doesn't wait 300s
+        hermesWs.sendErrorResponse(req.id, 4404, "Not supported on mobile web client");
+      }
+    });
+  }, [scrollToBottom]);
 
   useEffect(() => {
     const unsubscribe = hermesWs.onEvent((ev) => {
@@ -705,6 +1097,7 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
     setIsStreaming(false);
     setPendingApproval(null);
     setPendingConnection(null);
+    setPendingClarify(null);
     attachedOnWsRef.current = false;
   }
 
@@ -727,7 +1120,6 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
     let appendedOptimistic = false;
     try {
       if (!sid) {
-        // Canonical Hermes v0.23.4 accepts source in {'cli','tui','gui','acp','tool','oneshot'}
         const created = await hermesWs.call<{
           session_id: string;
           stored_session_id?: string;
@@ -774,7 +1166,6 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
       setIsStreaming(true);
       scrollToBottom();
 
-      // Canonical Hermes gateway requires a non-empty submission_id on prompt.submit
       await hermesWs.call("prompt.submit", {
         session_id: sid,
         profile: profile.name,
@@ -828,6 +1219,13 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
     }
   }
 
+  function handleClarifyAnswer(answer: string) {
+    if (!pendingClarify) return;
+    hermesWs.sendResponse(pendingClarify.id, { answer });
+    setPendingClarify(null);
+    setClarifyCustomAnswer("");
+  }
+
   async function handleConfirmDeleteSession() {
     if (!sessionToDelete) return;
     setDeletingSession(true);
@@ -850,6 +1248,14 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
     }
   }
 
+  const clarifyQuestion =
+    typeof pendingClarify?.params.question === "string"
+      ? pendingClarify.params.question
+      : "Rückfrage";
+  const clarifyChoices = Array.isArray(pendingClarify?.params.choices)
+    ? (pendingClarify.params.choices.filter((c): c is string => typeof c === "string"))
+    : [];
+
   return (
     <div className="chat-screen">
       <header className="topbar">
@@ -865,28 +1271,38 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
           </button>
           <button
             type="button"
-            className="avatar-edit-btn"
-            aria-label="Profilbild ändern"
-            onClick={onOpenAvatarPicker}
+            style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0, textAlign: "left" }}
+            onClick={onOpenBotSettings}
           >
             <BotAvatar visual={visual} imageUrl={avatarUrl} size="sm" />
-          </button>
-          <div style={{ minWidth: 0 }}>
-            <h1 className="topbar-title">{visual.label}</h1>
-            <div className="topbar-subtitle">
-              {isStreaming
-                ? activeTool
-                  ? `Nutzt ${activeTool}…`
-                  : "schreibt…"
-                : activeTitle}
+            <div style={{ minWidth: 0 }}>
+              <h1 className="topbar-title">{visual.label}</h1>
+              <div className="topbar-subtitle">
+                {isStreaming
+                  ? activeTool
+                    ? `Nutzt ${activeTool}…`
+                    : "schreibt…"
+                  : activeTitle}
+              </div>
             </div>
-          </div>
+          </button>
         </div>
 
         <div className="topbar-actions">
+          {onOpenConnectors && (
+            <button
+              type="button"
+              className="icon-btn ghost"
+              aria-label="Connectoren"
+              title="Connectoren"
+              onClick={onOpenConnectors}
+            >
+              <Plug size={17} />
+            </button>
+          )}
           <button
             type="button"
-            className="icon-btn"
+            className="icon-btn ghost"
             aria-label="Chats wechseln"
             title="Chats wechseln"
             onClick={() => {
@@ -894,16 +1310,16 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
               setShowSessionsSheet(true);
             }}
           >
-            <History size={17} />
+            <History size={18} />
           </button>
           <button
             type="button"
-            className="icon-btn"
+            className="icon-btn ghost"
             aria-label="Neuer Chat"
             title="Neuer Chat"
             onClick={() => void startNewChat()}
           >
-            <MessageSquarePlus size={17} />
+            <MessageSquarePlus size={18} />
           </button>
         </div>
       </header>
@@ -913,8 +1329,7 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
           <div className="notice warn">
             <AlertCircle size={17} style={{ flexShrink: 0, marginTop: 2 }} />
             <span>
-              Gateway-Verbindung:{" "}
-              {wsState === "connecting" ? "wird aufgebaut…" : "getrennt – verbinde neu…"}
+              Verbindung: {wsState === "connecting" ? "wird aufgebaut…" : "getrennt – verbinde neu…"}
             </span>
           </div>
         )}
@@ -928,19 +1343,15 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
 
         {loadingChat ? (
           <div className="empty-state">
-            <p>Lade Verlauf von {visual.label}…</p>
+            <p>Lade Verlauf…</p>
           </div>
         ) : messages.length === 0 ? (
-          <div className="empty-state" style={{ marginTop: 20 }}>
-            <div style={{ display: "flex", justifyContent: "center", marginBottom: 12 }}>
+          <div className="empty-state" style={{ marginTop: 24, background: "transparent", border: "none" }}>
+            <div style={{ display: "flex", justifyContent: "center", marginBottom: 14 }}>
               <BotAvatar visual={visual} imageUrl={avatarUrl} size="lg" />
             </div>
             <h3>{visual.label}</h3>
-            <p>
-              {profile.description ||
-                `Starte eine Unterhaltung mit ${visual.label}.`}
-            </p>
-            {profile.model && <span className="pill">{profile.model}</span>}
+            <p>{profile.description || `Schreibe eine Nachricht an ${visual.label}.`}</p>
           </div>
         ) : (
           messages.map((msg, i) => (
@@ -990,40 +1401,49 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
           </div>
         )}
 
-        {pendingConnection && pendingConnection.targets.length > 0 && (
-          <div className="card" style={{ borderColor: "rgba(165, 180, 252, 0.35)" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, fontWeight: 700 }}>
-              <Link2 size={17} style={{ color: "var(--accent-indigo)" }} />
-              <span>Connector verbinden</span>
+        {pendingConnection && activeSessionId && pendingConnection.targets.length > 0 && (
+          <InChatConnectionCard
+            profileName={profile.name}
+            sessionId={activeSessionId}
+            request={pendingConnection}
+            onUpdated={setPendingConnection}
+          />
+        )}
+
+        {pendingClarify && (
+          <div className="card" style={{ borderColor: "rgba(255,255,255,0.22)" }}>
+            <div style={{ fontWeight: 700, fontSize: "0.92rem", marginBottom: 8 }}>
+              {clarifyQuestion}
             </div>
-            <div className="card-stack">
-              {pendingConnection.targets.map((target) => (
-                <div key={target.name} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-                  <div style={{ minWidth: 0, flex: 1 }}>
-                    <div style={{ fontWeight: 600, fontSize: "0.9rem" }}>
-                      {target.display || target.name}
-                    </div>
-                    {(target.instructions || target.detail) && (
-                      <div style={{ fontSize: "0.78rem", color: "var(--text-secondary)" }}>
-                        {target.instructions || target.detail}
-                      </div>
-                    )}
-                  </div>
-                  {target.connect_url ? (
-                    <a
-                      href={target.connect_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="btn sm primary"
-                      style={{ textDecoration: "none" }}
-                    >
-                      Öffnen <ExternalLink size={13} />
-                    </a>
-                  ) : (
-                    <span className="pill">{target.state}</span>
-                  )}
-                </div>
-              ))}
+            {clarifyChoices.length > 0 && (
+              <div className="chip-row" style={{ marginBottom: 10 }}>
+                {clarifyChoices.map((choice) => (
+                  <button
+                    key={choice}
+                    type="button"
+                    className="btn sm"
+                    onClick={() => handleClarifyAnswer(choice)}
+                  >
+                    {choice}
+                  </button>
+                ))}
+              </div>
+            )}
+            <div style={{ display: "flex", gap: 8 }}>
+              <input
+                className="input"
+                value={clarifyCustomAnswer}
+                onChange={(e) => setClarifyCustomAnswer(e.target.value)}
+                placeholder="Eigene Antwort…"
+              />
+              <button
+                type="button"
+                className="btn sm primary"
+                disabled={!clarifyCustomAnswer.trim()}
+                onClick={() => handleClarifyAnswer(clarifyCustomAnswer.trim())}
+              >
+                Senden
+              </button>
             </div>
           </div>
         )}

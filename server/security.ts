@@ -13,10 +13,13 @@ const ALLOWED_HTTP_RULES: Array<{ methods: Set<string>; pattern: RegExp }> = [
   { methods: new Set(["POST"]), pattern: /^\/auth\/logout$/ },
 
   // Profiles & sessions
-  { methods: new Set(["GET"]), pattern: /^\/api\/profiles$/ },
+  { methods: new Set(["GET", "POST"]), pattern: /^\/api\/profiles$/ },
   { methods: new Set(["GET"]), pattern: /^\/api\/profiles\/active$/ },
   { methods: new Set(["GET"]), pattern: /^\/api\/profiles\/sessions$/ },
   { methods: new Set(["GET"]), pattern: /^\/api\/profiles\/sessions\/sidebar$/ },
+  { methods: new Set(["PATCH", "DELETE"]), pattern: /^\/api\/profiles\/[^/]+$/ },
+  { methods: new Set(["GET", "PUT"]), pattern: /^\/api\/profiles\/[^/]+\/soul$/ },
+  { methods: new Set(["PUT"]), pattern: /^\/api\/profiles\/[^/]+\/(description|model)$/ },
   { methods: new Set(["GET"]), pattern: /^\/api\/sessions$/ },
   { methods: new Set(["GET"]), pattern: /^\/api\/sessions\/search$/ },
   { methods: new Set(["GET", "PATCH", "DELETE"]), pattern: /^\/api\/sessions\/[^/]+$/ },

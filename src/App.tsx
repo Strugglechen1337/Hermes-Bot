@@ -4,10 +4,10 @@ import {
   CalendarClock,
   LogOut,
   Plug,
+  Plus,
   Smartphone,
   User,
   Users,
-  Wifi,
   WifiOff,
   X,
 } from "lucide-react";
@@ -52,6 +52,7 @@ export const App: React.FC = () => {
   const [tab, setTab] = useState<TabKey>("bots");
   const [selectedBotName, setSelectedBotName] = useState<string | null>(null);
   const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null);
+  const [createBotTrigger, setCreateBotTrigger] = useState(0);
 
   const [profiles, setProfiles] = useState<HermesProfile[]>([]);
   const [avatars, setAvatars] = useState<Record<string, string>>({});
@@ -217,20 +218,30 @@ export const App: React.FC = () => {
           </div>
 
           <div className="topbar-actions">
-            <span
-              className={`pill ${wsState === "connected" ? "ok" : "warn"}`}
-              title="Gateway-Liveverbindung"
-            >
-              {wsState === "connected" ? <Wifi size={12} /> : <WifiOff size={12} />}
-              {wsState === "connected" ? "Live" : "Sync…"}
-            </span>
+            {wsState !== "connected" && (
+              <span className="pill warn" title="Gateway-Verbindung">
+                <WifiOff size={12} />
+                {wsState === "connecting" ? "Verbinde…" : "Offline"}
+              </span>
+            )}
+            {tab === "bots" && (
+              <button
+                type="button"
+                className="icon-btn primary"
+                aria-label="Neuen Bot erstellen"
+                title="Neuen Bot erstellen"
+                onClick={() => setCreateBotTrigger((n) => n + 1)}
+              >
+                <Plus size={18} />
+              </button>
+            )}
             <button
               type="button"
-              className="icon-btn"
+              className="icon-btn ghost"
               aria-label="Konto und Info"
               onClick={() => setShowAccountSheet(true)}
             >
-              <User size={17} />
+              <User size={19} />
             </button>
           </div>
         </header>
@@ -245,9 +256,14 @@ export const App: React.FC = () => {
             error={profilesError}
             wsState={wsState}
             selectedBotName={selectedBotName}
+            openCreateTrigger={createBotTrigger}
             onSelectBot={setSelectedBotName}
-            onRefreshProfiles={() => void loadProfiles()}
+            onRefreshProfiles={() => loadProfiles()}
             onAvatarChange={handleAvatarChange}
+            onOpenConnectors={() => {
+              setSelectedBotName(null);
+              setTab("connectors");
+            }}
           />
         ) : (
           <GroupsView
@@ -268,9 +284,11 @@ export const App: React.FC = () => {
               error={profilesError}
               wsState={wsState}
               selectedBotName={selectedBotName}
+              openCreateTrigger={createBotTrigger}
               onSelectBot={setSelectedBotName}
-              onRefreshProfiles={() => void loadProfiles()}
+              onRefreshProfiles={() => loadProfiles()}
               onAvatarChange={handleAvatarChange}
+              onOpenConnectors={() => setTab("connectors")}
             />
           )}
           {tab === "groups" && (

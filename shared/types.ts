@@ -261,6 +261,14 @@ export interface HermesConnectorAccount {
   updated_at?: string;
 }
 
+export interface HermesConnectionTargetEnvField {
+  name: string;
+  required: boolean;
+  secret: boolean;
+  default?: string;
+  prompt?: string | null;
+}
+
 export interface HermesConnectionTarget {
   name: string;
   kind?: string;
@@ -269,18 +277,27 @@ export interface HermesConnectionTarget {
   resolved?: boolean | null;
   detail?: string | null;
   instructions?: string | null;
+  discovery_error?: string | null;
   connect_url?: string | null;
   connection_id?: string | null;
   alias?: string | null;
   display?: string | null;
   description?: string | null;
+  required_env?: HermesConnectionTargetEnvField[] | null;
 }
 
 export interface HermesConnectionRequest {
   op_id: string;
   seq?: number;
+  deadline_at?: number;
   targets: HermesConnectionTarget[];
   settled?: boolean;
+}
+
+export interface HermesServerRequest {
+  id: string | number;
+  method: string;
+  params: Record<string, unknown>;
 }
 
 export interface HermesMcpServer {
