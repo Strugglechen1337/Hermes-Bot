@@ -740,8 +740,8 @@ const GroupRoomView: React.FC<GroupRoomViewProps> = ({
           <textarea
             className="composer-input"
             rows={1}
+            enterKeyHint="send"
             value={input}
-            onFocus={() => setTimeout(scrollToBottom, 160)}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {

@@ -27,7 +27,7 @@ import type {
 } from "../../shared/types";
 import { clearBotAvatar, prepareAvatarDataUrl, saveBotAvatar } from "../lib/avatarStore";
 import { getBotVisual } from "../lib/botTheme";
-import { formatRelativeTime, formatShortTime } from "../lib/format";
+import { formatRelativeTime, formatShortTime, randomClientId } from "../lib/format";
 import {
   deleteSession,
   fetchSessionMessages,
@@ -723,6 +723,8 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
     }
 
     let sid = activeSessionId;
+    const optimisticId = `u-${Date.now()}`;
+    let appendedOptimistic = false;
     try {
       if (!sid) {
         // Canonical Hermes v0.23.4 accepts source in {'cli','tui','gui','acp','tool','oneshot'}
@@ -732,6 +734,7 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
           execution_generation?: number;
         }>("session.create", {
           profile: profile.name,
+          request_id: randomClientId("req"),
           source: "gui",
         });
         sid = created.session_id;
@@ -761,22 +764,29 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
       setMessages((prev) => [
         ...prev,
         {
-          id: `u-${Date.now()}`,
+          id: optimisticId,
           role: "user",
           content: text,
           timestamp: Date.now(),
         },
       ]);
+      appendedOptimistic = true;
       setIsStreaming(true);
       scrollToBottom();
 
+      // Canonical Hermes gateway requires a non-empty submission_id on prompt.submit
       await hermesWs.call("prompt.submit", {
         session_id: sid,
         profile: profile.name,
+        submission_id: randomClientId("sub"),
         text,
       });
     } catch (err) {
       setIsStreaming(false);
+      if (appendedOptimistic) {
+        setMessages((prev) => prev.filter((m) => m.id !== optimisticId));
+        setInput(text);
+      }
       setChatError(err instanceof Error ? err.message : "Nachricht konnte nicht gesendet werden.");
     }
   }
@@ -935,11 +945,10 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
         ) : (
           messages.map((msg, i) => (
             <div key={String(msg.id ?? i)} className={`msg-row ${msg.role}`}>
-              {msg.role === "assistant" && (
+              {msg.role === "assistant" && msg.streaming && (
                 <div className="msg-author">
-                  <BotAvatar visual={visual} imageUrl={avatarUrl} size="xs" />
-                  <span>{visual.label}</span>
-                  {msg.streaming && <span className="pulse-dot" />}
+                  <span className="pulse-dot" />
+                  <span>{visual.label} schreibt…</span>
                 </div>
               )}
               <div className="msg-bubble">
@@ -1057,11 +1066,8 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
             ref={textareaRef}
             className="composer-input"
             rows={1}
+            enterKeyHint="send"
             value={input}
-            onFocus={() => {
-              // Keep the newest messages visible right above the iOS keyboard
-              setTimeout(scrollToBottom, 160);
-            }}
             onChange={(e) => {
               setInput(e.target.value);
               autoResizeInput(e.target);
