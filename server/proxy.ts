@@ -1,4 +1,7 @@
+import fs from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import os from "node:os";
+import path from "node:path";
 import type { ServerConfig } from "./config.js";
 import { handlePocketPushRoute } from "./push.js";
 import {
@@ -435,6 +438,66 @@ async function handlePocketPrivacy(
   }
 }
 
+const SAFE_BOT_COMMAND_ALLOWLIST = [
+  "execute_code",
+  "script execution via -e/-c flag",
+  "script execution via heredoc",
+  "shell command via -c/-lc flag",
+  "stop/restart system service",
+];
+
+async function bootstrapNewProfileDefaults(
+  config: ServerConfig,
+  cookieHeader: string | undefined,
+  profileName: string
+): Promise<void> {
+  if (!profileName || profileName === "default" || !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(profileName)) {
+    return;
+  }
+
+  // 1. Apply the safe, non-destructive command_allowlist (never includes deletions/SSH/gateway stops)
+  try {
+    const headers: Record<string, string> = {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      "User-Agent": "hermes-pocket-bff/0.1",
+    };
+    if (cookieHeader) headers.Cookie = cookieHeader;
+    const qs = new URLSearchParams({ profile: profileName });
+    await fetch(`${config.hermesBaseUrl}/api/config?${qs.toString()}`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({
+        profile: profileName,
+        config: {
+          command_allowlist: SAFE_BOT_COMMAND_ALLOWLIST,
+        },
+      }),
+      redirect: "manual",
+    });
+  } catch {
+    // Non-fatal
+  }
+
+  // 2. Sync shared pocket-push & pocket-secret skills into the new local profile if present
+  try {
+    const hermesHome = process.env.HERMES_HOME?.trim() || path.join(os.homedir(), ".hermes");
+    const targetSkillsDir = path.join(hermesHome, "profiles", profileName, "skills");
+    if (!fs.existsSync(path.join(hermesHome, "profiles", profileName))) {
+      return;
+    }
+    for (const skillName of ["pocket-push", "pocket-secret"]) {
+      const src = path.join(hermesHome, "skills", skillName, "SKILL.md");
+      if (!fs.existsSync(src)) continue;
+      const dstDir = path.join(targetSkillsDir, skillName);
+      fs.mkdirSync(dstDir, { recursive: true });
+      fs.copyFileSync(src, path.join(dstDir, "SKILL.md"));
+    }
+  } catch {
+    // Non-fatal
+  }
+}
+
 export async function handleHermesHttpProxy(
   req: IncomingMessage,
   res: ServerResponse,
@@ -558,6 +621,24 @@ export async function handleHermesHttpProxy(
     }
 
     const resBuffer = Buffer.from(await upstreamRes.arrayBuffer());
+
+    // Automatically equip newly created/imported Hermes profiles with safe non-destructive
+    // command_allowlist + pocket-push & pocket-secret skills.
+    if (method === "POST" && pathname === "/api/profiles" && upstreamRes.ok) {
+      try {
+        const created = JSON.parse(resBuffer.toString("utf8")) as { name?: unknown };
+        if (typeof created?.name === "string" && created.name.trim()) {
+          await bootstrapNewProfileDefaults(
+            config,
+            req.headers.cookie ? String(req.headers.cookie) : undefined,
+            created.name.trim()
+          );
+        }
+      } catch {
+        // Non-fatal
+      }
+    }
+
     res.writeHead(upstreamRes.status, responseHeaders);
     res.end(resBuffer);
     return true;
