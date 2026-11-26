@@ -583,7 +583,7 @@ interface ManualSecretCardProps {
 }
 
 const COMMON_SECRET_PRESETS = [
-  "HOME_ASSISTANT_TOKEN",
+  "HASS_TOKEN",
   "GITHUB_TOKEN",
   "FRITZBOX_PASSWORD",
   "BRAVE_API_KEY",

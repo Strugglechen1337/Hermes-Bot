@@ -20,7 +20,7 @@ const REFUSAL_OR_PAST_RE =
 
 function inferKeyFromContext(text: string): string {
   const lower = text.toLowerCase();
-  if (/home\s*assistant|\bha\b/.test(lower)) return "HOME_ASSISTANT_TOKEN";
+  if (/home\s*assist(?:ant|ent)|\bhass\b|\bha\b/.test(lower)) return "HASS_TOKEN";
   if (/fritz!?box/.test(lower)) return "FRITZBOX_PASSWORD";
   if (/pi-?hole/.test(lower)) return "PIHOLE_API_KEY";
   if (/github/.test(lower)) return "GITHUB_TOKEN";

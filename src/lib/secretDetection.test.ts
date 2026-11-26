@@ -27,7 +27,7 @@ describe("secretDetection", () => {
     const inferred = detectBotSecretRequest(
       "Ich brauche noch deinen Home Assistant Long-Lived Access Token, bitte gib ihn ein."
     );
-    expect(inferred?.keyName).toBe("HOME_ASSISTANT_TOKEN");
+    expect(inferred?.keyName).toBe("HASS_TOKEN");
 
     const securityAware = detectBotSecretRequest(
       "Gern – bitte nicht hier im Chat senden. Hinterlege das Token stattdessen lokal."
