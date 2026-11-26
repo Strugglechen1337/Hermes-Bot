@@ -229,12 +229,74 @@ export interface HermesPendingApproval {
   approval_id?: string;
   prompt_id?: string;
   request_id?: string;
+  server_request_id?: string | number;
+  kind?: "command" | "access" | "network" | "clarify" | "approval" | string;
   tool_name?: string;
   command?: string;
   description?: string;
   reason?: string;
+  path?: string | null;
+  access?: string | null;
+  host?: string | null;
+  label?: string | null;
+  risk?: string | null;
+  allow_permanent?: boolean | null;
+  allow_session?: boolean | null;
   choices?: string[];
   execution_generation?: number;
+  [k: string]: unknown;
+}
+
+export interface HermesClarifyQuestion {
+  qid: string;
+  question: string;
+  choices?: string[] | null;
+  multi_select?: boolean;
+}
+
+export interface HermesFallbackProvider {
+  provider: string;
+  model: string;
+}
+
+export interface HermesPlanGauge {
+  id?: string;
+  label?: string;
+  used_bp?: number;
+  resets_at_ms?: number | null;
+}
+
+export interface HermesUsageLimitSuggestion {
+  model: string;
+  label: string;
+  note?: string;
+  provider?: string;
+}
+
+export interface HermesUsageLimitError {
+  gauge_id?: string;
+  scope?: string;
+  limit_name?: string;
+  resets_at_ms?: number | null;
+  message?: string;
+  suggestions?: HermesUsageLimitSuggestion[];
+  current_model?: string;
+}
+
+export interface HermesErrorSurface {
+  layer?: string;
+  code?: string;
+  retryable?: boolean;
+  provider?: string | null;
+  model?: string | null;
+  resets_at?: number | null;
+  usage_limit?: HermesUsageLimitError | null;
+}
+
+export interface HermesAccountUsageResponse {
+  lines?: string[];
+  nous_lines?: string[];
+  nous_route?: boolean;
   [k: string]: unknown;
 }
 

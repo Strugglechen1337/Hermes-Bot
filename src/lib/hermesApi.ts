@@ -3,6 +3,7 @@ import type {
   HermesChatMessage,
   HermesCronJob,
   HermesCronRun,
+  HermesFallbackProvider,
   HermesMcpCatalogEntry,
   HermesMcpServer,
   HermesMessagingPlatform,
@@ -162,6 +163,49 @@ export async function updateProfileModel(
     {
       method: "PUT",
       body: JSON.stringify({ provider, model }),
+    }
+  );
+}
+
+export async function fetchProfileFallback(
+  profileName?: string
+): Promise<HermesFallbackProvider[]> {
+  const params = new URLSearchParams();
+  if (profileName) params.set("profile", profileName);
+  const query = params.toString() ? `?${params.toString()}` : "";
+  const data = await requestJson<{
+    ok: boolean;
+    fallback_providers?: HermesFallbackProvider[];
+  }>(`/api/pocket/fallback${query}`);
+  return Array.isArray(data?.fallback_providers) ? data.fallback_providers : [];
+}
+
+export async function updateProfileFallback(
+  profileName: string,
+  fallbackProviders: HermesFallbackProvider[]
+): Promise<HermesFallbackProvider[]> {
+  const params = new URLSearchParams({ profile: profileName });
+  const data = await requestJson<{
+    ok: boolean;
+    fallback_providers?: HermesFallbackProvider[];
+  }>(`/api/pocket/fallback?${params.toString()}`, {
+    method: "PUT",
+    body: JSON.stringify({ fallback_providers: fallbackProviders }),
+  });
+  return Array.isArray(data?.fallback_providers) ? data.fallback_providers : [];
+}
+
+export async function saveProfileSecret(
+  profileName: string,
+  key: string,
+  value: string
+): Promise<{ ok: boolean; key: string }> {
+  const params = new URLSearchParams({ profile: profileName });
+  return requestJson<{ ok: boolean; key: string }>(
+    `/api/pocket/secret?${params.toString()}`,
+    {
+      method: "PUT",
+      body: JSON.stringify({ profile: profileName, key, value }),
     }
   );
 }

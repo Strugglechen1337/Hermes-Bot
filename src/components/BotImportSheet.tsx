@@ -18,8 +18,9 @@ import {
   slugifyBotName,
 } from "../lib/botImportParser";
 import { getBotVisual } from "../lib/botTheme";
-import { createProfile } from "../lib/hermesApi";
+import { createProfile, fetchProfileFallback, updateProfileFallback } from "../lib/hermesApi";
 import type { WsConnectionState } from "../lib/hermesWs";
+import { RECOMMENDED_ANTHROPIC_FALLBACK } from "../lib/usageLimits";
 import { BotAvatar } from "./BotAvatar";
 import { Sheet } from "./Sheet";
 
@@ -116,6 +117,12 @@ export const BotImportSheet: React.FC<BotImportSheetProps> = ({
       });
 
       const finalName = created?.name || effectiveSlug;
+      // Inherit default Hermes Anthropic fallback automatically on every imported bot
+      const defaultFallbacks = await fetchProfileFallback("default").catch(() => []);
+      const targetFallbacks =
+        defaultFallbacks.length > 0 ? defaultFallbacks : [RECOMMENDED_ANTHROPIC_FALLBACK];
+      await updateProfileFallback(finalName, targetFallbacks).catch(() => null);
+
       if (avatarPreview && wsState === "connected") {
         await saveBotAvatar(finalName, avatarPreview).catch(() => null);
       }

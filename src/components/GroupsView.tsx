@@ -441,6 +441,7 @@ const GroupRoomView: React.FC<GroupRoomViewProps> = ({
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const cursorRef = useRef<number>(0);
+  const scrollTimersRef = useRef<number[]>([]);
 
   const scrollToBottom = useCallback(() => {
     requestAnimationFrame(() => {
@@ -449,6 +450,30 @@ const GroupRoomView: React.FC<GroupRoomViewProps> = ({
       }
     });
   }, []);
+
+  const scrollToBottomWithSettle = useCallback(() => {
+    for (const id of scrollTimersRef.current) window.clearTimeout(id);
+    scrollTimersRef.current = [];
+    scrollToBottom();
+    for (const delay of [60, 180, 340]) {
+      scrollTimersRef.current.push(window.setTimeout(scrollToBottom, delay));
+    }
+  }, [scrollToBottom]);
+
+  useEffect(() => {
+    const onViewportChange = (ev: Event) => {
+      const detail = (ev as CustomEvent<{ keyboardOpen?: boolean }>).detail;
+      if (detail?.keyboardOpen) {
+        scrollToBottomWithSettle();
+      }
+    };
+    window.addEventListener("hp:viewport-change", onViewportChange);
+    return () => {
+      window.removeEventListener("hp:viewport-change", onViewportChange);
+      for (const id of scrollTimersRef.current) window.clearTimeout(id);
+      scrollTimersRef.current = [];
+    };
+  }, [scrollToBottomWithSettle]);
 
   const syncRoom = useCallback(
     async (incremental = false) => {
@@ -733,6 +758,7 @@ const GroupRoomView: React.FC<GroupRoomViewProps> = ({
             rows={1}
             enterKeyHint="send"
             value={input}
+            onFocus={scrollToBottomWithSettle}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {

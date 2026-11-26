@@ -32,6 +32,26 @@ describe("Hermes Pocket BFF HTTP Proxy", () => {
         res.end();
         return;
       }
+      if (req.url?.startsWith("/api/config") && req.method === "GET") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(
+          JSON.stringify({
+            fallback_providers: [{ provider: "anthropic", model: "claude-sonnet-5-5" }],
+            unrelated_secret_field: "must-not-leak",
+          })
+        );
+        return;
+      }
+      if (req.url?.startsWith("/api/config") && req.method === "PUT") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: true }));
+        return;
+      }
+      if (req.url?.startsWith("/api/env") && req.method === "PUT") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: true }));
+        return;
+      }
       res.writeHead(404, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: "not_found" }));
     });
@@ -98,5 +118,43 @@ describe("Hermes Pocket BFF HTTP Proxy", () => {
       },
     });
     expect(res.status).toBe(403);
+  });
+
+  it("exposes only fallback_providers via /api/pocket/fallback and strips unrelated config fields", async () => {
+    const res = await fetch(`${bffUrl}/api/pocket/fallback?profile=mika`);
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as Record<string, unknown>;
+    expect(data.fallback_providers).toEqual([
+      { provider: "anthropic", model: "claude-sonnet-5-5" },
+    ]);
+    expect(data.unrelated_secret_field).toBeUndefined();
+
+    const putRes = await fetch(`${bffUrl}/api/pocket/fallback?profile=mika`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        fallback_providers: [{ provider: "anthropic", model: "claude-sonnet-5-5" }],
+      }),
+    });
+    expect(putRes.status).toBe(200);
+  });
+
+  it("enforces write-only & strict key validation on /api/pocket/secret", async () => {
+    const getRes = await fetch(`${bffUrl}/api/pocket/secret?profile=mika`);
+    expect(getRes.status).toBe(405);
+
+    const badKey = await fetch(`${bffUrl}/api/pocket/secret?profile=mika`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key: "bad key!", value: "secret" }),
+    });
+    expect(badKey.status).toBe(400);
+
+    const okRes = await fetch(`${bffUrl}/api/pocket/secret?profile=mika`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key: "BRAVE_API_KEY", value: "demo-secret" }),
+    });
+    expect(okRes.status).toBe(200);
   });
 });

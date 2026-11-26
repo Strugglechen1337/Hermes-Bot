@@ -3,13 +3,15 @@ import {
   AlertCircle,
   ArrowUp,
   Camera,
-  Check,
   ChevronLeft,
+  ChevronRight,
   Cpu,
   Download,
   FileText,
+  Gauge,
   History,
   Image as ImageIcon,
+  KeyRound,
   MessageSquarePlus,
   MoreHorizontal,
   Paperclip,
@@ -18,19 +20,23 @@ import {
   RefreshCw,
   Search,
   Settings2,
-  ShieldAlert,
+  ShieldCheck,
   Square,
   Trash2,
   Wrench,
   X,
 } from "lucide-react";
 import type {
+  HermesAccountUsageResponse,
   HermesChatMessage,
   HermesConnectionRequest,
+  HermesErrorSurface,
+  HermesFallbackProvider,
   HermesPendingApproval,
   HermesProfile,
   HermesServerRequest,
   HermesSessionSummary,
+  HermesUsageLimitError,
 } from "../../shared/types";
 import { clearBotAvatar, prepareAvatarDataUrl, saveBotAvatar } from "../lib/avatarStore";
 import { getBotVisual } from "../lib/botTheme";
@@ -45,21 +51,40 @@ import {
   deleteProfile,
   deleteSession,
   fetchModelOptions,
+  fetchProfileFallback,
   fetchProfileSoul,
   fetchSessionMessages,
   fetchSessions,
   normalizeMessages,
   prepareChatImageDataUrl,
   updateProfileDescription,
+  updateProfileFallback,
   updateProfileModel,
   updateProfileSoul,
   uploadChatFile,
 } from "../lib/hermesApi";
 import { hermesWs, type WsConnectionState } from "../lib/hermesWs";
+import {
+  EMPTY_CHAT_USAGE,
+  getPrimaryLimitSummary,
+  mergeAccountUsage,
+  mergeUsagePayload,
+  RECOMMENDED_ANTHROPIC_FALLBACK,
+  type ChatUsageState,
+} from "../lib/usageLimits";
 import { BotAvatar } from "./BotAvatar";
 import { BotImportSheet } from "./BotImportSheet";
 import { ConfirmSheet } from "./ConfirmSheet";
 import { InChatConnectionCard } from "./InChatConnectionCard";
+import {
+  ApprovalPromptCard,
+  ClarifyPromptCard,
+  ManualSecretCard,
+  SECRET_REQUEST_METHODS,
+  SecretPromptCard,
+  UsageLimitCard,
+} from "./InChatPromptCards";
+import { LimitSheet } from "./LimitSheet";
 import { ModelPickerSheet } from "./ModelPickerSheet";
 import { SafeMarkdown } from "./SafeMarkdown";
 import { Sheet } from "./Sheet";
@@ -245,6 +270,12 @@ export const BotsView: React.FC<BotsViewProps> = ({
         share_auth: true,
       });
       const finalName = created?.name || slug;
+      // Inherit default Hermes Anthropic fallback automatically on every newly created bot
+      const defaultFallbacks = await fetchProfileFallback("default").catch(() => []);
+      const targetFallbacks =
+        defaultFallbacks.length > 0 ? defaultFallbacks : [RECOMMENDED_ANTHROPIC_FALLBACK];
+      await updateProfileFallback(finalName, targetFallbacks).catch(() => null);
+
       if (createAvatarPreview && wsState === "connected") {
         await saveBotAvatar(finalName, createAvatarPreview).catch(() => null);
         onAvatarChange(finalName, createAvatarPreview);
@@ -330,10 +361,12 @@ export const BotsView: React.FC<BotsViewProps> = ({
   }
 
   if (selectedProfile) {
+    const allProfileNames = profiles.map((p) => p.name);
     return (
       <>
         <DirectChatView
           profile={selectedProfile}
+          allProfileNames={allProfileNames}
           avatarUrl={avatars[selectedProfile.name] || null}
           wsState={wsState}
           onBack={() => onSelectBot(null)}
@@ -397,6 +430,7 @@ export const BotsView: React.FC<BotsViewProps> = ({
             open
             profileName={modelPickerProfile.name}
             botLabel={getBotVisual(modelPickerProfile).label}
+            allProfileNames={profiles.map((p) => p.name)}
             currentProvider={modelPickerProfile.provider}
             currentModel={modelPickerProfile.model}
             onSwitched={() => void onRefreshProfiles()}
@@ -682,6 +716,7 @@ export const BotsView: React.FC<BotsViewProps> = ({
           open
           profileName={modelPickerProfile.name}
           botLabel={getBotVisual(modelPickerProfile).label}
+          allProfileNames={profiles.map((p) => p.name)}
           currentProvider={modelPickerProfile.provider}
           currentModel={modelPickerProfile.model}
           onSwitched={() => void onRefreshProfiles()}
@@ -883,6 +918,7 @@ const BotManageSheet: React.FC<BotManageSheetProps> = ({
 
 interface DirectChatViewProps {
   profile: HermesProfile;
+  allProfileNames: string[];
   avatarUrl: string | null;
   wsState: WsConnectionState;
   onBack: () => void;
@@ -900,6 +936,7 @@ interface QueuedAttachment {
 
 const DirectChatView: React.FC<DirectChatViewProps> = ({
   profile,
+  allProfileNames,
   avatarUrl,
   wsState,
   onBack,
@@ -925,7 +962,19 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
   const [pendingApproval, setPendingApproval] = useState<HermesPendingApproval | null>(null);
   const [pendingConnection, setPendingConnection] = useState<HermesConnectionRequest | null>(null);
   const [pendingClarify, setPendingClarify] = useState<HermesServerRequest | null>(null);
-  const [clarifyCustomAnswer, setClarifyCustomAnswer] = useState("");
+  const [pendingSecret, setPendingSecret] = useState<HermesServerRequest | null>(null);
+  const [manualSecret, setManualSecret] = useState<{ open: boolean; initialKey: string }>({
+    open: false,
+    initialKey: "",
+  });
+
+  // Live Chat & Plan Limit + Automatic Fallback state
+  const [usage, setUsage] = useState<ChatUsageState>(EMPTY_CHAT_USAGE);
+  const [loadingAccountUsage, setLoadingAccountUsage] = useState(false);
+  const [fallbacks, setFallbacks] = useState<HermesFallbackProvider[]>([]);
+  const [usageLimitError, setUsageLimitError] = useState<HermesUsageLimitError | null>(null);
+  const [switchingFallback, setSwitchingFallback] = useState(false);
+  const [showLimitSheet, setShowLimitSheet] = useState(false);
 
   const [activeModelOverride, setActiveModelOverride] = useState<{
     provider: string;
@@ -949,6 +998,7 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
   const activeSessionRef = useRef<string | null>(null);
   const attachedOnWsRef = useRef<boolean>(false);
   const execGenerationRef = useRef<number>(0);
+  const scrollTimersRef = useRef<number[]>([]);
 
   activeSessionRef.current = activeSessionId;
 
@@ -959,6 +1009,73 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
       }
     });
   }, []);
+
+  const scrollToBottomWithSettle = useCallback(() => {
+    for (const id of scrollTimersRef.current) window.clearTimeout(id);
+    scrollTimersRef.current = [];
+    scrollToBottom();
+    for (const delay of [60, 180, 340]) {
+      scrollTimersRef.current.push(window.setTimeout(scrollToBottom, delay));
+    }
+  }, [scrollToBottom]);
+
+  // Always jump to latest message when mobile keyboard opens
+  useEffect(() => {
+    const onViewportChange = (ev: Event) => {
+      const detail = (ev as CustomEvent<{ keyboardOpen?: boolean }>).detail;
+      if (detail?.keyboardOpen) {
+        scrollToBottomWithSettle();
+      }
+    };
+    window.addEventListener("hp:viewport-change", onViewportChange);
+    return () => {
+      window.removeEventListener("hp:viewport-change", onViewportChange);
+      for (const id of scrollTimersRef.current) window.clearTimeout(id);
+      scrollTimersRef.current = [];
+    };
+  }, [scrollToBottomWithSettle]);
+
+  const refreshAccountUsage = useCallback(
+    async (sidOverride?: string | null) => {
+      if (wsState !== "connected") return;
+      const targetSid = sidOverride ?? activeSessionRef.current;
+      setLoadingAccountUsage(true);
+      try {
+        const res = await hermesWs.call<HermesAccountUsageResponse>(
+          "session.account_usage",
+          {
+            ...(targetSid ? { session_id: targetSid } : {}),
+            profile: profile.name,
+          },
+          12_000
+        );
+        setUsage((prev) => mergeAccountUsage(prev, res));
+      } catch {
+        // Optional depending on active provider
+      } finally {
+        setLoadingAccountUsage(false);
+      }
+    },
+    [profile.name, wsState]
+  );
+
+  // Load configured automatic fallback chain for this bot
+  useEffect(() => {
+    let cancelled = false;
+    setUsage(EMPTY_CHAT_USAGE);
+    setUsageLimitError(null);
+    setActiveModelOverride(null);
+    void fetchProfileFallback(profile.name)
+      .then((list) => {
+        if (!cancelled) setFallbacks(list);
+      })
+      .catch(() => {
+        if (!cancelled) setFallbacks([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [profile.name]);
 
   const loadSessionHistory = useCallback(
     async (sessionId: string, titleHint?: string | null) => {
@@ -972,6 +1089,8 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
       setPendingApproval(null);
       setPendingConnection(null);
       setPendingClarify(null);
+      setPendingSecret(null);
+      setUsageLimitError(null);
       attachedOnWsRef.current = false;
 
       try {
@@ -985,10 +1104,13 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
             pending_approval?: HermesPendingApproval | null;
             prompts?: HermesPendingApproval[];
             pending_connection?: HermesConnectionRequest | null;
+            usage?: Record<string, unknown> | null;
+            info?: { usage?: Record<string, unknown> | null } | null;
           }>("session.resume", {
             session_id: sessionId,
             profile: profile.name,
           });
+          const resolvedSid = snapshot?.session_id || sessionId;
           if (snapshot?.session_id) {
             setActiveSessionId(snapshot.session_id);
           }
@@ -1009,6 +1131,11 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
           setIsStreaming(Boolean(snapshot?.running || snapshot?.inflight?.streaming));
           setPendingApproval(snapshot?.pending_approval || snapshot?.prompts?.[0] || null);
           setPendingConnection(snapshot?.pending_connection || null);
+          const snapUsage = snapshot?.usage || snapshot?.info?.usage;
+          if (snapUsage && typeof snapUsage === "object") {
+            setUsage((prev) => mergeUsagePayload(prev, snapUsage));
+          }
+          void refreshAccountUsage(resolvedSid);
         } else {
           const loaded = await fetchSessionMessages(sessionId, profile.name);
           setMessages(loaded);
@@ -1059,12 +1186,16 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
   }, [profile.name]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (wsState === "connected" && activeSessionId && !attachedOnWsRef.current) {
-      void loadSessionHistory(activeSessionId, activeTitle);
+    if (wsState === "connected") {
+      if (activeSessionId && !attachedOnWsRef.current) {
+        void loadSessionHistory(activeSessionId, activeTitle);
+      } else {
+        void refreshAccountUsage(activeSessionId);
+      }
     }
   }, [wsState]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Handle server -> client requests (e.g. clarify questions from Mika)
+  // Handle server -> client requests (clarify, approval, secret, sudo, vault.*)
   useEffect(() => {
     return hermesWs.onServerRequest((req) => {
       const reqSid = typeof req.params.session_id === "string" ? req.params.session_id : null;
@@ -1074,14 +1205,22 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
       }
       if (req.method === "clarify" || req.method === "clarify.request") {
         setPendingClarify(req);
-        setClarifyCustomAnswer("");
-        scrollToBottom();
+        scrollToBottomWithSettle();
+      } else if (req.method === "approval") {
+        setPendingApproval({
+          ...(req.params as HermesPendingApproval),
+          server_request_id: req.id,
+        });
+        scrollToBottomWithSettle();
+      } else if (SECRET_REQUEST_METHODS.has(req.method)) {
+        setPendingSecret(req);
+        scrollToBottomWithSettle();
       } else {
         // Decline desktop-only window requests cleanly so the agent doesn't wait 300s
         hermesWs.sendErrorResponse(req.id, 4404, "Not supported on mobile web client");
       }
     });
-  }, [scrollToBottom]);
+  }, [scrollToBottomWithSettle]);
 
   useEffect(() => {
     const unsubscribe = hermesWs.onEvent((ev) => {
@@ -1168,11 +1307,49 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
         if (typeof ev.payload.text === "string" && ev.payload.text) {
           setLiveStatus(ev.payload.text);
         }
+      } else if (ev.type === "session.usage" || ev.type === "session.info") {
+        const usageObj =
+          ev.type === "session.info" && ev.payload.usage && typeof ev.payload.usage === "object"
+            ? (ev.payload.usage as Record<string, unknown>)
+            : ev.payload;
+        setUsage((prev) => mergeUsagePayload(prev, usageObj));
+      } else if (ev.type === "request.cancel") {
+        const cancelledId = ev.payload.request_id;
+        if (cancelledId !== undefined) {
+          setPendingClarify((cur) => (cur && String(cur.id) === String(cancelledId) ? null : cur));
+          setPendingSecret((cur) => (cur && String(cur.id) === String(cancelledId) ? null : cur));
+          setPendingApproval((cur) =>
+            cur &&
+            (String(cur.server_request_id) === String(cancelledId) ||
+              String(cur.request_id) === String(cancelledId))
+              ? null
+              : cur
+          );
+        }
       } else if (ev.type === "message.complete") {
         const finalText = typeof ev.payload.text === "string" ? ev.payload.text : "";
         const finalReasoning =
           typeof ev.payload.reasoning === "string" ? ev.payload.reasoning : undefined;
         const errMsg = typeof ev.payload.error === "string" ? ev.payload.error : null;
+
+        if (ev.payload.usage && typeof ev.payload.usage === "object") {
+          setUsage((prev) => mergeUsagePayload(prev, ev.payload.usage as Record<string, unknown>));
+        }
+        const errSurface = ev.payload.error_surface as HermesErrorSurface | undefined;
+        if (errSurface?.usage_limit) {
+          setUsageLimitError(errSurface.usage_limit);
+        } else if (
+          errSurface?.code &&
+          /limit|quota|rate|429|capacity/i.test(errSurface.code)
+        ) {
+          setUsageLimitError({
+            limit_name: "Anbieter-Limit erreicht",
+            message: errMsg || "Das Kontingent dieses Anbieters wurde erreicht.",
+            resets_at_ms: errSurface.resets_at ? errSurface.resets_at * 1000 : null,
+          });
+        } else if (!errMsg) {
+          setUsageLimitError(null);
+        }
 
         setIsStreaming(false);
         setActiveTool(null);
@@ -1201,10 +1378,11 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
           }
           return next;
         });
+        void refreshAccountUsage(activeSessionRef.current);
         scrollToBottom();
       } else if (ev.type === "approval.requested") {
         setPendingApproval(ev.payload as HermesPendingApproval);
-        scrollToBottom();
+        scrollToBottomWithSettle();
       } else if (ev.type === "approval.cancelled") {
         setPendingApproval(null);
       } else if (ev.type === "connection.request" || ev.type === "connection.update") {
@@ -1213,7 +1391,7 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
           setPendingConnection(null);
         } else if (req?.targets) {
           setPendingConnection(req);
-          scrollToBottom();
+          scrollToBottomWithSettle();
         }
       } else if (ev.type === "error") {
         setIsStreaming(false);
@@ -1225,7 +1403,7 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
     });
 
     return unsubscribe;
-  }, [scrollToBottom]);
+  }, [refreshAccountUsage, scrollToBottom, scrollToBottomWithSettle]);
 
   function autoResizeInput(el: HTMLTextAreaElement | null) {
     if (!el) return;
@@ -1243,6 +1421,14 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
     setPendingApproval(null);
     setPendingConnection(null);
     setPendingClarify(null);
+    setPendingSecret(null);
+    setUsageLimitError(null);
+    setUsage((prev) => ({
+      ...prev,
+      contextTokens: null,
+      contextPercent: 0,
+      totalTokens: null,
+    }));
     attachedOnWsRef.current = false;
   }
 
@@ -1295,8 +1481,20 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
 
     if (cmd === "/help" || cmd === "/hilfe") {
       appendSystemNotice(
-        "Chat-Befehle: /model (Auswahl öffnen) · /model <Name> (direkt wechseln) · /provider <Anbieter> · /new (neuer Chat)"
+        "Chat-Befehle: /model (Modell & Fallback) · /provider <Anbieter> · /limit (Verbrauch) · /secret [KEY] (Passwort/API-Key sicher speichern) · /new (neuer Chat)"
       );
+      return true;
+    }
+
+    if (cmd === "/limit" || cmd === "/usage") {
+      void refreshAccountUsage(activeSessionId);
+      setShowLimitSheet(true);
+      return true;
+    }
+
+    if (cmd === "/secret" || cmd === "/key" || cmd === "/passwort") {
+      setManualSecret({ open: true, initialKey: arg });
+      scrollToBottomWithSettle();
       return true;
     }
 
@@ -1545,8 +1743,14 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
     }
   }
 
-  async function handleApprovalDecision(choice: string) {
-    if (!activeSessionId || !pendingApproval) return;
+  async function handleApprovalDecision(choice: "once" | "session" | "always" | "deny") {
+    if (!pendingApproval) return;
+    if (pendingApproval.server_request_id !== undefined) {
+      hermesWs.sendResponse(pendingApproval.server_request_id, { choice });
+      setPendingApproval(null);
+      return;
+    }
+    if (!activeSessionId) return;
     const promptId =
       pendingApproval.prompt_id ||
       pendingApproval.request_id ||
@@ -1567,11 +1771,48 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
     }
   }
 
-  function handleClarifyAnswer(answer: string) {
+  function handleClarifySubmit(
+    answers: Record<string, string | null>,
+    outcome: "submitted" | "cancelled"
+  ) {
     if (!pendingClarify) return;
-    hermesWs.sendResponse(pendingClarify.id, { answer });
+    if (outcome === "cancelled") {
+      hermesWs.sendResponse(pendingClarify.id, { outcome: "cancelled" });
+    } else {
+      hermesWs.sendResponse(pendingClarify.id, { answers, outcome: "submitted" });
+    }
     setPendingClarify(null);
-    setClarifyCustomAnswer("");
+  }
+
+  function handleSecretSubmit(value: string) {
+    if (!pendingSecret) return;
+    hermesWs.sendResponse(pendingSecret.id, { value });
+    setPendingSecret(null);
+    appendSystemNotice("Sichere Eingabe verschlüsselt an den Bot übermittelt.");
+  }
+
+  function handleSecretCancel() {
+    if (!pendingSecret) return;
+    hermesWs.sendResponse(pendingSecret.id, { value: "" });
+    setPendingSecret(null);
+  }
+
+  async function handleQuickSwitchToFallback() {
+    const target = fallbacks[0] || RECOMMENDED_ANTHROPIC_FALLBACK;
+    setSwitchingFallback(true);
+    try {
+      const res = await updateProfileModel(profile.name, target.provider, target.model);
+      setActiveModelOverride({ provider: res.provider, model: res.model });
+      setUsageLimitError(null);
+      appendSystemNotice(`Auf Fallback gewechselt: ${res.provider} / ${res.model}`);
+      void onRefreshProfiles();
+    } catch (err) {
+      setChatError(
+        err instanceof Error ? err.message : "Wechsel auf Anthropic-Fallback fehlgeschlagen."
+      );
+    } finally {
+      setSwitchingFallback(false);
+    }
   }
 
   async function handleConfirmDeleteSession() {
@@ -1596,13 +1837,15 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
     }
   }
 
-  const clarifyQuestion =
-    typeof pendingClarify?.params.question === "string"
-      ? pendingClarify.params.question
-      : "Rückfrage";
-  const clarifyChoices = Array.isArray(pendingClarify?.params.choices)
-    ? (pendingClarify.params.choices.filter((c): c is string => typeof c === "string"))
-    : [];
+  const limitSummary = useMemo(() => getPrimaryLimitSummary(usage), [usage]);
+  const primaryFallback = fallbacks[0] || RECOMMENDED_ANTHROPIC_FALLBACK;
+  const hasAnthropicFallback = fallbacks.some((f) =>
+    f.provider.toLowerCase().includes("anthropic")
+  );
+  const currentActiveModel =
+    activeModelOverride?.model || usage.model || profile.model || "Standard";
+  const currentActiveProvider =
+    activeModelOverride?.provider || usage.provider || profile.provider || null;
 
   return (
     <div className="chat-screen">
@@ -1752,76 +1995,97 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
         )}
 
         {pendingClarify && (
-          <div className="card" style={{ borderColor: "rgba(255,255,255,0.22)" }}>
-            <div style={{ fontWeight: 700, fontSize: "0.92rem", marginBottom: 8 }}>
-              {clarifyQuestion}
-            </div>
-            {clarifyChoices.length > 0 && (
-              <div className="chip-row" style={{ marginBottom: 10 }}>
-                {clarifyChoices.map((choice) => (
-                  <button
-                    key={choice}
-                    type="button"
-                    className="btn sm"
-                    onClick={() => handleClarifyAnswer(choice)}
-                  >
-                    {choice}
-                  </button>
-                ))}
-              </div>
-            )}
-            <div style={{ display: "flex", gap: 8 }}>
-              <input
-                className="input"
-                value={clarifyCustomAnswer}
-                onChange={(e) => setClarifyCustomAnswer(e.target.value)}
-                placeholder="Eigene Antwort…"
-              />
-              <button
-                type="button"
-                className="btn sm primary"
-                disabled={!clarifyCustomAnswer.trim()}
-                onClick={() => handleClarifyAnswer(clarifyCustomAnswer.trim())}
-              >
-                Senden
-              </button>
-            </div>
-          </div>
+          <ClarifyPromptCard
+            request={pendingClarify}
+            botLabel={visual.label}
+            onSubmit={handleClarifySubmit}
+          />
         )}
 
         {pendingApproval && (
-          <div className="card" style={{ borderColor: "rgba(251,191,36,0.4)" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, color: "var(--status-warn)", fontWeight: 700 }}>
-              <ShieldAlert size={18} />
-              <span>Freigabe angefordert</span>
-            </div>
-            <p style={{ margin: "0 0 12px", fontSize: "0.86rem", color: "var(--text-secondary)" }}>
-              {pendingApproval.description ||
-                pendingApproval.command ||
-                pendingApproval.tool_name ||
-                "Der Bot bittet um Erlaubnis für eine Aktion."}
-            </p>
-            <div style={{ display: "flex", gap: 8 }}>
-              <button
-                type="button"
-                className="btn sm danger full"
-                onClick={() => void handleApprovalDecision(pendingApproval.choices?.[1] || "deny")}
-              >
-                <X size={15} /> Ablehnen
-              </button>
-              <button
-                type="button"
-                className="btn sm primary full"
-                onClick={() => void handleApprovalDecision(pendingApproval.choices?.[0] || "once")}
-              >
-                <Check size={15} /> Freigeben
-              </button>
-            </div>
-          </div>
+          <ApprovalPromptCard
+            approval={pendingApproval}
+            botLabel={visual.label}
+            onDecide={handleApprovalDecision}
+          />
+        )}
+
+        {pendingSecret && (
+          <SecretPromptCard
+            request={pendingSecret}
+            botLabel={visual.label}
+            onSubmit={handleSecretSubmit}
+            onCancel={handleSecretCancel}
+          />
+        )}
+
+        {manualSecret.open && (
+          <ManualSecretCard
+            profileName={profile.name}
+            botLabel={visual.label}
+            initialKey={manualSecret.initialKey}
+            onSaved={(savedKey) => {
+              setManualSecret({ open: false, initialKey: "" });
+              appendSystemNotice(
+                `Schlüssel „${savedKey}“ sicher im geschützten Speicher von ${visual.label} hinterlegt.`
+              );
+            }}
+            onClose={() => setManualSecret({ open: false, initialKey: "" })}
+          />
+        )}
+
+        {usageLimitError && (
+          <UsageLimitCard
+            limitError={usageLimitError}
+            fallbackTarget={primaryFallback}
+            switching={switchingFallback}
+            onSwitchToFallback={() => void handleQuickSwitchToFallback()}
+            onOpenModelPicker={() => setModelPickerState({ open: true, search: "", provider: "" })}
+            onDismiss={() => setUsageLimitError(null)}
+          />
         )}
       </div>
 
       <div className="composer-wrap">
+        <button
+          type="button"
+          className={`chat-limit-bar ${limitSummary.severity === "normal" ? "" : limitSummary.severity}`}
+          onClick={() => {
+            void refreshAccountUsage(activeSessionId);
+            setShowLimitSheet(true);
+          }}
+        >
+          <span className="chat-limit-left">
+            <Gauge size={13} style={{ flexShrink: 0 }} />
+            <span className="chat-limit-text">
+              {limitSummary.usedPercent !== null
+                ? `${limitSummary.label} ${limitSummary.usedPercent}%`
+                : `${currentActiveModel}`}
+              {limitSummary.resetText ? ` · ${limitSummary.resetText}` : ""}
+            </span>
+            {limitSummary.usedPercent !== null && (
+              <span className="chat-limit-meter" aria-hidden="true">
+                <span
+                  className={`chat-limit-meter-fill ${limitSummary.severity === "normal" ? "" : limitSummary.severity}`}
+                  style={{ width: `${limitSummary.usedPercent}%` }}
+                />
+              </span>
+            )}
+          </span>
+          <span className="chat-limit-right">
+            {usage.contextPercent !== null && limitSummary.label !== "Chat-Kontext" && (
+              <span>Kontext {usage.contextPercent}%</span>
+            )}
+            {hasAnthropicFallback && (
+              <span className="chat-limit-fallback-dot" title="Anthropic-Fallback aktiv">
+                <ShieldCheck size={11} />
+                Fallback
+              </span>
+            )}
+            <ChevronRight size={13} />
+          </span>
+        </button>
+
         {attachments.length > 0 && (
           <div className="attachment-tray">
             {attachments.map((att) => (
@@ -1864,6 +2128,7 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
             rows={1}
             enterKeyHint="send"
             value={input}
+            onFocus={scrollToBottomWithSettle}
             onChange={(e) => {
               setInput(e.target.value);
               autoResizeInput(e.target);
@@ -1969,8 +2234,30 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
               setModelPickerState({ open: true, search: "", provider: "" });
             }}
           >
-            <Cpu size={17} /> Modell &amp; KI-Anbieter (
-            {activeModelOverride?.model || profile.model || "Standard"})
+            <Cpu size={17} /> Modell &amp; Anthropic-Fallback (
+            {currentActiveModel})
+          </button>
+          <button
+            type="button"
+            className="btn full"
+            onClick={() => {
+              setShowActionsSheet(false);
+              void refreshAccountUsage(activeSessionId);
+              setShowLimitSheet(true);
+            }}
+          >
+            <Gauge size={17} /> Chat-Limit &amp; Verbrauch
+          </button>
+          <button
+            type="button"
+            className="btn full"
+            onClick={() => {
+              setShowActionsSheet(false);
+              setManualSecret({ open: true, initialKey: "" });
+              scrollToBottomWithSettle();
+            }}
+          >
+            <KeyRound size={17} /> Passwort / API-Key sicher hinterlegen
           </button>
           <button
             type="button"
@@ -2091,10 +2378,24 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
         )}
       </Sheet>
 
+      <LimitSheet
+        open={showLimitSheet}
+        botLabel={visual.label}
+        usage={usage}
+        activeProvider={currentActiveProvider}
+        activeModel={currentActiveModel}
+        fallbacks={fallbacks}
+        loading={loadingAccountUsage}
+        onRefresh={() => void refreshAccountUsage(activeSessionId)}
+        onOpenModelPicker={() => setModelPickerState({ open: true, search: "", provider: "" })}
+        onClose={() => setShowLimitSheet(false)}
+      />
+
       <ModelPickerSheet
         open={modelPickerState.open}
         profileName={profile.name}
         botLabel={visual.label}
+        allProfileNames={allProfileNames}
         currentProvider={activeModelOverride?.provider || profile.provider}
         currentModel={activeModelOverride?.model || profile.model}
         initialSearch={modelPickerState.search}
@@ -2103,6 +2404,9 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
           setActiveModelOverride({ provider: prov, model: mod });
           appendSystemNotice(`Modell gewechselt: ${prov} / ${mod}`);
           void onRefreshProfiles();
+        }}
+        onFallbackChanged={(nextFallbacks) => {
+          setFallbacks(nextFallbacks);
         }}
         onClose={() => setModelPickerState((s) => ({ ...s, open: false }))}
       />

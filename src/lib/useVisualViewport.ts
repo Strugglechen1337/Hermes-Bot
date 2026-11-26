@@ -26,6 +26,8 @@ export function useVisualViewport(): VisualViewportState {
     const root = document.documentElement;
     const vv = window.visualViewport;
     let rafId = 0;
+    let lastKbOpen = false;
+    let lastVvHeight = 0;
     let baselineHeight = Math.max(
       window.innerHeight,
       vv ? Math.round(vv.height) : 0
@@ -54,6 +56,17 @@ export function useVisualViewport(): VisualViewportState {
       } else {
         root.style.setProperty("--vvh", "100%");
         root.style.setProperty("--vvt", "0px");
+      }
+
+      if (kbOpen !== lastKbOpen || (kbOpen && vvHeight !== lastVvHeight)) {
+        const openedNow = kbOpen && !lastKbOpen;
+        lastKbOpen = kbOpen;
+        lastVvHeight = vvHeight;
+        window.dispatchEvent(
+          new CustomEvent("hp:viewport-change", {
+            detail: { keyboardOpen: kbOpen, openedNow, height: vvHeight },
+          })
+        );
       }
 
       if (window.scrollY !== 0) {

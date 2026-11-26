@@ -36,6 +36,237 @@ function sendJson(res: ServerResponse, status: number, payload: Record<string, u
   res.end(body);
 }
 
+const ENV_KEY_PATTERN = /^[A-Z][A-Z0-9_]{1,63}$/;
+const PROVIDER_SLUG_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/i;
+
+function normalizeFallbackList(raw: unknown): Array<{ provider: string; model: string }> {
+  if (!Array.isArray(raw)) return [];
+  const out: Array<{ provider: string; model: string }> = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const rec = item as Record<string, unknown>;
+    const provider = typeof rec.provider === "string" ? rec.provider.trim() : "";
+    const model = typeof rec.model === "string" ? rec.model.trim() : "";
+    if (!provider || !model) continue;
+    if (!PROVIDER_SLUG_PATTERN.test(provider) || model.length > 160) continue;
+    out.push({ provider, model });
+    if (out.length >= 5) break;
+  }
+  return out;
+}
+
+async function handlePocketFallback(
+  req: IncomingMessage,
+  res: ServerResponse,
+  config: ServerConfig,
+  parsedUrl: URL
+): Promise<void> {
+  const method = (req.method || "GET").toUpperCase();
+  if (method !== "GET" && method !== "PUT") {
+    sendJson(res, 405, { error: "method_not_allowed", detail: "Methode nicht erlaubt." });
+    return;
+  }
+  if (!isSameOriginRequest(req)) {
+    sendJson(res, 403, { error: "forbidden_origin", detail: "Cross-Origin-Anfrage abgelehnt." });
+    return;
+  }
+
+  const profile = parsedUrl.searchParams.get("profile")?.trim() || "";
+  const upstreamHeaders: Record<string, string> = {
+    Accept: "application/json",
+    "User-Agent": "hermes-pocket-bff/0.1",
+  };
+  if (req.headers.cookie) {
+    upstreamHeaders.Cookie = String(req.headers.cookie);
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15_000);
+
+  try {
+    if (method === "GET") {
+      const qs = new URLSearchParams({ include_defaults: "false" });
+      if (profile) qs.set("profile", profile);
+      const upstreamRes = await fetch(`${config.hermesBaseUrl}/api/config?${qs.toString()}`, {
+        method: "GET",
+        headers: upstreamHeaders,
+        redirect: "manual",
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+      if (!upstreamRes.ok) {
+        const text = await upstreamRes.text();
+        res.writeHead(upstreamRes.status, {
+          "Content-Type": upstreamRes.headers.get("content-type") || "application/json",
+          "Cache-Control": "no-store",
+        });
+        res.end(text);
+        return;
+      }
+      const cfg = (await upstreamRes.json()) as Record<string, unknown>;
+      const fallback_providers = normalizeFallbackList(cfg?.fallback_providers);
+      sendJson(res, 200, {
+        ok: true,
+        profile: profile || "default",
+        fallback_providers,
+      });
+      return;
+    }
+
+    // PUT: strictly validate fallback_providers before forwarding to Hermes PUT /api/config
+    const rawBody = await readBody(req, 64 * 1024);
+    let parsedBody: Record<string, unknown> = {};
+    try {
+      parsedBody = rawBody ? (JSON.parse(rawBody.toString("utf8")) as Record<string, unknown>) : {};
+    } catch {
+      clearTimeout(timeout);
+      sendJson(res, 400, { error: "bad_request", detail: "Ungültiges JSON." });
+      return;
+    }
+
+    if (!Array.isArray(parsedBody.fallback_providers)) {
+      clearTimeout(timeout);
+      sendJson(res, 400, {
+        error: "invalid_fallback",
+        detail: "fallback_providers muss eine Liste sein.",
+      });
+      return;
+    }
+
+    const sanitized = normalizeFallbackList(parsedBody.fallback_providers);
+    const qs = new URLSearchParams();
+    if (profile) qs.set("profile", profile);
+    const putUrl = `${config.hermesBaseUrl}/api/config${qs.toString() ? `?${qs.toString()}` : ""}`;
+
+    const upstreamRes = await fetch(putUrl, {
+      method: "PUT",
+      headers: {
+        ...upstreamHeaders,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        ...(profile ? { profile } : {}),
+        config: { fallback_providers: sanitized },
+      }),
+      redirect: "manual",
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    if (!upstreamRes.ok) {
+      const text = await upstreamRes.text();
+      res.writeHead(upstreamRes.status, {
+        "Content-Type": upstreamRes.headers.get("content-type") || "application/json",
+        "Cache-Control": "no-store",
+      });
+      res.end(text);
+      return;
+    }
+    sendJson(res, 200, {
+      ok: true,
+      profile: profile || "default",
+      fallback_providers: sanitized,
+    });
+  } catch (err) {
+    clearTimeout(timeout);
+    const isTimeout = err instanceof Error && err.name === "AbortError";
+    sendJson(res, isTimeout ? 504 : 502, {
+      error: isTimeout ? "upstream_timeout" : "upstream_unreachable",
+      detail: "Hermes-Konfiguration konnte nicht erreicht werden.",
+    });
+  }
+}
+
+async function handlePocketSecret(
+  req: IncomingMessage,
+  res: ServerResponse,
+  config: ServerConfig,
+  parsedUrl: URL
+): Promise<void> {
+  const method = (req.method || "GET").toUpperCase();
+  if (method !== "PUT") {
+    sendJson(res, 405, { error: "method_not_allowed", detail: "Nur PUT erlaubt (Write-Only)." });
+    return;
+  }
+  if (!isSameOriginRequest(req)) {
+    sendJson(res, 403, { error: "forbidden_origin", detail: "Cross-Origin-Anfrage abgelehnt." });
+    return;
+  }
+
+  let parsedBody: Record<string, unknown> = {};
+  try {
+    const rawBody = await readBody(req, 32 * 1024);
+    parsedBody = rawBody ? (JSON.parse(rawBody.toString("utf8")) as Record<string, unknown>) : {};
+  } catch {
+    sendJson(res, 400, { error: "bad_request", detail: "Ungültiger Request-Body." });
+    return;
+  }
+
+  const key = typeof parsedBody.key === "string" ? parsedBody.key.trim().toUpperCase() : "";
+  const value = typeof parsedBody.value === "string" ? parsedBody.value : "";
+  const profile =
+    (typeof parsedBody.profile === "string" ? parsedBody.profile.trim() : "") ||
+    parsedUrl.searchParams.get("profile")?.trim() ||
+    "";
+
+  if (!ENV_KEY_PATTERN.test(key)) {
+    sendJson(res, 400, {
+      error: "invalid_key",
+      detail: "Schlüsselname muss aus Großbuchstaben, Ziffern und Unterstrichen bestehen (z. B. GITHUB_TOKEN).",
+    });
+    return;
+  }
+  if (!value.trim() || value.length > 8192) {
+    sendJson(res, 400, { error: "invalid_value", detail: "Bitte einen gültigen Wert eingeben." });
+    return;
+  }
+
+  const upstreamHeaders: Record<string, string> = {
+    Accept: "application/json",
+    "Content-Type": "application/json",
+    "User-Agent": "hermes-pocket-bff/0.1",
+  };
+  if (req.headers.cookie) {
+    upstreamHeaders.Cookie = String(req.headers.cookie);
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15_000);
+  try {
+    const qs = new URLSearchParams();
+    if (profile) qs.set("profile", profile);
+    const putUrl = `${config.hermesBaseUrl}/api/env${qs.toString() ? `?${qs.toString()}` : ""}`;
+    const upstreamRes = await fetch(putUrl, {
+      method: "PUT",
+      headers: upstreamHeaders,
+      body: JSON.stringify({
+        key,
+        value,
+        ...(profile ? { profile } : {}),
+      }),
+      redirect: "manual",
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    if (!upstreamRes.ok) {
+      const text = await upstreamRes.text();
+      res.writeHead(upstreamRes.status, {
+        "Content-Type": upstreamRes.headers.get("content-type") || "application/json",
+        "Cache-Control": "no-store",
+      });
+      res.end(text);
+      return;
+    }
+    sendJson(res, 200, { ok: true, key, profile: profile || "default" });
+  } catch (err) {
+    clearTimeout(timeout);
+    const isTimeout = err instanceof Error && err.name === "AbortError";
+    sendJson(res, isTimeout ? 504 : 502, {
+      error: isTimeout ? "upstream_timeout" : "upstream_unreachable",
+      detail: "Hermes konnte den Schlüssel nicht speichern.",
+    });
+  }
+}
+
 export async function handleHermesHttpProxy(
   req: IncomingMessage,
   res: ServerResponse,
@@ -55,6 +286,16 @@ export async function handleHermesHttpProxy(
       service: "hermes-pocket",
       upstreamConfigured: Boolean(config.hermesBaseUrl),
     });
+    return true;
+  }
+
+  if (pathname === "/api/pocket/fallback") {
+    await handlePocketFallback(req, res, config, parsedUrl);
+    return true;
+  }
+
+  if (pathname === "/api/pocket/secret") {
+    await handlePocketSecret(req, res, config, parsedUrl);
     return true;
   }
 
