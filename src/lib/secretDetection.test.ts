@@ -3,6 +3,7 @@ import {
   detectBotSecretForm,
   detectBotSecretRequest,
   detectBotVaultRequest,
+  extractPocketPages,
   extractProductDeals,
   isPlaintextFormFieldKey,
   stripSecretRequestTag,
@@ -105,6 +106,19 @@ describe("secretDetection", () => {
       },
     ]);
     expect(stripSecretRequestTag(raw)).toBe("Hier ist der aktuelle Bestpreis:");
+  });
+
+  it("extracts [POCKET_PAGE] briefing cards and strips the directive from prose", () => {
+    const raw =
+      "Dein Tagesbriefing ist fertig!\n[POCKET_PAGE: tagesbriefing-20261126-a1b2c3 | Dein Tagesbriefing | Welt, Wirtschaft & Wetter in 3 Minuten]";
+    expect(extractPocketPages(raw)).toEqual([
+      {
+        id: "tagesbriefing-20261126-a1b2c3",
+        title: "Dein Tagesbriefing",
+        summary: "Welt, Wirtschaft & Wetter in 3 Minuten",
+      },
+    ]);
+    expect(stripSecretRequestTag(raw)).toBe("Dein Tagesbriefing ist fertig!");
   });
 
   it("detects natural German bot requests and extracts explicit or inferred env var names", () => {

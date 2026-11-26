@@ -27,7 +27,7 @@ interface PushStoreFile {
   subscriptions: StoredPushSubscription[];
 }
 
-function getPushDataDir(): string {
+export function getPushDataDir(): string {
   const configured = process.env.PUSH_DATA_DIR?.trim();
   if (configured) return path.resolve(configured);
   return path.resolve(process.cwd(), ".data");
@@ -133,7 +133,7 @@ function configureVapid(store: PushStoreFile): void {
   webpush.setVapidDetails(subject, store.vapidPublicKey, store.vapidPrivateKey);
 }
 
-async function verifyHermesSession(req: IncomingMessage, config: ServerConfig): Promise<boolean> {
+export async function verifyHermesSession(req: IncomingMessage, config: ServerConfig): Promise<boolean> {
   const cookie = req.headers.cookie;
   if (!cookie) return false;
   try {

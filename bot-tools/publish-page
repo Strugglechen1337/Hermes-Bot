@@ -1,0 +1,410 @@
+#!/usr/bin/env python3
+"""
+Hermes Pocket · publish-page
+
+Veröffentlicht eine von einem Bot erstellte Seite (z. B. Tagesbriefing, Bericht,
+Übersicht) lokal in Hermes Pocket und gibt die Chat-Zeile aus, die der Bot ans
+Ende seiner Antwort setzt:
+
+    [POCKET_PAGE: <id> | <Titel> | <Kurzbeschreibung>]
+
+Eingabeformate (genau eins):
+  --json FILE       Strukturiertes Briefing (empfohlen, wird automatisch schön gestaltet)
+  --markdown FILE   Markdown-Text (wird in das Hermes-Pocket-Layout gesetzt)
+  --html FILE       Eigenes HTML (vollständiges Dokument oder Fragment)
+  FILE = "-" liest von stdin.
+
+Sicherheit: Seiten werden nur angemeldeten Hermes-Sitzungen ausgeliefert und in
+einer Sandbox (eigener, opaker Ursprung) angezeigt. Niemals Passwörter, Tokens
+oder andere Geheimnisse in Seiten schreiben.
+"""
+import argparse
+import datetime as dt
+import html
+import json
+import os
+import re
+import secrets
+import sys
+import urllib.request
+from pathlib import Path
+
+MAX_BYTES = 3 * 1024 * 1024
+KEEP_PAGES = 200
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+DATA_DIR = Path(os.environ.get("PUSH_DATA_DIR") or (SCRIPT_DIR.parent / ".data"))
+PAGES_DIR = DATA_DIR / "pages"
+
+WEEKDAYS = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"]
+MONTHS = ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August",
+          "September", "Oktober", "November", "Dezember"]
+
+
+def german_date(d: dt.datetime) -> str:
+    return f"{WEEKDAYS[d.weekday()]}, {d.day}. {MONTHS[d.month - 1]} {d.year}"
+
+
+def esc(value) -> str:
+    return html.escape(str(value or ""), quote=True)
+
+
+def safe_url(value) -> str:
+    url = str(value or "").strip()
+    return url if re.match(r"^https?://", url, re.I) else ""
+
+
+def slugify(text: str) -> str:
+    t = text.lower()
+    for a, b in (("ä", "ae"), ("ö", "oe"), ("ü", "ue"), ("ß", "ss")):
+        t = t.replace(a, b)
+    t = re.sub(r"[^a-z0-9]+", "-", t).strip("-")
+    return (t[:40].strip("-")) or "seite"
+
+
+def host_of(url: str) -> str:
+    m = re.match(r"^https?://(?:www\.)?([^/:?#]+)", url, re.I)
+    return m.group(1) if m else ""
+
+
+# ── Minimal, safe Markdown → HTML ────────────────────────────────────────────
+
+def md_inline(text: str) -> str:
+    out = esc(text)
+    out = re.sub(
+        r"!\[([^\]]*)\]\((https?://[^\s)]+)\)",
+        lambda m: f'<img class="inline-img" src="{m.group(2)}" alt="{m.group(1)}" loading="lazy" referrerpolicy="no-referrer">',
+        out,
+    )
+    out = re.sub(
+        r"\[([^\]]+)\]\((https?://[^\s)]+)\)",
+        lambda m: f'<a href="{m.group(2)}" target="_blank" rel="noopener noreferrer">{m.group(1)}</a>',
+        out,
+    )
+    out = re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", out)
+    out = re.sub(r"(?<!\*)\*([^*]+)\*(?!\*)", r"<em>\1</em>", out)
+    out = re.sub(r"`([^`]+)`", r"<code>\1</code>", out)
+    return out
+
+
+def markdown_to_html(md: str) -> str:
+    lines = md.replace("\r\n", "\n").split("\n")
+    parts, para, items = [], [], []
+
+    def flush_para():
+        if para:
+            parts.append("<p>" + "<br>".join(md_inline(l) for l in para) + "</p>")
+            para.clear()
+
+    def flush_list():
+        if items:
+            parts.append("<ul>" + "".join(f"<li>{md_inline(i)}</li>" for i in items) + "</ul>")
+            items.clear()
+
+    for line in lines:
+        h = re.match(r"^(#{1,4})\s+(.*)$", line)
+        b = re.match(r"^\s*[-*•]\s+(.*)$", line)
+        if h:
+            flush_para(); flush_list()
+            level = min(4, len(h.group(1)) + 1)
+            parts.append(f"<h{level}>{md_inline(h.group(2))}</h{level}>")
+        elif b:
+            flush_para(); items.append(b.group(1))
+        elif not line.strip():
+            flush_para(); flush_list()
+        else:
+            flush_list(); para.append(line)
+    flush_para(); flush_list()
+    return '<section class="card prose">' + "\n".join(parts) + "</section>"
+
+
+# ── Structured briefing JSON → HTML ──────────────────────────────────────────
+
+def render_item(item) -> str:
+    if isinstance(item, str):
+        return f'<article class="item"><p>{md_inline(item)}</p></article>'
+    title = item.get("title", "")
+    text = item.get("text") or item.get("summary") or ""
+    url = safe_url(item.get("url"))
+    image = safe_url(item.get("image"))
+    source = item.get("source") or (host_of(url) if url else "")
+    tag = item.get("tag", "")
+    img_html = (
+        f'<img class="item-img" src="{esc(image)}" alt="{esc(title)}" loading="lazy" referrerpolicy="no-referrer">'
+        if image else ""
+    )
+    title_html = (
+        f'<a href="{esc(url)}" target="_blank" rel="noopener noreferrer">{esc(title)}</a>' if url and title else esc(title)
+    )
+    meta = []
+    if tag:
+        meta.append(f'<span class="chip">{esc(tag)}</span>')
+    if source:
+        meta.append(f'<span class="source">{esc(source)}</span>')
+    return (
+        '<article class="item">'
+        f"{img_html}"
+        '<div class="item-body">'
+        + (f'<h3>{title_html}</h3>' if title else "")
+        + (f"<p>{md_inline(text)}</p>" if text else "")
+        + (f'<div class="meta">{"".join(meta)}</div>' if meta else "")
+        + "</div></article>"
+    )
+
+
+def render_briefing(data: dict) -> str:
+    out = []
+    intro = data.get("intro") or data.get("summary")
+    if intro:
+        out.append(f'<section class="card intro"><p>{md_inline(intro)}</p></section>')
+
+    highlights = data.get("highlights") or []
+    if highlights:
+        out.append(
+            '<section class="card highlights"><h2>Auf einen Blick</h2><ul>'
+            + "".join(f"<li>{md_inline(h)}</li>" for h in highlights)
+            + "</ul></section>"
+        )
+
+    sections = data.get("sections") or []
+    if len(sections) > 1:
+        out.append(
+            '<nav class="tabs" aria-label="Rubriken">'
+            + "".join(
+                f'<a class="tab" href="#s{i}">{esc((s.get("icon") or "") + " " + (s.get("title") or "")).strip()}</a>'
+                for i, s in enumerate(sections)
+            )
+            + "</nav>"
+        )
+    for i, s in enumerate(sections):
+        items = s.get("items") or []
+        heading = esc(((s.get("icon") or "") + " " + (s.get("title") or "")).strip())
+        out.append(
+            f'<section class="section" id="s{i}"><h2>{heading}</h2>'
+            + (f'<p class="section-intro">{md_inline(s.get("intro"))}</p>' if s.get("intro") else "")
+            + '<div class="items">' + "".join(render_item(it) for it in items) + "</div></section>"
+        )
+
+    footer = data.get("footer")
+    if footer:
+        out.append(f'<p class="footnote">{md_inline(footer)}</p>')
+    return "\n".join(out)
+
+
+TEMPLATE = """<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>{title}</title>
+<style>
+:root {{ color-scheme: dark; --bg:#08090c; --card:#12141a; --card2:#1a1d24; --line:rgba(255,255,255,.09);
+  --text:#f5f6f8; --muted:#98a0b0; --dim:#687080; --accent:#f59e0b; --accent-soft:rgba(245,158,11,.14); --link:#a5b4fc; }}
+* {{ box-sizing:border-box; }}
+html,body {{ margin:0; background:var(--bg); color:var(--text);
+  font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Inter","Segoe UI",Roboto,sans-serif; -webkit-font-smoothing:antialiased; }}
+.wrap {{ max-width:760px; margin:0 auto; padding:calc(env(safe-area-inset-top) + 22px) 16px calc(env(safe-area-inset-bottom) + 40px); }}
+header.hero {{ padding:22px 20px 20px; border-radius:24px; margin-bottom:14px;
+  background:radial-gradient(circle at 85% -20%, rgba(245,158,11,.28), transparent 55%), linear-gradient(160deg,#171a22,#0f1116); border:1px solid var(--line); }}
+.eyebrow {{ display:flex; align-items:center; gap:8px; font-size:.74rem; font-weight:700; letter-spacing:.08em; text-transform:uppercase; color:var(--accent); }}
+.eyebrow .dot {{ width:7px; height:7px; border-radius:50%; background:var(--accent); box-shadow:0 0 10px var(--accent); }}
+h1 {{ margin:10px 0 6px; font-size:1.7rem; line-height:1.15; letter-spacing:-.02em; }}
+.subtitle {{ margin:0; color:var(--muted); font-size:.95rem; line-height:1.45; }}
+.byline {{ margin-top:12px; font-size:.78rem; color:var(--dim); }}
+.card {{ background:var(--card); border:1px solid var(--line); border-radius:20px; padding:16px 18px; margin-bottom:12px; }}
+.card p {{ margin:0 0 10px; line-height:1.55; }} .card p:last-child {{ margin-bottom:0; }}
+.intro p {{ font-size:1.02rem; }}
+.highlights h2, .section h2 {{ margin:0 0 10px; font-size:1.05rem; letter-spacing:-.01em; }}
+.highlights ul {{ margin:0; padding-left:18px; }} .highlights li {{ margin:6px 0; line-height:1.45; }}
+.highlights li::marker {{ color:var(--accent); }}
+.tabs {{ position:sticky; top:0; z-index:5; display:flex; gap:7px; overflow-x:auto; padding:10px 2px; margin:4px 0 6px;
+  background:linear-gradient(var(--bg) 75%, transparent); scrollbar-width:none; }}
+.tabs::-webkit-scrollbar {{ display:none; }}
+.tab {{ flex-shrink:0; padding:7px 13px; border-radius:999px; background:var(--card2); border:1px solid var(--line);
+  color:var(--text); font-size:.82rem; font-weight:600; text-decoration:none; white-space:nowrap; }}
+.tab.active {{ background:var(--accent); color:#08090c; border-color:transparent; }}
+.section {{ margin:18px 0 8px; scroll-margin-top:60px; }}
+.section-intro {{ margin:-4px 0 10px; color:var(--muted); font-size:.9rem; }}
+.items {{ display:flex; flex-direction:column; gap:10px; }}
+.item {{ display:flex; gap:12px; background:var(--card); border:1px solid var(--line); border-radius:18px; padding:12px; }}
+.item-img {{ width:92px; height:92px; flex-shrink:0; border-radius:14px; object-fit:cover; background:#1b1e26; }}
+.item-body {{ min-width:0; flex:1; }}
+.item h3 {{ margin:0 0 5px; font-size:.97rem; line-height:1.3; }}
+.item h3 a {{ color:var(--text); text-decoration:none; }}
+.item p {{ margin:0; color:var(--muted); font-size:.88rem; line-height:1.5; }}
+.meta {{ display:flex; flex-wrap:wrap; align-items:center; gap:7px; margin-top:8px; }}
+.chip {{ padding:2px 8px; border-radius:999px; background:var(--accent-soft); color:#fbbf24; font-size:.7rem; font-weight:700; }}
+.source {{ font-size:.72rem; color:var(--dim); }}
+.prose h2,.prose h3,.prose h4,.prose h5 {{ margin:16px 0 8px; }} .prose h2:first-child {{ margin-top:0; }}
+.prose ul {{ padding-left:18px; }} .prose li {{ margin:5px 0; line-height:1.5; }}
+.inline-img {{ max-width:100%; border-radius:14px; display:block; margin:8px 0; }}
+a {{ color:var(--link); }}
+code {{ font-family:"SF Mono",ui-monospace,Menlo,monospace; font-size:.85em; background:rgba(255,255,255,.08); padding:1px 5px; border-radius:6px; }}
+.footnote {{ margin-top:22px; text-align:center; color:var(--dim); font-size:.76rem; line-height:1.5; }}
+@media (max-width:420px) {{ .item-img {{ width:76px; height:76px; }} h1 {{ font-size:1.5rem; }} }}
+</style>
+</head>
+<body>
+<main class="wrap">
+<header class="hero">
+  <div class="eyebrow"><span class="dot"></span>{eyebrow}</div>
+  <h1>{title}</h1>
+  {subtitle_html}
+  <div class="byline">{byline}</div>
+</header>
+{body}
+</main>
+<script>
+(function () {{
+  var tabs = Array.prototype.slice.call(document.querySelectorAll('.tab'));
+  if (!tabs.length || !('IntersectionObserver' in window)) return;
+  var byId = {{}};
+  tabs.forEach(function (t) {{ byId[t.getAttribute('href').slice(1)] = t; }});
+  var io = new IntersectionObserver(function (entries) {{
+    entries.forEach(function (e) {{
+      if (e.isIntersecting) {{
+        tabs.forEach(function (t) {{ t.classList.remove('active'); }});
+        var t = byId[e.target.id];
+        if (t) {{ t.classList.add('active'); t.scrollIntoView({{ block: 'nearest', inline: 'center' }}); }}
+      }}
+    }});
+  }}, {{ rootMargin: '-45% 0px -50% 0px' }});
+  document.querySelectorAll('.section').forEach(function (s) {{ io.observe(s); }});
+}})();
+</script>
+</body>
+</html>
+"""
+
+
+def wrap_page(title: str, body: str, subtitle: str = "", eyebrow: str = "", bot: str = "") -> str:
+    now = dt.datetime.now()
+    byline_parts = [german_date(now), now.strftime("%H:%M Uhr")]
+    if bot:
+        byline_parts.append(f"erstellt von {bot}")
+    return TEMPLATE.format(
+        title=esc(title),
+        eyebrow=esc(eyebrow or "Hermes Pocket"),
+        subtitle_html=f'<p class="subtitle">{md_inline(subtitle)}</p>' if subtitle else "",
+        byline=esc(" · ".join(byline_parts)),
+        body=body,
+    )
+
+
+def read_input(path: str) -> str:
+    if path == "-":
+        data = sys.stdin.read()
+    else:
+        data = Path(path).read_text(encoding="utf-8")
+    if len(data.encode("utf-8")) > MAX_BYTES:
+        sys.exit("Fehler: Seite ist größer als 3 MB.")
+    return data
+
+
+def notify(title: str, body: str, bot: str) -> None:
+    token_path = DATA_DIR / "bot-push-token"
+    if not token_path.is_file():
+        print("Hinweis: Push noch nicht eingerichtet – Seite wurde trotzdem veröffentlicht.", file=sys.stderr)
+        return
+    payload = json.dumps({"title": title, "body": body, "bot": bot}).encode("utf-8")
+    req = urllib.request.Request(
+        os.environ.get("POCKET_NOTIFY_URL", "http://127.0.0.1:9135/api/pocket/push/notify"),
+        data=payload,
+        headers={"Content-Type": "application/json", "X-Pocket-Push-Token": token_path.read_text().strip()},
+        method="POST",
+    )
+    try:
+        urllib.request.urlopen(req, timeout=15).read()
+    except Exception as exc:  # noqa: BLE001
+        print(f"Hinweis: Push konnte nicht gesendet werden ({exc}).", file=sys.stderr)
+
+
+def prune() -> None:
+    pages = sorted(PAGES_DIR.glob("*.html"), key=lambda p: p.stat().st_mtime, reverse=True)
+    for old in pages[KEEP_PAGES:]:
+        for p in (old, old.with_suffix(".json")):
+            try:
+                p.unlink()
+            except OSError:
+                pass
+
+
+def clean_field(text: str, limit: int) -> str:
+    return re.sub(r"[\[\]|\r\n]+", " ", text).strip()[:limit]
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description="Seite in Hermes Pocket veröffentlichen")
+    ap.add_argument("--title", required=True)
+    ap.add_argument("--summary", default="")
+    ap.add_argument("--bot", default="")
+    ap.add_argument("--subtitle", default="")
+    ap.add_argument("--eyebrow", default="", help="Kleine Überschrift, z. B. 'Tagesbriefing'")
+    src = ap.add_mutually_exclusive_group(required=True)
+    src.add_argument("--json")
+    src.add_argument("--markdown")
+    src.add_argument("--html")
+    ap.add_argument("--notify", action="store_true", help="Zusätzlich Push-Benachrichtigung senden")
+    args = ap.parse_args()
+
+    title = clean_field(args.title, 120) or "Seite"
+    summary = clean_field(args.summary, 220)
+
+    if args.json:
+        try:
+            data = json.loads(read_input(args.json))
+        except json.JSONDecodeError as exc:
+            sys.exit(f"Fehler: Ungültiges JSON ({exc}).")
+        if not isinstance(data, dict):
+            sys.exit("Fehler: JSON muss ein Objekt sein.")
+        page = wrap_page(
+            data.get("title") or title,
+            render_briefing(data),
+            subtitle=data.get("subtitle") or args.subtitle,
+            eyebrow=data.get("eyebrow") or args.eyebrow,
+            bot=args.bot,
+        )
+        if not summary:
+            summary = clean_field(str(data.get("intro") or data.get("summary") or ""), 220)
+    elif args.markdown:
+        page = wrap_page(title, markdown_to_html(read_input(args.markdown)),
+                         subtitle=args.subtitle, eyebrow=args.eyebrow, bot=args.bot)
+    else:
+        raw = read_input(args.html)
+        if re.search(r"<html[\s>]", raw, re.I):
+            page = raw
+        else:
+            page = wrap_page(title, raw, subtitle=args.subtitle, eyebrow=args.eyebrow, bot=args.bot)
+
+    PAGES_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        os.chmod(PAGES_DIR, 0o700)
+    except OSError:
+        pass
+
+    page_id = f"{slugify(title)}-{dt.datetime.now():%Y%m%d}-{secrets.token_hex(3)}"
+    html_path = PAGES_DIR / f"{page_id}.html"
+    meta_path = PAGES_DIR / f"{page_id}.json"
+    html_path.write_text(page, encoding="utf-8")
+    meta_path.write_text(json.dumps({
+        "id": page_id,
+        "title": title,
+        "summary": summary,
+        "bot": clean_field(args.bot, 64),
+        "createdAt": int(dt.datetime.now().timestamp() * 1000),
+    }, ensure_ascii=False), encoding="utf-8")
+    for p in (html_path, meta_path):
+        try:
+            os.chmod(p, 0o600)
+        except OSError:
+            pass
+    prune()
+
+    if args.notify:
+        notify(title, summary or "Neue Seite ist fertig.", args.bot)
+
+    print(f"[POCKET_PAGE: {page_id} | {title} | {summary}]")
+
+
+if __name__ == "__main__":
+    main()

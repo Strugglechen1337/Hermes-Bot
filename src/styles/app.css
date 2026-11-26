@@ -2388,3 +2388,111 @@ a {
   white-space: nowrap;
   flex: 1;
 }
+
+/* ── Bot-Published Pocket Pages (Briefings & Reports) & Sandboxed Viewer ───── */
+
+.pocket-page-card {
+  margin-top: 10px;
+  padding: 13px 14px;
+  border-radius: 18px;
+  background: radial-gradient(circle at 92% -20%, rgba(245, 158, 11, 0.2), transparent 55%),
+    rgba(18, 21, 30, 0.96);
+  border: 1px solid rgba(245, 158, 11, 0.34);
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.pocket-page-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.pocket-page-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--accent-send);
+}
+
+.pocket-page-title {
+  font-size: 0.98rem;
+  font-weight: 700;
+  line-height: 1.3;
+  color: var(--text-primary);
+}
+
+.pocket-page-summary {
+  font-size: 0.82rem;
+  line-height: 1.42;
+  color: var(--text-secondary);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.pocket-page-open-btn {
+  margin-top: 4px;
+  min-height: 40px;
+  border-radius: 999px;
+}
+
+.page-viewer-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 280;
+  background: var(--bg-canvas);
+  display: flex;
+  flex-direction: column;
+}
+
+.page-viewer-header {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: calc(var(--safe-top) + 10px) 12px 10px 14px;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.page-viewer-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.page-viewer-title {
+  font-size: 0.94rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.page-viewer-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.page-viewer-frame {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  border: none;
+  background: var(--bg-canvas);
+}

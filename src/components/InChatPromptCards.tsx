@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   AlertTriangle,
   Check,
@@ -6,6 +7,7 @@ import {
   ExternalLink,
   Eye,
   EyeOff,
+  FileText,
   HelpCircle,
   KeyRound,
   Lock,
@@ -29,6 +31,7 @@ import { saveProfileSecret } from "../lib/hermesApi";
 import {
   isPlaintextFormFieldKey,
   type DetectedDealCard,
+  type DetectedPocketPage,
   type DetectedSecretRequest,
   type DetectedVaultRequest,
 } from "../lib/secretDetection";
@@ -1354,5 +1357,95 @@ export const ProductDealCard: React.FC<ProductDealCardProps> = ({ deal, disabled
         </button>
       </div>
     </div>
+  );
+};
+
+// ── 8. Interactive Briefing / Pocket Page Card & Fullscreen Sandboxed Viewer ─
+
+interface PocketPageCardProps {
+  page: DetectedPocketPage;
+  onOpen: (page: DetectedPocketPage) => void;
+}
+
+export const PocketPageCard: React.FC<PocketPageCardProps> = ({ page, onOpen }) => {
+  const pageUrl = `/api/pocket/pages/${encodeURIComponent(page.id)}`;
+  return (
+    <div className="pocket-page-card">
+      <div className="pocket-page-card-head">
+        <span className="pocket-page-eyebrow">
+          <Sparkles size={13} />
+          <span>Briefing &amp; Seite</span>
+        </span>
+        <a
+          href={pageUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="deal-card-ext"
+          aria-label={`„${page.title}“ in neuem Tab öffnen`}
+          title="In neuem Tab öffnen"
+        >
+          <ExternalLink size={14} />
+        </a>
+      </div>
+      <div className="pocket-page-title">{page.title}</div>
+      {page.summary && <div className="pocket-page-summary">{page.summary}</div>}
+      <button
+        type="button"
+        className="btn primary full pocket-page-open-btn"
+        onClick={() => onOpen(page)}
+      >
+        <FileText size={15} />
+        <span>Seite öffnen</span>
+      </button>
+    </div>
+  );
+};
+
+interface PocketPageViewerProps {
+  page: DetectedPocketPage | null;
+  onClose: () => void;
+}
+
+export const PocketPageViewer: React.FC<PocketPageViewerProps> = ({ page, onClose }) => {
+  if (!page || typeof document === "undefined") return null;
+  const pageUrl = `/api/pocket/pages/${encodeURIComponent(page.id)}`;
+
+  return createPortal(
+    <div className="page-viewer-backdrop" role="dialog" aria-modal="true" aria-label={page.title}>
+      <header className="page-viewer-header">
+        <div className="page-viewer-title-wrap">
+          <Sparkles size={15} style={{ color: "var(--accent-send)", flexShrink: 0 }} />
+          <span className="page-viewer-title">{page.title}</span>
+        </div>
+        <div className="page-viewer-actions">
+          <a
+            href={pageUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="icon-btn ghost"
+            aria-label="In neuem Tab öffnen"
+            title="In neuem Tab öffnen"
+          >
+            <ExternalLink size={17} />
+          </a>
+          <button
+            type="button"
+            className="icon-btn ghost"
+            aria-label="Schließen"
+            onClick={onClose}
+          >
+            <X size={20} />
+          </button>
+        </div>
+      </header>
+      <iframe
+        src={pageUrl}
+        title={page.title}
+        className="page-viewer-frame"
+        sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"
+        referrerPolicy="no-referrer"
+      />
+    </div>,
+    document.body
   );
 };

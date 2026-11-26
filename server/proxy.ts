@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import type { ServerConfig } from "./config.js";
 import { appendAutonomousGuidance } from "../shared/botAutonomy.js";
+import { handlePocketPagesRoute } from "./pages.js";
 import { handlePocketPushRoute } from "./push.js";
 import {
   adaptSetCookieHeader,
@@ -498,7 +499,7 @@ async function bootstrapNewProfileDefaults(
     if (!fs.existsSync(profileDir)) {
       return;
     }
-    for (const skillName of ["pocket-push", "pocket-secret", "pocket-shopping"]) {
+    for (const skillName of ["pocket-push", "pocket-secret", "pocket-shopping", "pocket-page"]) {
       const src = path.join(hermesHome, "skills", skillName, "SKILL.md");
       if (!fs.existsSync(src)) continue;
       const dstDir = path.join(targetSkillsDir, skillName);
@@ -556,6 +557,10 @@ export async function handleHermesHttpProxy(
 
   if (pathname.startsWith("/api/pocket/push/")) {
     return handlePocketPushRoute(req, res, config, pathname);
+  }
+
+  if (pathname === "/api/pocket/pages" || pathname.startsWith("/api/pocket/pages/")) {
+    return handlePocketPagesRoute(req, res, config, pathname);
   }
 
   const method = (req.method || "GET").toUpperCase();

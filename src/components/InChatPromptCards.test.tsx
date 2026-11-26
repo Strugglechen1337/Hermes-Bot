@@ -5,6 +5,7 @@ import {
   ApprovalPromptCard,
   ClarifyPromptCard,
   ManualSecretCard,
+  PocketPageCard,
   SecretPromptCard,
 } from "./InChatPromptCards";
 import * as hermesApi from "../lib/hermesApi";
@@ -139,5 +140,20 @@ describe("InChatPromptCards", () => {
       "~/.hermes/profiles/nina-recherche/.env"
     );
     saveSpy.mockRestore();
+  });
+
+  it("renders a PocketPageCard for bot briefings and opens the viewer on click", () => {
+    const onOpen = vi.fn();
+    const page = {
+      id: "tagesbriefing-20261126-a1b2c3",
+      title: "Dein Morgen-Briefing",
+      summary: "Die 3 wichtigsten Themen heute früh",
+    };
+    render(<PocketPageCard page={page} onOpen={onOpen} />);
+
+    expect(screen.getByText("Dein Morgen-Briefing")).toBeInTheDocument();
+    expect(screen.getByText("Die 3 wichtigsten Themen heute früh")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Seite öffnen/i }));
+    expect(onOpen).toHaveBeenCalledWith(page);
   });
 });

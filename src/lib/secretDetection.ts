@@ -37,6 +37,34 @@ const EXPLICIT_VAULT_GLOBAL_RE =
   /\[VAULT_REQUEST:\s*(payment|address|login)(?:\s*\|\s*([^|\]]+))?(?:\s*\|\s*([^\]]+))?\]/gi;
 const EXPLICIT_DEAL_GLOBAL_RE =
   /\[DEAL_CARD:\s*([^|\]]+)\|\s*([^|\]]+)\|\s*([^|\]]+)(?:\|\s*([^|\]]*))?(?:\|\s*([^|\]]*))?(?:\|\s*([^\]]+))?\]/gi;
+const POCKET_PAGE_GLOBAL_RE =
+  /\[POCKET_PAGE:\s*([a-z0-9][a-z0-9-]{2,79})\s*(?:\|\s*([^|\]]*))?(?:\|\s*([^\]]*))?\]/gi;
+
+export interface DetectedPocketPage {
+  id: string;
+  title: string;
+  summary: string;
+}
+
+/**
+ * Extracts `[POCKET_PAGE: id | Titel | Kurzbeschreibung]` references that bots emit
+ * after publishing a page via `bin/publish-page`.
+ */
+export function extractPocketPages(text: string): DetectedPocketPage[] {
+  const pages: DetectedPocketPage[] = [];
+  const seen = new Set<string>();
+  for (const m of text.matchAll(POCKET_PAGE_GLOBAL_RE)) {
+    const id = m[1].trim();
+    if (seen.has(id)) continue;
+    seen.add(id);
+    pages.push({
+      id,
+      title: (m[2] || "").trim() || "Seite",
+      summary: (m[3] || "").trim(),
+    });
+  }
+  return pages;
+}
 
 const ENV_VAR_CANDIDATE_RE =
   /\b([A-Z][A-Z0-9_]{2,48}_(?:API_KEY|TOKEN|SECRET|PASSWORD|PASSWD|KEY|PAT|AUTH))\b/g;
@@ -265,6 +293,7 @@ export function stripSecretRequestTag(text: string): string {
     .replace(EXPLICIT_TAG_GLOBAL_RE, "")
     .replace(EXPLICIT_VAULT_GLOBAL_RE, "")
     .replace(EXPLICIT_DEAL_GLOBAL_RE, "")
+    .replace(POCKET_PAGE_GLOBAL_RE, "")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }

@@ -101,9 +101,11 @@ import { notifyIfBackgrounded } from "../lib/pushClient";
 import {
   detectBotSecretForm,
   detectBotVaultRequest,
+  extractPocketPages,
   extractProductDeals,
   stripSecretRequestTag,
   type DetectedDealCard,
+  type DetectedPocketPage,
   type DetectedSecretRequest,
   type DetectedVaultRequest,
 } from "../lib/secretDetection";
@@ -124,6 +126,8 @@ import {
   ApprovalPromptCard,
   ClarifyPromptCard,
   ManualSecretCard,
+  PocketPageCard,
+  PocketPageViewer,
   ProductDealCard,
   SECRET_REQUEST_METHODS,
   SecretPromptCard,
@@ -1570,6 +1574,7 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
   const [sessionToDelete, setSessionToDelete] = useState<HermesSessionSummary | null>(null);
   const [deletingSession, setDeletingSession] = useState(false);
   const [hasNewBelow, setHasNewBelow] = useState(false);
+  const [openPocketPage, setOpenPocketPage] = useState<DetectedPocketPage | null>(null);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -2906,6 +2911,14 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
                           <SafeMarkdown text={stripSecretRequestTag(msg.content)} />
                         )}
                         {msg.role === "assistant" &&
+                          extractPocketPages(msg.content).map((page) => (
+                            <PocketPageCard
+                              key={page.id}
+                              page={page}
+                              onOpen={setOpenPocketPage}
+                            />
+                          ))}
+                        {msg.role === "assistant" &&
                           (() => {
                             const deals = extractProductDeals(msg.content);
                             if (deals.length === 0) return null;
@@ -3255,6 +3268,11 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
           )}
         </div>
       </div>
+
+      <PocketPageViewer
+        page={openPocketPage}
+        onClose={() => setOpenPocketPage(null)}
+      />
 
       <input
         ref={imagePickerRef}
