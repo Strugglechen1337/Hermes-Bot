@@ -146,6 +146,7 @@ export const BotsView: React.FC<BotsViewProps> = ({
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const createFileInputRef = useRef<HTMLInputElement | null>(null);
+  const lastCreateTriggerRef = useRef<number>(openCreateTrigger);
 
   // Model Picker Sheet (for BotManageSheet)
   const [modelPickerProfile, setModelPickerProfile] = useState<HermesProfile | null>(null);
@@ -162,13 +163,16 @@ export const BotsView: React.FC<BotsViewProps> = ({
   const editFileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
-    if (openCreateTrigger > 0) {
+    if (openCreateTrigger > lastCreateTriggerRef.current) {
+      lastCreateTriggerRef.current = openCreateTrigger;
       setCreateError(null);
       setCreateName("");
       setCreateDesc("");
       setCreateSoul("");
       setCreateAvatarPreview(null);
       setShowCreateSheet(true);
+    } else if (openCreateTrigger < lastCreateTriggerRef.current) {
+      lastCreateTriggerRef.current = openCreateTrigger;
     }
   }, [openCreateTrigger]);
 

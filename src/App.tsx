@@ -119,6 +119,11 @@ export const App: React.FC = () => {
     });
   }, []);
 
+  const handleSelectBot = useCallback((name: string | null) => {
+    setCreateBotTrigger(0);
+    setSelectedBotName(name);
+  }, []);
+
   const handleToggleHideProfile = useCallback((profileName: string) => {
     setHiddenProfiles((prev) => {
       const next = prev.includes(profileName)
@@ -277,7 +282,7 @@ export const App: React.FC = () => {
             wsState={wsState}
             selectedBotName={selectedBotName}
             openCreateTrigger={createBotTrigger}
-            onSelectBot={setSelectedBotName}
+            onSelectBot={handleSelectBot}
             onRefreshProfiles={() => loadProfiles()}
             onAvatarChange={handleAvatarChange}
             onToggleHideProfile={handleToggleHideProfile}
