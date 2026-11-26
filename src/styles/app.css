@@ -40,13 +40,6 @@
   --font-mono: "SF Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
-/* Home-Screen PWA (iOS standalone): clear the Dynamic Island & iOS status-bar blur cleanly */
-@media (display-mode: standalone) {
-  :root {
-    --header-top-pad: calc(max(var(--safe-top), 54px) + 16px);
-  }
-}
-
 * {
   box-sizing: border-box;
   -webkit-tap-highlight-color: transparent;
