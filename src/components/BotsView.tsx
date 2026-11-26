@@ -62,7 +62,6 @@ import {
   fetchSessions,
   normalizeMessages,
   prepareChatImageDataUrl,
-  renameSession,
   updateProfileDescription,
   updateProfileFallback,
   updateProfileModel,
@@ -72,6 +71,7 @@ import {
 import { hermesWs, type WsConnectionState } from "../lib/hermesWs";
 import {
   EMPTY_CHAT_USAGE,
+  formatCompactWindowLabel,
   getPrimaryLimitSummary,
   mergeAccountUsage,
   mergeUsagePayload,
@@ -1167,20 +1167,91 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
     [profile.name, scrollToBottom, wsState]
   );
 
+  const openCanonicalBotChat = useCallback(async () => {
+    setLoadingChat(true);
+    setChatError(null);
+    setIsStreaming(false);
+    setLiveStatus(null);
+    setActiveTool(null);
+    setPendingApproval(null);
+    setPendingConnection(null);
+    setPendingClarify(null);
+    setPendingSecret(null);
+    setUsageLimitError(null);
+    attachedOnWsRef.current = false;
+
+    try {
+      const snapshot = await hermesWs.call<{
+        session_id?: string;
+        messages?: unknown[];
+        running?: boolean;
+        execution_generation?: number;
+        inflight?: { assistant?: string; streaming?: boolean } | null;
+        pending_approval?: HermesPendingApproval | null;
+        prompts?: HermesPendingApproval[];
+        pending_connection?: HermesConnectionRequest | null;
+        usage?: Record<string, unknown> | null;
+        info?: { usage?: Record<string, unknown> | null } | null;
+      }>("session.create", {
+        profile: profile.name,
+        request_id: randomClientId("botchat"),
+        source: "gui",
+        title: BOT_CHAT_TITLE,
+      });
+
+      const resolvedSid = snapshot?.session_id || null;
+      setActiveSessionId(resolvedSid);
+      setActiveTitle(BOT_CHAT_TITLE);
+      if (typeof snapshot?.execution_generation === "number") {
+        execGenerationRef.current = snapshot.execution_generation;
+      }
+      attachedOnWsRef.current = Boolean(resolvedSid);
+
+      const loaded = normalizeMessages(snapshot?.messages || []);
+      if (snapshot?.inflight?.assistant) {
+        loaded.push({
+          id: "inflight",
+          role: "assistant",
+          content: snapshot.inflight.assistant,
+          streaming: Boolean(snapshot.inflight.streaming || snapshot.running),
+        });
+      }
+      setMessages(loaded);
+      setIsStreaming(Boolean(snapshot?.running || snapshot?.inflight?.streaming));
+      setPendingApproval(snapshot?.pending_approval || snapshot?.prompts?.[0] || null);
+      setPendingConnection(snapshot?.pending_connection || null);
+      const snapUsage = snapshot?.usage || snapshot?.info?.usage;
+      if (snapUsage && typeof snapUsage === "object") {
+        setUsage((prev) => mergeUsagePayload(prev, snapUsage));
+      }
+      void refreshAccountUsage(resolvedSid);
+      scrollToBottom();
+    } catch (err) {
+      setChatError(
+        err instanceof Error ? err.message : "Bot-Chat konnte nicht geöffnet werden."
+      );
+    } finally {
+      setLoadingChat(false);
+    }
+  }, [profile.name, refreshAccountUsage, scrollToBottom]);
+
   const refreshSessionsList = useCallback(
     async (autoOpenFirst = false) => {
       try {
         const list = await fetchSessions(profile.name, 30);
         setSessions(list);
         if (autoOpenFirst) {
+          if (wsState === "connected") {
+            // Use Hermes's official idempotent canonical "Bot Chat" create/resume so
+            // every bot always gets the live teammate roster & `message_agent` tool!
+            await openCanonicalBotChat();
+            const refreshed = await fetchSessions(profile.name, 30).catch(() => list);
+            setSessions(refreshed);
+            return;
+          }
           const preferred = pickPreferredBotSession(list);
           if (preferred) {
-            // Ensure this bot has a canonical "Bot Chat" session so Hermes activates
-            // the live teammate roster & `message_agent` bot-to-bot tool automatically.
-            if ((preferred.title || "").trim() !== BOT_CHAT_TITLE) {
-              await renameSession(preferred.id, BOT_CHAT_TITLE, profile.name).catch(() => null);
-            }
-            await loadSessionHistory(preferred.id, BOT_CHAT_TITLE);
+            await loadSessionHistory(preferred.id, preferred.title || BOT_CHAT_TITLE);
           } else {
             setActiveSessionId(null);
             setActiveTitle(BOT_CHAT_TITLE);
@@ -1194,7 +1265,7 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
         setLoadingChat(false);
       }
     },
-    [loadSessionHistory, profile.name]
+    [loadSessionHistory, openCanonicalBotChat, profile.name, wsState]
   );
 
   useEffect(() => {
@@ -1203,8 +1274,12 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
 
   useEffect(() => {
     if (wsState === "connected") {
-      if (activeSessionId && !attachedOnWsRef.current) {
-        void loadSessionHistory(activeSessionId, activeTitle);
+      if (!attachedOnWsRef.current) {
+        if (activeSessionId && activeTitle !== BOT_CHAT_TITLE) {
+          void loadSessionHistory(activeSessionId, activeTitle);
+        } else {
+          void openCanonicalBotChat();
+        }
       } else {
         void refreshAccountUsage(activeSessionId);
       }
@@ -1945,6 +2020,15 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
             const showDivider =
               curMs !== null && (prevMs === null || curMs - prevMs > 10 * 60 * 1000);
 
+            const isEmptyAssistant =
+              msg.role === "assistant" &&
+              !msg.streaming &&
+              !msg.content.trim() &&
+              !msg.reasoning &&
+              !msg.error &&
+              (!msg.attachments || msg.attachments.length === 0);
+            if (isEmptyAssistant) return null;
+
             return (
               <React.Fragment key={String(msg.id ?? i)}>
                 {showDivider && (
@@ -2090,11 +2174,10 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
             <Gauge size={13} style={{ flexShrink: 0 }} />
             <span className="chat-limit-text">
               {limitSummary.mode === "remaining" && limitSummary.remainingPercent !== null
-                ? `${limitSummary.label}: ${limitSummary.remainingPercent}% frei`
+                ? `${formatCompactWindowLabel(limitSummary.label)}: ${limitSummary.remainingPercent}% frei`
                 : limitSummary.mode === "context" && limitSummary.usedPercent !== null
                   ? `Kontext ${limitSummary.usedPercent}%`
                   : `${currentActiveModel}`}
-              {limitSummary.resetText ? ` · ${limitSummary.resetText}` : ""}
             </span>
             {limitSummary.barPercent !== null && (
               <span className="chat-limit-meter" aria-hidden="true">

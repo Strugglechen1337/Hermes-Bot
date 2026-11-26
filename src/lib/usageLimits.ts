@@ -223,6 +223,24 @@ export function mergeAccountUsage(
   };
 }
 
+export function formatCompactWindowLabel(label: string): string {
+  const clean = label.trim();
+  const lower = clean.toLowerCase();
+  if (/^5[- ]?(hour|h|stunden)/.test(lower) || lower === "session" || lower === "session limit") {
+    return "5h";
+  }
+  if (/^(week|weekly|wöchentlich|7[- ]?day)/.test(lower)) {
+    return "Woche";
+  }
+  if (/^(day|daily|täglich)/.test(lower)) {
+    return "Tag";
+  }
+  if (/^(month|monthly|monat)/.test(lower)) {
+    return "Monat";
+  }
+  return clean.length > 10 ? clean.slice(0, 10) : clean;
+}
+
 export function getPrimaryLimitSummary(usage: ChatUsageState): {
   label: string;
   mode: "remaining" | "context" | "none";

@@ -52,17 +52,19 @@ export function buildGroupMembersPayload(
 
 function isBackgroundSession(session: HermesSessionSummary): boolean {
   const src = (session.source || "").toLowerCase();
-  if (src === "subagent" || src === "oneshot" || src === "cron") return true;
+  if (src === "subagent" || src === "oneshot" || src === "cron" || src === "telegram" || src === "discord" || src === "slack") {
+    return true;
+  }
   const title = (session.title || "").trim().toLowerCase();
   if (title.startsWith("subagent:")) return true;
   return false;
 }
 
 /**
- * Selects the best session to open when entering a 1:1 bot chat:
+ * Selects the best existing session to display while offline or browsing history:
  * 1. Prefer the canonical "Bot Chat" session (which holds bot-to-bot DMs & `message_agent`).
- * 2. Otherwise pick the newest interactive (non-subagent/non-oneshot) session.
- * 3. Return null so the next message creates a fresh canonical "Bot Chat".
+ * 2. Otherwise pick the newest interactive local/gui session.
+ * 3. Return null so the canonical "Bot Chat" is opened/created directly.
  */
 export function pickPreferredBotSession(
   sessions: HermesSessionSummary[]

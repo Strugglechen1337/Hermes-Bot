@@ -269,7 +269,7 @@ export function normalizeMessages(rawList: unknown[]): HermesChatMessage[] {
         : "assistant";
     const content = extractMessageContent(obj.content ?? obj.text ?? "");
     const reasoning = typeof obj.reasoning === "string" ? obj.reasoning : null;
-    if (!content.trim() && !reasoning && role === "tool") continue;
+    if (!content.trim() && !reasoning && (role === "tool" || role === "assistant")) continue;
     result.push({
       id: (obj.id as string | number | undefined) ?? (obj.row_id as number | undefined) ?? `m-${i}`,
       row_id: typeof obj.row_id === "number" ? obj.row_id : undefined,
