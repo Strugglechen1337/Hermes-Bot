@@ -24,11 +24,13 @@ import type {
 import { getBotVisual, getProfileAvatarByName } from "../lib/botTheme";
 import { formatRelativeTime, formatShortTime, randomClientId } from "../lib/format";
 import { hermesWs, type WsConnectionState } from "../lib/hermesWs";
+import { BotAvatar } from "./BotAvatar";
 import { ConfirmSheet } from "./ConfirmSheet";
 import { SafeMarkdown } from "./SafeMarkdown";
 
 interface GroupsViewProps {
   profiles: HermesProfile[];
+  avatars: Record<string, string>;
   wsState: WsConnectionState;
   selectedRoomId: string | null;
   onSelectRoom: (roomId: string | null) => void;
@@ -36,6 +38,7 @@ interface GroupsViewProps {
 
 export const GroupsView: React.FC<GroupsViewProps> = ({
   profiles,
+  avatars,
   wsState,
   selectedRoomId,
   onSelectRoom,
@@ -175,6 +178,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
       <GroupRoomView
         room={selectedRoom}
         profiles={profiles}
+        avatars={avatars}
         wsState={wsState}
         onBack={() => {
           onSelectRoom(null);
@@ -353,12 +357,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
                         className={`chip ${picked ? "selected" : ""}`}
                         onClick={() => toggleMember(p.name)}
                       >
-                        <span
-                          className="avatar xs"
-                          style={{ background: vis.gradient }}
-                        >
-                          {vis.initials}
-                        </span>
+                        <BotAvatar visual={vis} imageUrl={avatars[p.name]} size="xs" />
                         {vis.label}
                       </button>
                     );
@@ -416,6 +415,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
 interface GroupRoomViewProps {
   room: HermesRoom;
   profiles: HermesProfile[];
+  avatars: Record<string, string>;
   wsState: WsConnectionState;
   onBack: () => void;
   onDisbanded: () => void;
@@ -424,6 +424,7 @@ interface GroupRoomViewProps {
 const GroupRoomView: React.FC<GroupRoomViewProps> = ({
   room,
   profiles,
+  avatars,
   wsState,
   onBack,
   onDisbanded,
@@ -693,9 +694,11 @@ const GroupRoomView: React.FC<GroupRoomViewProps> = ({
               return (
                 <div key={ev.event_id} className="msg-row assistant">
                   <div className="msg-author">
-                    <span className="avatar xs" style={{ background: vis.gradient }}>
-                      {vis.initials}
-                    </span>
+                    <BotAvatar
+                      visual={vis}
+                      imageUrl={ev.actor.profile ? avatars[ev.actor.profile] : null}
+                      size="xs"
+                    />
                     <span>{ev.actor.display_name || vis.label}</span>
                   </div>
                   <div className="msg-bubble">
@@ -738,6 +741,7 @@ const GroupRoomView: React.FC<GroupRoomViewProps> = ({
             className="composer-input"
             rows={1}
             value={input}
+            onFocus={() => setTimeout(scrollToBottom, 160)}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {

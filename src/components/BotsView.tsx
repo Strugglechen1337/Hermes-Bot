@@ -3,9 +3,12 @@ import {
   AlertCircle,
   ArrowLeft,
   ArrowUp,
+  Camera,
   Check,
   ChevronRight,
+  ExternalLink,
   History,
+  Link2,
   MessageSquarePlus,
   RefreshCw,
   Search,
@@ -17,10 +20,12 @@ import {
 } from "lucide-react";
 import type {
   HermesChatMessage,
+  HermesConnectionRequest,
   HermesPendingApproval,
   HermesProfile,
   HermesSessionSummary,
 } from "../../shared/types";
+import { clearBotAvatar, prepareAvatarDataUrl, saveBotAvatar } from "../lib/avatarStore";
 import { getBotVisual } from "../lib/botTheme";
 import { formatRelativeTime, formatShortTime } from "../lib/format";
 import {
@@ -30,32 +35,40 @@ import {
   normalizeMessages,
 } from "../lib/hermesApi";
 import { hermesWs, type WsConnectionState } from "../lib/hermesWs";
+import { BotAvatar } from "./BotAvatar";
 import { ConfirmSheet } from "./ConfirmSheet";
 import { SafeMarkdown } from "./SafeMarkdown";
 
 interface BotsViewProps {
   profiles: HermesProfile[];
+  avatars: Record<string, string>;
   loading: boolean;
   error: string | null;
   wsState: WsConnectionState;
   selectedBotName: string | null;
   onSelectBot: (name: string | null) => void;
   onRefreshProfiles: () => void;
+  onAvatarChange: (profileName: string, dataUrl: string | null) => void;
 }
 
 export const BotsView: React.FC<BotsViewProps> = ({
   profiles,
+  avatars,
   loading,
   error,
   wsState,
   selectedBotName,
   onSelectBot,
   onRefreshProfiles,
+  onAvatarChange,
 }) => {
   const [query, setQuery] = useState("");
   const [recentByProfile, setRecentByProfile] = useState<Record<string, HermesSessionSummary>>({});
+  const [avatarSheetProfile, setAvatarSheetProfile] = useState<HermesProfile | null>(null);
+  const [avatarBusy, setAvatarBusy] = useState(false);
+  const [avatarError, setAvatarError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Load most recent session preview for the visible profiles (read-only)
   useEffect(() => {
     if (profiles.length === 0) return;
     let cancelled = false;
@@ -90,7 +103,6 @@ export const BotsView: React.FC<BotsViewProps> = ({
   const filteredProfiles = useMemo(() => {
     const q = query.trim().toLowerCase();
     const sorted = [...profiles].sort((a, b) => {
-      // Pin Mika & default at the top for quick daily access, then alphabetical
       const rank = (n: string) => (n === "mika" ? 0 : n === "default" ? 1 : 2);
       const diff = rank(a.name) - rank(b.name);
       if (diff !== 0) return diff;
@@ -108,12 +120,50 @@ export const BotsView: React.FC<BotsViewProps> = ({
     });
   }, [profiles, query]);
 
+  async function handleFileSelected(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file || !avatarSheetProfile) return;
+    setAvatarBusy(true);
+    setAvatarError(null);
+    try {
+      const dataUrl = await prepareAvatarDataUrl(file, 320);
+      await saveBotAvatar(avatarSheetProfile.name, dataUrl);
+      onAvatarChange(avatarSheetProfile.name, dataUrl);
+      setAvatarSheetProfile(null);
+    } catch (err) {
+      setAvatarError(err instanceof Error ? err.message : "Profilbild konnte nicht gespeichert werden.");
+    } finally {
+      setAvatarBusy(false);
+    }
+  }
+
+  async function handleClearAvatar() {
+    if (!avatarSheetProfile) return;
+    setAvatarBusy(true);
+    setAvatarError(null);
+    try {
+      await clearBotAvatar(avatarSheetProfile.name);
+      onAvatarChange(avatarSheetProfile.name, null);
+      setAvatarSheetProfile(null);
+    } catch (err) {
+      setAvatarError(err instanceof Error ? err.message : "Profilbild konnte nicht entfernt werden.");
+    } finally {
+      setAvatarBusy(false);
+    }
+  }
+
   if (selectedProfile) {
     return (
       <DirectChatView
         profile={selectedProfile}
+        avatarUrl={avatars[selectedProfile.name] || null}
         wsState={wsState}
         onBack={() => onSelectBot(null)}
+        onOpenAvatarPicker={() => {
+          setAvatarError(null);
+          setAvatarSheetProfile(selectedProfile);
+        }}
       />
     );
   }
@@ -122,10 +172,10 @@ export const BotsView: React.FC<BotsViewProps> = ({
     <div>
       <div style={{ position: "relative", marginBottom: 14 }}>
         <Search
-          size={16}
+          size={15}
           style={{
             position: "absolute",
-            left: 13,
+            left: 14,
             top: "50%",
             transform: "translateY(-50%)",
             color: "var(--text-muted)",
@@ -137,7 +187,7 @@ export const BotsView: React.FC<BotsViewProps> = ({
           type="search"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Bots durchsuchen (z. B. Mika, Recherche)…"
+          placeholder="Bots suchen…"
           style={{ paddingLeft: 38, borderRadius: "var(--radius-pill)" }}
         />
       </div>
@@ -160,7 +210,7 @@ export const BotsView: React.FC<BotsViewProps> = ({
       )}
 
       <div className="section-header">
-        <h2 className="section-title">Deine Hermes-Bots ({filteredProfiles.length})</h2>
+        <h2 className="section-title">Deine Bots ({filteredProfiles.length})</h2>
         <button
           type="button"
           className="icon-btn ghost"
@@ -174,7 +224,7 @@ export const BotsView: React.FC<BotsViewProps> = ({
 
       {loading && profiles.length === 0 ? (
         <div className="empty-state">
-          <p>Lade Hermes-Profile vom Server…</p>
+          <p>Lade Hermes-Profile…</p>
         </div>
       ) : filteredProfiles.length === 0 ? (
         <div className="empty-state">
@@ -182,7 +232,7 @@ export const BotsView: React.FC<BotsViewProps> = ({
           <p>
             {query
               ? `Kein Hermes-Profil passt zu „${query}“.`
-              : "Auf dem Hermes-Server wurden noch keine Profile gefunden."}
+              : "Auf dem Hermes-Server wurden keine Profile gefunden."}
           </p>
         </div>
       ) : (
@@ -191,50 +241,148 @@ export const BotsView: React.FC<BotsViewProps> = ({
             const visual = getBotVisual(profile);
             const recent = recentByProfile[profile.name];
             return (
-              <button
-                key={profile.name}
-                type="button"
-                className="bot-card"
-                onClick={() => onSelectBot(profile.name)}
-              >
-                <div className="avatar" style={{ background: visual.gradient }}>
-                  {visual.initials}
-                  <span
-                    className={`avatar-status ${profile.gateway_running ? "online" : ""}`}
-                    title={profile.gateway_running ? "Gateway aktiv" : "Offline"}
+              <div key={profile.name} className="bot-row">
+                <button
+                  type="button"
+                  className="avatar-edit-btn"
+                  aria-label={`Profilbild von ${visual.label} ändern`}
+                  title="Profilbild ändern"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setAvatarError(null);
+                    setAvatarSheetProfile(profile);
+                  }}
+                >
+                  <BotAvatar
+                    visual={visual}
+                    imageUrl={avatars[profile.name]}
+                    online={profile.gateway_running}
+                    showStatus
                   />
-                </div>
-                <div className="bot-card-body">
-                  <div className="bot-card-row">
-                    <span className="bot-card-name">{visual.label}</span>
-                    {recent?.last_active && (
-                      <span style={{ fontSize: "0.72rem", color: "var(--text-muted)", flexShrink: 0 }}>
-                        {formatRelativeTime(recent.last_active)}
-                      </span>
-                    )}
+                  <span className="avatar-camera-badge">
+                    <Camera size={11} />
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  style={{
+                    flex: 1,
+                    minWidth: 0,
+                    textAlign: "left",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 10,
+                  }}
+                  onClick={() => onSelectBot(profile.name)}
+                >
+                  <div className="bot-card-body">
+                    <div className="bot-card-row">
+                      <span className="bot-card-name">{visual.label}</span>
+                      {recent?.last_active && (
+                        <span style={{ fontSize: "0.72rem", color: "var(--text-muted)", flexShrink: 0 }}>
+                          {formatRelativeTime(recent.last_active)}
+                        </span>
+                      )}
+                    </div>
+                    <div className="bot-card-meta">
+                      {recent?.title || visual.subtitle}
+                    </div>
+                    <div className="bot-card-tags">
+                      {profile.model && <span className="mini-tag">{profile.model}</span>}
+                      {profile.name === "mika" && (
+                        <span className="mini-tag">E-Mail</span>
+                      )}
+                      {!profile.gateway_running && (
+                        <span className="mini-tag" style={{ color: "var(--status-warn)" }}>
+                          Offline
+                        </span>
+                      )}
+                    </div>
                   </div>
-                  <div className="bot-card-meta">
-                    {recent?.title || visual.subtitle}
-                  </div>
-                  <div className="bot-card-tags">
-                    {profile.model && <span className="mini-tag">{profile.model}</span>}
-                    {profile.name === "mika" && (
-                      <span className="mini-tag" style={{ color: "#fde68a" }}>
-                        E-Mail-Assistentin
-                      </span>
-                    )}
-                    {profile.is_default && <span className="mini-tag">Standard</span>}
-                    {!profile.gateway_running && (
-                      <span className="mini-tag" style={{ color: "var(--status-warn)" }}>
-                        Gateway inaktiv
-                      </span>
-                    )}
-                  </div>
-                </div>
-                <ChevronRight size={18} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
-              </button>
+                  <ChevronRight size={17} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
+                </button>
+              </div>
             );
           })}
+        </div>
+      )}
+
+      {/* Hidden native image picker for iPhone Photo Library / Camera */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        style={{ display: "none" }}
+        onChange={(e) => void handleFileSelected(e)}
+      />
+
+      {avatarSheetProfile && (
+        <div
+          className="sheet-backdrop"
+          role="dialog"
+          aria-modal="true"
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !avatarBusy) setAvatarSheetProfile(null);
+          }}
+        >
+          <div className="sheet">
+            <div className="sheet-header">
+              <h2 className="sheet-title">
+                Profilbild: {getBotVisual(avatarSheetProfile).label}
+              </h2>
+              <button
+                type="button"
+                className="icon-btn ghost"
+                aria-label="Schließen"
+                disabled={avatarBusy}
+                onClick={() => setAvatarSheetProfile(null)}
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12, margin: "8px 0 18px" }}>
+              <BotAvatar
+                visual={getBotVisual(avatarSheetProfile)}
+                imageUrl={avatars[avatarSheetProfile.name]}
+                size="lg"
+              />
+              <div style={{ fontSize: "0.82rem", color: "var(--text-secondary)", textAlign: "center" }}>
+                Wird direkt im Hermes-Profil gespeichert und ist geräteübergreifend sichtbar.
+              </div>
+            </div>
+
+            {avatarError && (
+              <div className="notice err" style={{ marginBottom: 12 }}>
+                <AlertCircle size={16} style={{ flexShrink: 0, marginTop: 2 }} />
+                <span>{avatarError}</span>
+              </div>
+            )}
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <button
+                type="button"
+                className="btn primary full"
+                disabled={avatarBusy || wsState !== "connected"}
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <Camera size={16} />
+                {avatarBusy ? "Speichere Bild…" : "Foto aus Mediathek / Kamera wählen"}
+              </button>
+
+              {avatars[avatarSheetProfile.name] && (
+                <button
+                  type="button"
+                  className="btn danger full"
+                  disabled={avatarBusy || wsState !== "connected"}
+                  onClick={() => void handleClearAvatar()}
+                >
+                  <Trash2 size={15} /> Profilbild entfernen
+                </button>
+              )}
+            </div>
+          </div>
         </div>
       )}
     </div>
@@ -245,11 +393,19 @@ export const BotsView: React.FC<BotsViewProps> = ({
 
 interface DirectChatViewProps {
   profile: HermesProfile;
+  avatarUrl: string | null;
   wsState: WsConnectionState;
   onBack: () => void;
+  onOpenAvatarPicker: () => void;
 }
 
-const DirectChatView: React.FC<DirectChatViewProps> = ({ profile, wsState, onBack }) => {
+const DirectChatView: React.FC<DirectChatViewProps> = ({
+  profile,
+  avatarUrl,
+  wsState,
+  onBack,
+  onOpenAvatarPicker,
+}) => {
   const visual = getBotVisual(profile);
 
   const [sessions, setSessions] = useState<HermesSessionSummary[]>([]);
@@ -264,13 +420,18 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({ profile, wsState, onBac
   const [liveStatus, setLiveStatus] = useState<string | null>(null);
   const [activeTool, setActiveTool] = useState<string | null>(null);
   const [pendingApproval, setPendingApproval] = useState<HermesPendingApproval | null>(null);
+  const [pendingConnection, setPendingConnection] = useState<HermesConnectionRequest | null>(null);
 
   const [showSessionsSheet, setShowSessionsSheet] = useState(false);
   const [sessionToDelete, setSessionToDelete] = useState<HermesSessionSummary | null>(null);
   const [deletingSession, setDeletingSession] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const activeSessionRef = useRef<string | null>(null);
+  const attachedOnWsRef = useRef<boolean>(false);
+  const execGenerationRef = useRef<number>(0);
+
   activeSessionRef.current = activeSessionId;
 
   const scrollToBottom = useCallback(() => {
@@ -291,6 +452,8 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({ profile, wsState, onBac
       setLiveStatus(null);
       setActiveTool(null);
       setPendingApproval(null);
+      setPendingConnection(null);
+      attachedOnWsRef.current = false;
 
       try {
         if (wsState === "connected") {
@@ -298,12 +461,22 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({ profile, wsState, onBac
             session_id?: string;
             messages?: unknown[];
             running?: boolean;
+            execution_generation?: number;
             inflight?: { assistant?: string; streaming?: boolean } | null;
             pending_approval?: HermesPendingApproval | null;
+            prompts?: HermesPendingApproval[];
+            pending_connection?: HermesConnectionRequest | null;
           }>("session.resume", {
             session_id: sessionId,
             profile: profile.name,
           });
+          if (snapshot?.session_id) {
+            setActiveSessionId(snapshot.session_id);
+          }
+          if (typeof snapshot?.execution_generation === "number") {
+            execGenerationRef.current = snapshot.execution_generation;
+          }
+          attachedOnWsRef.current = true;
           const loaded = normalizeMessages(snapshot?.messages || []);
           if (snapshot?.inflight?.assistant) {
             loaded.push({
@@ -315,14 +488,14 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({ profile, wsState, onBac
           }
           setMessages(loaded);
           setIsStreaming(Boolean(snapshot?.running || snapshot?.inflight?.streaming));
-          setPendingApproval(snapshot?.pending_approval || null);
+          setPendingApproval(snapshot?.pending_approval || snapshot?.prompts?.[0] || null);
+          setPendingConnection(snapshot?.pending_connection || null);
         } else {
           const loaded = await fetchSessionMessages(sessionId, profile.name);
           setMessages(loaded);
         }
         scrollToBottom();
       } catch (err) {
-        // Fallback to REST read if resume failed while offline/reconnecting
         try {
           const loaded = await fetchSessionMessages(sessionId, profile.name);
           setMessages(loaded);
@@ -350,6 +523,7 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({ profile, wsState, onBac
             setActiveSessionId(null);
             setActiveTitle("Neuer Chat");
             setMessages([]);
+            attachedOnWsRef.current = false;
             setLoadingChat(false);
           }
         }
@@ -365,12 +539,22 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({ profile, wsState, onBac
     void refreshSessionsList(true);
   }, [profile.name]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Subscribe to real-time Hermes WebSocket events for the active session
+  // Re-attach current session automatically once WS finishes connecting
+  useEffect(() => {
+    if (wsState === "connected" && activeSessionId && !attachedOnWsRef.current) {
+      void loadSessionHistory(activeSessionId, activeTitle);
+    }
+  }, [wsState]); // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     const unsubscribe = hermesWs.onEvent((ev) => {
       const currentSid = activeSessionRef.current;
       if (ev.sessionId && currentSid && ev.sessionId !== currentSid) {
         return;
+      }
+
+      if (typeof ev.payload.execution_generation === "number") {
+        execGenerationRef.current = ev.payload.execution_generation;
       }
 
       if (ev.type === "message.start") {
@@ -483,8 +667,17 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({ profile, wsState, onBac
         scrollToBottom();
       } else if (ev.type === "approval.requested") {
         setPendingApproval(ev.payload as HermesPendingApproval);
+        scrollToBottom();
       } else if (ev.type === "approval.cancelled") {
         setPendingApproval(null);
+      } else if (ev.type === "connection.request" || ev.type === "connection.update") {
+        const req = ev.payload as unknown as HermesConnectionRequest;
+        if (req?.settled) {
+          setPendingConnection(null);
+        } else if (req?.targets) {
+          setPendingConnection(req);
+          scrollToBottom();
+        }
       } else if (ev.type === "error") {
         setIsStreaming(false);
         setActiveTool(null);
@@ -497,6 +690,12 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({ profile, wsState, onBac
     return unsubscribe;
   }, [scrollToBottom]);
 
+  function autoResizeInput(el: HTMLTextAreaElement | null) {
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(120, el.scrollHeight)}px`;
+  }
+
   async function startNewChat() {
     setShowSessionsSheet(false);
     setChatError(null);
@@ -505,6 +704,8 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({ profile, wsState, onBac
     setMessages([]);
     setIsStreaming(false);
     setPendingApproval(null);
+    setPendingConnection(null);
+    attachedOnWsRef.current = false;
   }
 
   async function handleSend() {
@@ -517,21 +718,44 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({ profile, wsState, onBac
 
     setChatError(null);
     setInput("");
+    if (textareaRef.current) {
+      textareaRef.current.style.height = "auto";
+    }
 
     let sid = activeSessionId;
     try {
       if (!sid) {
+        // Canonical Hermes v0.23.4 accepts source in {'cli','tui','gui','acp','tool','oneshot'}
         const created = await hermesWs.call<{
           session_id: string;
           stored_session_id?: string;
+          execution_generation?: number;
         }>("session.create", {
           profile: profile.name,
-          source: "hermes-pocket",
+          source: "gui",
         });
         sid = created.session_id;
+        if (typeof created.execution_generation === "number") {
+          execGenerationRef.current = created.execution_generation;
+        }
+        attachedOnWsRef.current = true;
         setActiveSessionId(sid);
         setActiveTitle(text.slice(0, 48));
         void refreshSessionsList(false);
+      } else if (!attachedOnWsRef.current) {
+        const resumed = await hermesWs.call<{
+          session_id?: string;
+          execution_generation?: number;
+        }>("session.resume", {
+          session_id: sid,
+          profile: profile.name,
+          omit_messages: true,
+        });
+        if (resumed?.session_id) sid = resumed.session_id;
+        if (typeof resumed?.execution_generation === "number") {
+          execGenerationRef.current = resumed.execution_generation;
+        }
+        attachedOnWsRef.current = true;
       }
 
       setMessages((prev) => [
@@ -563,6 +787,7 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({ profile, wsState, onBac
       await hermesWs.call("session.interrupt", {
         session_id: activeSessionId,
         profile: profile.name,
+        execution_generation: execGenerationRef.current,
       });
       setIsStreaming(false);
       setActiveTool(null);
@@ -571,15 +796,21 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({ profile, wsState, onBac
     }
   }
 
-  async function handleApprovalDecision(approved: boolean) {
+  async function handleApprovalDecision(choice: string) {
     if (!activeSessionId || !pendingApproval) return;
+    const promptId =
+      pendingApproval.prompt_id ||
+      pendingApproval.request_id ||
+      pendingApproval.approval_id ||
+      pendingApproval.id;
     try {
       await hermesWs.call("approval.respond", {
         session_id: activeSessionId,
         profile: profile.name,
-        approval_id: pendingApproval.approval_id || pendingApproval.id,
-        approved,
-        decision: approved ? "approve" : "deny",
+        execution_generation:
+          pendingApproval.execution_generation ?? execGenerationRef.current,
+        prompt_id: promptId,
+        choice,
       });
       setPendingApproval(null);
     } catch (err) {
@@ -622,9 +853,14 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({ profile, wsState, onBac
           >
             <ArrowLeft size={21} />
           </button>
-          <div className="avatar sm" style={{ background: visual.gradient }}>
-            {visual.initials}
-          </div>
+          <button
+            type="button"
+            className="avatar-edit-btn"
+            aria-label="Profilbild ändern"
+            onClick={onOpenAvatarPicker}
+          >
+            <BotAvatar visual={visual} imageUrl={avatarUrl} size="sm" />
+          </button>
           <div style={{ minWidth: 0 }}>
             <h1 className="topbar-title">{visual.label}</h1>
             <div className="topbar-subtitle">
@@ -648,7 +884,7 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({ profile, wsState, onBac
               setShowSessionsSheet(true);
             }}
           >
-            <History size={18} />
+            <History size={17} />
           </button>
           <button
             type="button"
@@ -657,7 +893,7 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({ profile, wsState, onBac
             title="Neuer Chat"
             onClick={() => void startNewChat()}
           >
-            <MessageSquarePlus size={18} />
+            <MessageSquarePlus size={17} />
           </button>
         </div>
       </header>
@@ -667,7 +903,7 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({ profile, wsState, onBac
           <div className="notice warn">
             <AlertCircle size={17} style={{ flexShrink: 0, marginTop: 2 }} />
             <span>
-              Gateway-Liveverbindung:{" "}
+              Gateway-Verbindung:{" "}
               {wsState === "connecting" ? "wird aufgebaut…" : "getrennt – verbinde neu…"}
             </span>
           </div>
@@ -685,17 +921,14 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({ profile, wsState, onBac
             <p>Lade Verlauf von {visual.label}…</p>
           </div>
         ) : messages.length === 0 ? (
-          <div className="empty-state" style={{ marginTop: 24 }}>
-            <div
-              className="avatar"
-              style={{ background: visual.gradient, margin: "0 auto 12px" }}
-            >
-              {visual.initials}
+          <div className="empty-state" style={{ marginTop: 20 }}>
+            <div style={{ display: "flex", justifyContent: "center", marginBottom: 12 }}>
+              <BotAvatar visual={visual} imageUrl={avatarUrl} size="lg" />
             </div>
-            <h3>Chat mit {visual.label}</h3>
+            <h3>{visual.label}</h3>
             <p>
               {profile.description ||
-                `Schreibe eine Nachricht, um eine neue Hermes-Session im Profil „${profile.name}“ zu starten.`}
+                `Starte eine Unterhaltung mit ${visual.label}.`}
             </p>
             {profile.model && <span className="pill">{profile.model}</span>}
           </div>
@@ -704,6 +937,7 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({ profile, wsState, onBac
             <div key={String(msg.id ?? i)} className={`msg-row ${msg.role}`}>
               {msg.role === "assistant" && (
                 <div className="msg-author">
+                  <BotAvatar visual={visual} imageUrl={avatarUrl} size="xs" />
                   <span>{visual.label}</span>
                   {msg.streaming && <span className="pulse-dot" />}
                 </div>
@@ -716,8 +950,8 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({ profile, wsState, onBac
                   </details>
                 )}
                 {msg.role === "tool" ? (
-                  <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.82rem", color: "var(--text-secondary)" }}>
-                    <Wrench size={14} />
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.8rem", color: "var(--text-secondary)" }}>
+                    <Wrench size={13} />
                     <span>{msg.tool_name || "Werkzeug"}</span>
                   </div>
                 ) : msg.content ? (
@@ -742,8 +976,46 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({ profile, wsState, onBac
           <div style={{ alignSelf: "flex-start" }}>
             <span className="pill accent">
               <Wrench size={13} />
-              {activeTool ? `Werkzeug aktiv: ${activeTool}` : liveStatus}
+              {activeTool ? `${activeTool}…` : liveStatus}
             </span>
+          </div>
+        )}
+
+        {pendingConnection && pendingConnection.targets.length > 0 && (
+          <div className="card" style={{ borderColor: "rgba(165, 180, 252, 0.35)" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, fontWeight: 700 }}>
+              <Link2 size={17} style={{ color: "var(--accent-indigo)" }} />
+              <span>Connector verbinden</span>
+            </div>
+            <div className="card-stack">
+              {pendingConnection.targets.map((target) => (
+                <div key={target.name} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{ fontWeight: 600, fontSize: "0.9rem" }}>
+                      {target.display || target.name}
+                    </div>
+                    {(target.instructions || target.detail) && (
+                      <div style={{ fontSize: "0.78rem", color: "var(--text-secondary)" }}>
+                        {target.instructions || target.detail}
+                      </div>
+                    )}
+                  </div>
+                  {target.connect_url ? (
+                    <a
+                      href={target.connect_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="btn sm primary"
+                      style={{ textDecoration: "none" }}
+                    >
+                      Öffnen <ExternalLink size={13} />
+                    </a>
+                  ) : (
+                    <span className="pill">{target.state}</span>
+                  )}
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
@@ -763,14 +1035,14 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({ profile, wsState, onBac
               <button
                 type="button"
                 className="btn sm danger full"
-                onClick={() => void handleApprovalDecision(false)}
+                onClick={() => void handleApprovalDecision(pendingApproval.choices?.[1] || "deny")}
               >
                 <X size={15} /> Ablehnen
               </button>
               <button
                 type="button"
                 className="btn sm primary full"
-                onClick={() => void handleApprovalDecision(true)}
+                onClick={() => void handleApprovalDecision(pendingApproval.choices?.[0] || "once")}
               >
                 <Check size={15} /> Freigeben
               </button>
@@ -782,17 +1054,25 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({ profile, wsState, onBac
       <div className="composer-wrap">
         <div className="composer-box">
           <textarea
+            ref={textareaRef}
             className="composer-input"
             rows={1}
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onFocus={() => {
+              // Keep the newest messages visible right above the iOS keyboard
+              setTimeout(scrollToBottom, 160);
+            }}
+            onChange={(e) => {
+              setInput(e.target.value);
+              autoResizeInput(e.target);
+            }}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
                 if (!isStreaming) void handleSend();
               }
             }}
-            placeholder={`Nachricht an ${visual.label}…`}
+            placeholder={`Frag ${visual.label}…`}
           />
           {isStreaming ? (
             <button
@@ -801,7 +1081,7 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({ profile, wsState, onBac
               aria-label="Antwort stoppen"
               onClick={() => void handleInterrupt()}
             >
-              <Square size={15} fill="currentColor" />
+              <Square size={14} fill="currentColor" />
             </button>
           ) : (
             <button
@@ -865,7 +1145,7 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({ profile, wsState, onBac
                         alignItems: "center",
                         gap: 10,
                         padding: "10px 12px",
-                        borderColor: isCurrent ? "rgba(245,158,11,0.45)" : undefined,
+                        borderColor: isCurrent ? "rgba(255,255,255,0.4)" : undefined,
                       }}
                     >
                       <button

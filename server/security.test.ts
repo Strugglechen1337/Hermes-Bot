@@ -20,6 +20,10 @@ describe("isAllowedHermesPath", () => {
     expect(isAllowedHermesPath("GET", "/api/messaging/platforms")).toBe(true);
     expect(isAllowedHermesPath("PUT", "/api/messaging/platforms/email")).toBe(true);
     expect(isAllowedHermesPath("POST", "/api/messaging/platforms/email/test")).toBe(true);
+    expect(isAllowedHermesPath("GET", "/api/mcp/servers")).toBe(true);
+    expect(isAllowedHermesPath("PUT", "/api/mcp/servers/gmail/enabled")).toBe(true);
+    expect(isAllowedHermesPath("POST", "/api/mcp/servers/gmail/auth")).toBe(true);
+    expect(isAllowedHermesPath("GET", "/api/mcp/catalog")).toBe(true);
   });
 
   it("blocks unlisted endpoints, path traversal, and disallowed verbs", () => {

@@ -220,10 +220,94 @@ export interface HermesMessagingPlatform {
 export interface HermesPendingApproval {
   id?: string;
   approval_id?: string;
+  prompt_id?: string;
+  request_id?: string;
   tool_name?: string;
   command?: string;
   description?: string;
   reason?: string;
+  choices?: string[];
+  execution_generation?: number;
+  [k: string]: unknown;
+}
+
+export interface HermesConnectorRow {
+  connector: string;
+  enabled: boolean;
+  connected: boolean;
+  connection_status: "pending" | "active" | "failed" | "expired" | "revoked" | "inactive" | null;
+  status_reason: string | null;
+  gateway_disabled_tools?: string[];
+}
+
+export interface HermesConnectorCatalogRow {
+  slug: string;
+  name: string;
+  description: string;
+  category: string;
+  logo_url?: string | null;
+}
+
+export interface HermesConnectorAccount {
+  connection_id: string;
+  connector: string;
+  status: string;
+  status_reason?: string | null;
+  label: string;
+  alias?: string | null;
+  active: boolean;
+  disabled?: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface HermesConnectionTarget {
+  name: string;
+  kind?: string;
+  action?: string;
+  state: string;
+  resolved?: boolean | null;
+  detail?: string | null;
+  instructions?: string | null;
+  connect_url?: string | null;
+  connection_id?: string | null;
+  alias?: string | null;
+  display?: string | null;
+  description?: string | null;
+}
+
+export interface HermesConnectionRequest {
+  op_id: string;
+  seq?: number;
+  targets: HermesConnectionTarget[];
+  settled?: boolean;
+}
+
+export interface HermesMcpServer {
+  name: string;
+  enabled?: boolean;
+  transport?: string;
+  url?: string | null;
+  command?: string | null;
+  connected?: boolean;
+  status?: string | null;
+  tool_count?: number | null;
+  error?: string | null;
+  auth_type?: string | null;
+  oauth_supported?: boolean;
+  source?: string | null;
+  [k: string]: unknown;
+}
+
+export interface HermesMcpCatalogEntry {
+  name: string;
+  display_name?: string;
+  title?: string;
+  description?: string;
+  category?: string;
+  installed?: boolean;
+  enabled?: boolean;
+  auth_type?: string;
   [k: string]: unknown;
 }
 

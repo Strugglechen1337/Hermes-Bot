@@ -3,7 +3,7 @@ import {
   Bot,
   CalendarClock,
   LogOut,
-  Mail,
+  Plug,
   Smartphone,
   User,
   Users,
@@ -17,10 +17,11 @@ import type {
   HermesStatusResponse,
 } from "../shared/types";
 import { BotsView } from "./components/BotsView";
-import { EmailView } from "./components/EmailView";
+import { ConnectorsView } from "./components/ConnectorsView";
 import { GroupsView } from "./components/GroupsView";
 import { LoginView } from "./components/LoginView";
 import { RoutinesView } from "./components/RoutinesView";
+import { fetchBotAvatar } from "./lib/avatarStore";
 import {
   fetchCurrentUser,
   fetchProfiles,
@@ -28,17 +29,20 @@ import {
   logout,
 } from "./lib/hermesApi";
 import { hermesWs, type WsConnectionState } from "./lib/hermesWs";
+import { useVisualViewport } from "./lib/useVisualViewport";
 
-type TabKey = "bots" | "groups" | "routines" | "email";
+type TabKey = "bots" | "groups" | "routines" | "connectors";
 
 const TAB_TITLES: Record<TabKey, string> = {
   bots: "Hermes Pocket",
   groups: "Gruppen",
   routines: "Routinen",
-  email: "E-Mail",
+  connectors: "Connectoren",
 };
 
 export const App: React.FC = () => {
+  useVisualViewport();
+
   const [booting, setBooting] = useState(true);
   const [status, setStatus] = useState<HermesStatusResponse | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
@@ -50,6 +54,7 @@ export const App: React.FC = () => {
   const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null);
 
   const [profiles, setProfiles] = useState<HermesProfile[]>([]);
+  const [avatars, setAvatars] = useState<Record<string, string>>({});
   const [profilesLoading, setProfilesLoading] = useState(false);
   const [profilesError, setProfilesError] = useState<string | null>(null);
 
@@ -69,6 +74,38 @@ export const App: React.FC = () => {
     } finally {
       setProfilesLoading(false);
     }
+  }, []);
+
+  // Load native Hermes avatars once WebSocket is connected and profiles are known
+  useEffect(() => {
+    if (wsState !== "connected" || profiles.length === 0) return;
+    let cancelled = false;
+    void (async () => {
+      const results = await Promise.all(
+        profiles.map(async (p) => [p.name, await fetchBotAvatar(p.name)] as const)
+      );
+      if (cancelled) return;
+      const map: Record<string, string> = {};
+      for (const [name, dataUrl] of results) {
+        if (dataUrl) map[name] = dataUrl;
+      }
+      setAvatars(map);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [profiles, wsState]);
+
+  const handleAvatarChange = useCallback((profileName: string, dataUrl: string | null) => {
+    setAvatars((prev) => {
+      const next = { ...prev };
+      if (dataUrl) {
+        next[profileName] = dataUrl;
+      } else {
+        delete next[profileName];
+      }
+      return next;
+    });
   }, []);
 
   const bootstrap = useCallback(async () => {
@@ -120,6 +157,7 @@ export const App: React.FC = () => {
       setShowAccountSheet(false);
       setUser(null);
       setProfiles([]);
+      setAvatars({});
       setSelectedBotName(null);
       setSelectedRoomId(null);
     }
@@ -166,9 +204,9 @@ export const App: React.FC = () => {
             <img
               src="/icon.svg"
               alt=""
-              width={30}
-              height={30}
-              style={{ borderRadius: 9, flexShrink: 0 }}
+              width={28}
+              height={28}
+              style={{ borderRadius: 8, flexShrink: 0 }}
             />
             <div style={{ minWidth: 0 }}>
               <h1 className="topbar-title">{TAB_TITLES[tab]}</h1>
@@ -183,7 +221,7 @@ export const App: React.FC = () => {
               className={`pill ${wsState === "connected" ? "ok" : "warn"}`}
               title="Gateway-Liveverbindung"
             >
-              {wsState === "connected" ? <Wifi size={13} /> : <WifiOff size={13} />}
+              {wsState === "connected" ? <Wifi size={12} /> : <WifiOff size={12} />}
               {wsState === "connected" ? "Live" : "Sync…"}
             </span>
             <button
@@ -192,7 +230,7 @@ export const App: React.FC = () => {
               aria-label="Konto und Info"
               onClick={() => setShowAccountSheet(true)}
             >
-              <User size={18} />
+              <User size={17} />
             </button>
           </div>
         </header>
@@ -202,16 +240,19 @@ export const App: React.FC = () => {
         tab === "bots" ? (
           <BotsView
             profiles={profiles}
+            avatars={avatars}
             loading={profilesLoading}
             error={profilesError}
             wsState={wsState}
             selectedBotName={selectedBotName}
             onSelectBot={setSelectedBotName}
             onRefreshProfiles={() => void loadProfiles()}
+            onAvatarChange={handleAvatarChange}
           />
         ) : (
           <GroupsView
             profiles={profiles}
+            avatars={avatars}
             wsState={wsState}
             selectedRoomId={selectedRoomId}
             onSelectRoom={setSelectedRoomId}
@@ -222,26 +263,31 @@ export const App: React.FC = () => {
           {tab === "bots" && (
             <BotsView
               profiles={profiles}
+              avatars={avatars}
               loading={profilesLoading}
               error={profilesError}
               wsState={wsState}
               selectedBotName={selectedBotName}
               onSelectBot={setSelectedBotName}
               onRefreshProfiles={() => void loadProfiles()}
+              onAvatarChange={handleAvatarChange}
             />
           )}
           {tab === "groups" && (
             <GroupsView
               profiles={profiles}
+              avatars={avatars}
               wsState={wsState}
               selectedRoomId={selectedRoomId}
               onSelectRoom={setSelectedRoomId}
             />
           )}
           {tab === "routines" && <RoutinesView profiles={profiles} />}
-          {tab === "email" && (
-            <EmailView
+          {tab === "connectors" && (
+            <ConnectorsView
               profiles={profiles}
+              avatars={avatars}
+              wsState={wsState}
               onOpenBotChat={(name) => {
                 setTab("bots");
                 setSelectedBotName(name);
@@ -261,7 +307,7 @@ export const App: React.FC = () => {
               setSelectedBotName(null);
             }}
           >
-            <Bot size={21} />
+            <Bot size={20} />
             <span>Bots</span>
           </button>
 
@@ -273,7 +319,7 @@ export const App: React.FC = () => {
               setSelectedRoomId(null);
             }}
           >
-            <Users size={21} />
+            <Users size={20} />
             <span>Gruppen</span>
           </button>
 
@@ -282,17 +328,17 @@ export const App: React.FC = () => {
             className={`tabbar-item ${tab === "routines" ? "active" : ""}`}
             onClick={() => setTab("routines")}
           >
-            <CalendarClock size={21} />
+            <CalendarClock size={20} />
             <span>Routinen</span>
           </button>
 
           <button
             type="button"
-            className={`tabbar-item ${tab === "email" ? "active" : ""}`}
-            onClick={() => setTab("email")}
+            className={`tabbar-item ${tab === "connectors" ? "active" : ""}`}
+            onClick={() => setTab("connectors")}
           >
-            <Mail size={21} />
-            <span>E-Mail</span>
+            <Plug size={20} />
+            <span>Connectoren</span>
           </button>
         </nav>
       )}
@@ -336,7 +382,7 @@ export const App: React.FC = () => {
             </div>
 
             <div className="notice" style={{ marginBottom: 14 }}>
-              <Smartphone size={18} style={{ flexShrink: 0, marginTop: 2, color: "var(--accent-primary)" }} />
+              <Smartphone size={18} style={{ flexShrink: 0, marginTop: 2 }} />
               <span>
                 <strong>iPhone Home-Bildschirm:</strong> In Safari auf <em>Teilen</em> tippen und{" "}
                 <em>„Zum Home-Bildschirm“</em> wählen – Hermes Pocket startet dann im Vollbildmodus.

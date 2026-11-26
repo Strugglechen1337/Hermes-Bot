@@ -34,6 +34,16 @@ const ALLOWED_HTTP_RULES: Array<{ methods: Set<string>; pattern: RegExp }> = [
   { methods: new Set(["GET"]), pattern: /^\/api\/messaging\/platforms$/ },
   { methods: new Set(["PUT"]), pattern: /^\/api\/messaging\/platforms\/[^/]+$/ },
   { methods: new Set(["POST"]), pattern: /^\/api\/messaging\/platforms\/[^/]+\/test$/ },
+
+  // MCP servers & catalog (Hermes Connectors)
+  { methods: new Set(["GET", "POST"]), pattern: /^\/api\/mcp\/servers$/ },
+  { methods: new Set(["DELETE"]), pattern: /^\/api\/mcp\/servers\/[^/]+$/ },
+  { methods: new Set(["PUT"]), pattern: /^\/api\/mcp\/servers\/[^/]+\/enabled$/ },
+  { methods: new Set(["POST"]), pattern: /^\/api\/mcp\/servers\/[^/]+\/(test|auth)$/ },
+  { methods: new Set(["GET"]), pattern: /^\/api\/mcp\/catalog$/ },
+  { methods: new Set(["POST"]), pattern: /^\/api\/mcp\/catalog\/install$/ },
+  { methods: new Set(["GET", "DELETE"]), pattern: /^\/api\/mcp\/oauth\/flows\/[^/]+$/ },
+  { methods: new Set(["GET"]), pattern: /^\/api\/mcp\/oauth\/callback\/.+$/ },
 ];
 
 export function isAllowedHermesPath(method: string, pathname: string): boolean {

@@ -3,6 +3,8 @@ import type {
   HermesChatMessage,
   HermesCronJob,
   HermesCronRun,
+  HermesMcpCatalogEntry,
+  HermesMcpServer,
   HermesMessagingPlatform,
   HermesProfile,
   HermesSessionSummary,
@@ -297,4 +299,87 @@ export async function testMessagingPlatform(
       method: "POST",
     }
   );
+}
+
+// ── MCP Servers & Catalog (Hermes Connectors) ─────────────────────────────────
+
+export async function fetchMcpServers(profile?: string): Promise<HermesMcpServer[]> {
+  const params = new URLSearchParams();
+  if (profile) params.set("profile", profile);
+  const query = params.toString() ? `?${params.toString()}` : "";
+  const data = await requestJson<{ servers?: HermesMcpServer[] } | HermesMcpServer[]>(
+    `/api/mcp/servers${query}`
+  );
+  if (Array.isArray(data)) return data;
+  return Array.isArray(data?.servers) ? data.servers : [];
+}
+
+export async function fetchMcpCatalog(profile?: string): Promise<HermesMcpCatalogEntry[]> {
+  const params = new URLSearchParams();
+  if (profile) params.set("profile", profile);
+  const query = params.toString() ? `?${params.toString()}` : "";
+  const data = await requestJson<{ entries?: HermesMcpCatalogEntry[] }>(
+    `/api/mcp/catalog${query}`
+  );
+  return Array.isArray(data?.entries) ? data.entries : [];
+}
+
+export async function toggleMcpServer(
+  name: string,
+  enabled: boolean,
+  profile?: string
+): Promise<unknown> {
+  const params = new URLSearchParams();
+  if (profile) params.set("profile", profile);
+  const query = params.toString() ? `?${params.toString()}` : "";
+  return requestJson(
+    `/api/mcp/servers/${encodeURIComponent(name)}/enabled${query}`,
+    {
+      method: "PUT",
+      body: JSON.stringify({ enabled }),
+    }
+  );
+}
+
+export async function testMcpServer(
+  name: string,
+  profile?: string
+): Promise<{ ok?: boolean; status?: string; tool_count?: number; error?: string; detail?: string }> {
+  const params = new URLSearchParams();
+  if (profile) params.set("profile", profile);
+  const query = params.toString() ? `?${params.toString()}` : "";
+  return requestJson(
+    `/api/mcp/servers/${encodeURIComponent(name)}/test${query}`,
+    {
+      method: "POST",
+    }
+  );
+}
+
+export async function startMcpServerAuth(
+  name: string,
+  profile?: string
+): Promise<{ auth_url?: string; authorize_url?: string; url?: string; flow_id?: string; message?: string }> {
+  const params = new URLSearchParams();
+  if (profile) params.set("profile", profile);
+  const query = params.toString() ? `?${params.toString()}` : "";
+  return requestJson(
+    `/api/mcp/servers/${encodeURIComponent(name)}/auth${query}`,
+    {
+      method: "POST",
+    }
+  );
+}
+
+export async function installMcpCatalogEntry(
+  name: string,
+  profile?: string
+): Promise<unknown> {
+  const params = new URLSearchParams();
+  if (profile) params.set("profile", profile);
+  const query = params.toString() ? `?${params.toString()}` : "";
+  return requestJson(`/api/mcp/catalog/install${query}`, {
+    method: "POST",
+    body: JSON.stringify({ name, enable: true }),
+  });
 }
