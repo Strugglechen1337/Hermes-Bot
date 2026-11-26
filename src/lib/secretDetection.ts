@@ -16,7 +16,7 @@ const SECRET_NOUN_RE =
   /\b(api[- ]?key|api[- ]?token|api[- ]?schlüssel|access[- ]?token|bearer[- ]?token|long[- ]?lived[- ]?access[- ]?token|token|passwort|password|geheimnis|secret|zugangsdaten|app[- ]?passwort)\b/i;
 
 const REFUSAL_OR_PAST_RE =
-  /\b(würde ich nicht|nicht über einen normalen chat|nicht im chat|erfolgreich gespeichert|wurde hinterlegt|bereits hinterlegt)\b/i;
+  /\b(würde ich nicht|nicht über einen normalen chat|erfolgreich gespeichert|wurde hinterlegt|bereits hinterlegt)\b/i;
 
 function inferKeyFromContext(text: string): string {
   const lower = text.toLowerCase();

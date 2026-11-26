@@ -156,7 +156,11 @@ export async function disablePushNotifications(): Promise<void> {
   }
 }
 
-export async function sendTestPushNotification(): Promise<{ sent: number; failed: number }> {
+export async function sendTestPushNotification(): Promise<{
+  sent: number;
+  failed: number;
+  lastError?: string;
+}> {
   const res = await fetch("/api/pocket/push/test", {
     method: "POST",
     credentials: "same-origin",
@@ -164,8 +168,12 @@ export async function sendTestPushNotification(): Promise<{ sent: number; failed
   if (!res.ok) {
     throw new Error("Test-Benachrichtigung konnte nicht gesendet werden.");
   }
-  const data = (await res.json()) as { sent?: number; failed?: number };
-  return { sent: Number(data.sent || 0), failed: Number(data.failed || 0) };
+  const data = (await res.json()) as { sent?: number; failed?: number; lastError?: string };
+  return {
+    sent: Number(data.sent || 0),
+    failed: Number(data.failed || 0),
+    lastError: data.lastError,
+  };
 }
 
 /**

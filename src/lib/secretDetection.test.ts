@@ -28,6 +28,11 @@ describe("secretDetection", () => {
       "Ich brauche noch deinen Home Assistant Long-Lived Access Token, bitte gib ihn ein."
     );
     expect(inferred?.keyName).toBe("HOME_ASSISTANT_TOKEN");
+
+    const securityAware = detectBotSecretRequest(
+      "Gern – bitte nicht hier im Chat senden. Hinterlege das Token stattdessen lokal."
+    );
+    expect(securityAware?.keyName).toBe("SERVICE_API_TOKEN");
   });
 
   it("does not trigger on security refusals or past confirmations", () => {

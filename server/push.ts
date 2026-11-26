@@ -127,7 +127,9 @@ function saveStore(store: PushStoreFile): void {
 }
 
 function configureVapid(store: PushStoreFile): void {
-  const subject = process.env.VAPID_SUBJECT?.trim() || "mailto:hermes-pocket@localhost";
+  // Apple Web Push (web.push.apple.com) rejects `.localhost` / bare hostnames in VAPID `sub`.
+  const subject =
+    process.env.VAPID_SUBJECT?.trim() || "mailto:notifications@hermes-pocket.app";
   webpush.setVapidDetails(subject, store.vapidPublicKey, store.vapidPrivateKey);
 }
 
@@ -170,7 +172,7 @@ export async function dispatchPushNotification(payload: {
   bot?: string;
   tag?: string;
   url?: string;
-}): Promise<{ sent: number; failed: number; total: number }> {
+}): Promise<{ sent: number; failed: number; total: number; lastError?: string }> {
   const store = ensureStore();
   if (store.subscriptions.length === 0) {
     return { sent: 0, failed: 0, total: 0 };
@@ -187,6 +189,7 @@ export async function dispatchPushNotification(payload: {
 
   let sent = 0;
   let failed = 0;
+  let lastError: string | undefined;
   const expiredEndpoints = new Set<string>();
 
   await Promise.all(
@@ -208,6 +211,13 @@ export async function dispatchPushNotification(payload: {
           err && typeof err === "object" && "statusCode" in err
             ? Number((err as { statusCode?: unknown }).statusCode)
             : 0;
+        const body =
+          err && typeof err === "object" && "body" in err
+            ? String((err as { body?: unknown }).body || "")
+            : "";
+        const msg = err instanceof Error ? err.message : String(err);
+        lastError = statusCode ? `HTTP ${statusCode} ${body || msg}`.trim() : msg;
+        console.error("[hermes-pocket] Web Push send failed:", lastError);
         if (statusCode === 404 || statusCode === 410) {
           expiredEndpoints.add(sub.endpoint);
         }
@@ -220,7 +230,7 @@ export async function dispatchPushNotification(payload: {
     saveStore(store);
   }
 
-  return { sent, failed, total: store.subscriptions.length };
+  return { sent, failed, total: store.subscriptions.length, ...(lastError ? { lastError } : {}) };
 }
 
 export async function handlePocketPushRoute(

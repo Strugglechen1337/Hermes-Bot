@@ -157,7 +157,9 @@ export const App: React.FC = () => {
       setPushFeedback(
         res.sent > 0
           ? "Test-Nachricht gesendet! Sollte gleich auf deinem iPhone erscheinen."
-          : "Kein aktives Gerät gefunden – bitte Push erst aktivieren."
+          : res.failed > 0
+            ? `Push-Zustellung fehlgeschlagen (${res.lastError || "unbekannter Fehler"}). Bitte Push einmal deaktivieren und neu aktivieren.`
+            : "Kein aktives Gerät gefunden – bitte Push erst aktivieren."
       );
     } catch (err) {
       setPushFeedback(err instanceof Error ? err.message : "Test-Push fehlgeschlagen.");
