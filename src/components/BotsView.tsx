@@ -62,6 +62,7 @@ import {
   fetchSessions,
   normalizeMessages,
   prepareChatImageDataUrl,
+  renameSession,
   updateProfileDescription,
   updateProfileFallback,
   updateProfileModel,
@@ -1128,7 +1129,11 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
             execGenerationRef.current = snapshot.execution_generation;
           }
           attachedOnWsRef.current = true;
-          const loaded = normalizeMessages(snapshot?.messages || []);
+          let loaded = normalizeMessages(snapshot?.messages || []);
+          if (loaded.length === 0 && resolvedSid) {
+            const restLoaded = await fetchSessionMessages(resolvedSid, profile.name).catch(() => []);
+            if (restLoaded.length > 0) loaded = restLoaded;
+          }
           if (snapshot?.inflight?.assistant) {
             loaded.push({
               id: "inflight",
@@ -1167,73 +1172,95 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
     [profile.name, scrollToBottom, wsState]
   );
 
-  const openCanonicalBotChat = useCallback(async () => {
-    setLoadingChat(true);
-    setChatError(null);
-    setIsStreaming(false);
-    setLiveStatus(null);
-    setActiveTool(null);
-    setPendingApproval(null);
-    setPendingConnection(null);
-    setPendingClarify(null);
-    setPendingSecret(null);
-    setUsageLimitError(null);
-    attachedOnWsRef.current = false;
-
-    try {
-      const snapshot = await hermesWs.call<{
-        session_id?: string;
-        messages?: unknown[];
-        running?: boolean;
-        execution_generation?: number;
-        inflight?: { assistant?: string; streaming?: boolean } | null;
-        pending_approval?: HermesPendingApproval | null;
-        prompts?: HermesPendingApproval[];
-        pending_connection?: HermesConnectionRequest | null;
-        usage?: Record<string, unknown> | null;
-        info?: { usage?: Record<string, unknown> | null } | null;
-      }>("session.create", {
-        profile: profile.name,
-        request_id: randomClientId("botchat"),
-        source: "gui",
-        title: BOT_CHAT_TITLE,
-      });
-
-      const resolvedSid = snapshot?.session_id || null;
-      setActiveSessionId(resolvedSid);
-      setActiveTitle(BOT_CHAT_TITLE);
-      if (typeof snapshot?.execution_generation === "number") {
-        execGenerationRef.current = snapshot.execution_generation;
+  const openCanonicalBotChat = useCallback(
+    async (existingSessions?: HermesSessionSummary[], silentReattach = false) => {
+      if (!silentReattach) {
+        setLoadingChat(true);
       }
-      attachedOnWsRef.current = Boolean(resolvedSid);
+      setChatError(null);
+      setPendingApproval(null);
+      setPendingConnection(null);
+      setPendingClarify(null);
+      setPendingSecret(null);
+      setUsageLimitError(null);
+      attachedOnWsRef.current = false;
 
-      const loaded = normalizeMessages(snapshot?.messages || []);
-      if (snapshot?.inflight?.assistant) {
-        loaded.push({
-          id: "inflight",
-          role: "assistant",
-          content: snapshot.inflight.assistant,
-          streaming: Boolean(snapshot.inflight.streaming || snapshot.running),
+      try {
+        // If no canonical "Bot Chat" exists yet, promote the bot's existing latest
+        // interactive chat (e.g. from before Bot Mode) to "Bot Chat" first so its
+        // message history stays right on screen instead of starting blank.
+        const list = existingSessions ?? sessions;
+        const hasCanonical = list.some((s) => (s.title || "").trim() === BOT_CHAT_TITLE);
+        if (!hasCanonical) {
+          const existing = pickPreferredBotSession(list);
+          if (existing) {
+            await renameSession(existing.id, BOT_CHAT_TITLE, profile.name).catch(() => null);
+          }
+        }
+
+        const snapshot = await hermesWs.call<{
+          session_id?: string;
+          messages?: unknown[];
+          running?: boolean;
+          execution_generation?: number;
+          inflight?: { assistant?: string; streaming?: boolean } | null;
+          pending_approval?: HermesPendingApproval | null;
+          prompts?: HermesPendingApproval[];
+          pending_connection?: HermesConnectionRequest | null;
+          usage?: Record<string, unknown> | null;
+          info?: { usage?: Record<string, unknown> | null } | null;
+        }>("session.create", {
+          profile: profile.name,
+          request_id: randomClientId("botchat"),
+          source: "gui",
+          title: BOT_CHAT_TITLE,
         });
+
+        const resolvedSid = snapshot?.session_id || null;
+        setActiveSessionId(resolvedSid);
+        setActiveTitle(BOT_CHAT_TITLE);
+        if (typeof snapshot?.execution_generation === "number") {
+          execGenerationRef.current = snapshot.execution_generation;
+        }
+        attachedOnWsRef.current = Boolean(resolvedSid);
+
+        let loaded = normalizeMessages(snapshot?.messages || []);
+        if (loaded.length === 0 && resolvedSid) {
+          const restLoaded = await fetchSessionMessages(resolvedSid, profile.name).catch(() => []);
+          if (restLoaded.length > 0) loaded = restLoaded;
+        }
+        if (snapshot?.inflight?.assistant) {
+          loaded.push({
+            id: "inflight",
+            role: "assistant",
+            content: snapshot.inflight.assistant,
+            streaming: Boolean(snapshot.inflight.streaming || snapshot.running),
+          });
+        }
+        if (loaded.length > 0 || !silentReattach) {
+          setMessages(loaded);
+        }
+        setIsStreaming(Boolean(snapshot?.running || snapshot?.inflight?.streaming));
+        setPendingApproval(snapshot?.pending_approval || snapshot?.prompts?.[0] || null);
+        setPendingConnection(snapshot?.pending_connection || null);
+        const snapUsage = snapshot?.usage || snapshot?.info?.usage;
+        if (snapUsage && typeof snapUsage === "object") {
+          setUsage((prev) => mergeUsagePayload(prev, snapUsage));
+        }
+        void refreshAccountUsage(resolvedSid);
+        if (!silentReattach) {
+          scrollToBottom();
+        }
+      } catch (err) {
+        setChatError(
+          err instanceof Error ? err.message : "Bot-Chat konnte nicht geöffnet werden."
+        );
+      } finally {
+        setLoadingChat(false);
       }
-      setMessages(loaded);
-      setIsStreaming(Boolean(snapshot?.running || snapshot?.inflight?.streaming));
-      setPendingApproval(snapshot?.pending_approval || snapshot?.prompts?.[0] || null);
-      setPendingConnection(snapshot?.pending_connection || null);
-      const snapUsage = snapshot?.usage || snapshot?.info?.usage;
-      if (snapUsage && typeof snapUsage === "object") {
-        setUsage((prev) => mergeUsagePayload(prev, snapUsage));
-      }
-      void refreshAccountUsage(resolvedSid);
-      scrollToBottom();
-    } catch (err) {
-      setChatError(
-        err instanceof Error ? err.message : "Bot-Chat konnte nicht geöffnet werden."
-      );
-    } finally {
-      setLoadingChat(false);
-    }
-  }, [profile.name, refreshAccountUsage, scrollToBottom]);
+    },
+    [profile.name, refreshAccountUsage, scrollToBottom, sessions]
+  );
 
   const refreshSessionsList = useCallback(
     async (autoOpenFirst = false) => {
@@ -1244,7 +1271,7 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
           if (wsState === "connected") {
             // Use Hermes's official idempotent canonical "Bot Chat" create/resume so
             // every bot always gets the live teammate roster & `message_agent` tool!
-            await openCanonicalBotChat();
+            await openCanonicalBotChat(list, false);
             const refreshed = await fetchSessions(profile.name, 30).catch(() => list);
             setSessions(refreshed);
             return;
@@ -1273,16 +1300,19 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
   }, [profile.name]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (wsState === "connected") {
-      if (!attachedOnWsRef.current) {
-        if (activeSessionId && activeTitle !== BOT_CHAT_TITLE) {
-          void loadSessionHistory(activeSessionId, activeTitle);
-        } else {
-          void openCanonicalBotChat();
-        }
+    if (wsState !== "connected") {
+      // Gateway drops WS subscriptions on disconnect/restart — force clean re-attach on reconnect
+      attachedOnWsRef.current = false;
+      return;
+    }
+    if (!attachedOnWsRef.current) {
+      if (activeSessionId && activeTitle !== BOT_CHAT_TITLE) {
+        void loadSessionHistory(activeSessionId, activeTitle);
       } else {
-        void refreshAccountUsage(activeSessionId);
+        void openCanonicalBotChat(undefined, messages.length > 0);
       }
+    } else {
+      void refreshAccountUsage(activeSessionId);
     }
   }, [wsState]); // eslint-disable-line react-hooks/exhaustive-deps
 
