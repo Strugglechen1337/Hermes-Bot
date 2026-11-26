@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { ServerConfig } from "./config.js";
+import { handlePocketPushRoute } from "./push.js";
 import {
   adaptSetCookieHeader,
   isAllowedHermesPath,
@@ -176,6 +177,68 @@ async function handlePocketFallback(
   }
 }
 
+const HERMES_LLM_PROVIDER_KEYS = new Set([
+  "OPENAI_API_KEY",
+  "ANTHROPIC_API_KEY",
+  "OPENROUTER_API_KEY",
+  "GEMINI_API_KEY",
+  "GOOGLE_API_KEY",
+  "XAI_API_KEY",
+  "DEEPSEEK_API_KEY",
+  "MISTRAL_API_KEY",
+  "GROQ_API_KEY",
+]);
+
+async function registerEnvPassthrough(
+  config: ServerConfig,
+  upstreamHeaders: Record<string, string>,
+  profile: string,
+  key: string
+): Promise<boolean> {
+  if (HERMES_LLM_PROVIDER_KEYS.has(key)) return false;
+  try {
+    const getQs = new URLSearchParams({ include_defaults: "false" });
+    if (profile) getQs.set("profile", profile);
+    const getRes = await fetch(`${config.hermesBaseUrl}/api/config?${getQs.toString()}`, {
+      method: "GET",
+      headers: { Accept: "application/json", ...(upstreamHeaders.Cookie ? { Cookie: upstreamHeaders.Cookie } : {}) },
+      redirect: "manual",
+    });
+    if (!getRes.ok) return false;
+    const cfg = (await getRes.json()) as Record<string, unknown>;
+    const terminal =
+      cfg.terminal && typeof cfg.terminal === "object"
+        ? (cfg.terminal as Record<string, unknown>)
+        : {};
+    const existing = Array.isArray(terminal.env_passthrough)
+      ? terminal.env_passthrough.filter((v): v is string => typeof v === "string")
+      : [];
+    if (existing.includes(key)) return true;
+
+    const putQs = new URLSearchParams();
+    if (profile) putQs.set("profile", profile);
+    const putRes = await fetch(
+      `${config.hermesBaseUrl}/api/config${putQs.toString() ? `?${putQs.toString()}` : ""}`,
+      {
+        method: "PUT",
+        headers: upstreamHeaders,
+        body: JSON.stringify({
+          ...(profile ? { profile } : {}),
+          config: {
+            terminal: {
+              env_passthrough: [...existing, key],
+            },
+          },
+        }),
+        redirect: "manual",
+      }
+    );
+    return putRes.ok;
+  } catch {
+    return false;
+  }
+}
+
 async function handlePocketSecret(
   req: IncomingMessage,
   res: ServerResponse,
@@ -256,7 +319,24 @@ async function handlePocketSecret(
       res.end(text);
       return;
     }
-    sendJson(res, 200, { ok: true, key, profile: profile || "default" });
+    const passthroughRegistered = await registerEnvPassthrough(
+      config,
+      upstreamHeaders,
+      profile,
+      key
+    );
+    const effectiveProfile = profile || "default";
+    const envPathHint =
+      effectiveProfile === "default"
+        ? "~/.hermes/.env"
+        : `~/.hermes/profiles/${effectiveProfile}/.env`;
+    sendJson(res, 200, {
+      ok: true,
+      key,
+      profile: effectiveProfile,
+      passthroughRegistered,
+      envPathHint,
+    });
   } catch (err) {
     clearTimeout(timeout);
     const isTimeout = err instanceof Error && err.name === "AbortError";
@@ -390,6 +470,10 @@ export async function handleHermesHttpProxy(
   if (pathname === "/api/pocket/privacy") {
     await handlePocketPrivacy(req, res, config, parsedUrl);
     return true;
+  }
+
+  if (pathname.startsWith("/api/pocket/push/")) {
+    return handlePocketPushRoute(req, res, config, pathname);
   }
 
   const method = (req.method || "GET").toUpperCase();

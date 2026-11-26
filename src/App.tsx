@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  Bell,
+  BellOff,
   Bot,
   CalendarClock,
   Lock,
@@ -39,6 +41,13 @@ import {
   loadLocalPrivateProfiles,
   saveLocalPrivateProfiles,
 } from "./lib/privateVault";
+import {
+  disablePushNotifications,
+  enablePushNotifications,
+  fetchPushStatus,
+  sendTestPushNotification,
+  type PushStatusInfo,
+} from "./lib/pushClient";
 import { useVisualViewport } from "./lib/useVisualViewport";
 
 type TabKey = "bots" | "groups" | "routines" | "connectors";
@@ -88,6 +97,74 @@ export const App: React.FC = () => {
 
   const [showAccountSheet, setShowAccountSheet] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
+  const [pushStatus, setPushStatus] = useState<PushStatusInfo | null>(null);
+  const [pushBusy, setPushBusy] = useState(false);
+  const [pushFeedback, setPushFeedback] = useState<string | null>(null);
+
+  // Open specific bot when launched or tapped from a Push Notification
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const botParam = params.get("bot")?.trim();
+    if (botParam) {
+      setTab("bots");
+      setSelectedBotName(botParam);
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+    const onSwMessage = (ev: MessageEvent) => {
+      const data = ev.data as { type?: string; bot?: string } | null;
+      if (data?.type === "hp:open-bot" && data.bot) {
+        setTab("bots");
+        setSelectedBotName(data.bot);
+      }
+    };
+    navigator.serviceWorker?.addEventListener("message", onSwMessage);
+    return () => navigator.serviceWorker?.removeEventListener("message", onSwMessage);
+  }, []);
+
+  useEffect(() => {
+    if (showAccountSheet) {
+      setPushFeedback(null);
+      void fetchPushStatus().then(setPushStatus);
+    }
+  }, [showAccountSheet]);
+
+  async function handleTogglePush() {
+    setPushBusy(true);
+    setPushFeedback(null);
+    try {
+      if (pushStatus?.subscribed) {
+        await disablePushNotifications();
+        setPushFeedback("Push-Benachrichtigungen auf diesem Gerät deaktiviert.");
+      } else {
+        const res = await enablePushNotifications();
+        if (!res.ok) {
+          setPushFeedback(res.error || "Push konnte nicht aktiviert werden.");
+        } else {
+          setPushFeedback("Push-Benachrichtigungen sind jetzt aktiv!");
+        }
+      }
+      setPushStatus(await fetchPushStatus());
+    } finally {
+      setPushBusy(false);
+    }
+  }
+
+  async function handleTestPush() {
+    setPushBusy(true);
+    setPushFeedback(null);
+    try {
+      const res = await sendTestPushNotification();
+      setPushFeedback(
+        res.sent > 0
+          ? "Test-Nachricht gesendet! Sollte gleich auf deinem iPhone erscheinen."
+          : "Kein aktives Gerät gefunden – bitte Push erst aktivieren."
+      );
+    } catch (err) {
+      setPushFeedback(err instanceof Error ? err.message : "Test-Push fehlgeschlagen.");
+    } finally {
+      setPushBusy(false);
+    }
+  }
 
   const loadProfiles = useCallback(async () => {
     setProfilesLoading(true);
@@ -511,6 +588,56 @@ export const App: React.FC = () => {
             <strong>iPhone Home-Bildschirm:</strong> In Safari auf <em>Teilen</em> tippen und{" "}
             <em>„Zum Home-Bildschirm“</em> wählen – Hermes Pocket startet dann im Vollbildmodus.
           </span>
+        </div>
+
+        <div className="card" style={{ marginBottom: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 6 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 7, fontWeight: 700, fontSize: "0.9rem" }}>
+              {pushStatus?.subscribed ? (
+                <Bell size={16} style={{ color: "var(--status-ok)" }} />
+              ) : (
+                <BellOff size={16} style={{ color: "var(--text-secondary)" }} />
+              )}
+              <span>Push-Benachrichtigungen</span>
+            </div>
+            <span className={`pill ${pushStatus?.subscribed ? "ok" : ""}`}>
+              {pushStatus?.subscribed ? "Aktiv" : "Aus"}
+            </span>
+          </div>
+          <p style={{ margin: "0 0 10px", fontSize: "0.78rem", color: "var(--text-secondary)", lineHeight: 1.45 }}>
+            Erhalte native iPhone-Mitteilungen, wenn deine Bots antworten, Rückfragen stellen oder
+            dich proaktiv informieren.
+          </p>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button
+              type="button"
+              className={`btn sm ${pushStatus?.subscribed ? "" : "primary"}`}
+              disabled={pushBusy}
+              onClick={() => void handleTogglePush()}
+            >
+              {pushStatus?.subscribed ? <BellOff size={14} /> : <Bell size={14} />}
+              {pushBusy
+                ? "Bitte warten…"
+                : pushStatus?.subscribed
+                  ? "Deaktivieren"
+                  : "Push aktivieren"}
+            </button>
+            {pushStatus?.subscribed && (
+              <button
+                type="button"
+                className="btn sm"
+                disabled={pushBusy}
+                onClick={() => void handleTestPush()}
+              >
+                Test-Push senden
+              </button>
+            )}
+          </div>
+          {pushFeedback && (
+            <div style={{ marginTop: 8, fontSize: "0.76rem", color: "var(--accent-indigo)" }}>
+              {pushFeedback}
+            </div>
+          )}
         </div>
 
         <button

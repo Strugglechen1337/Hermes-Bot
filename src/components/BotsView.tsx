@@ -79,6 +79,8 @@ import {
 } from "../lib/hermesApi";
 import { hermesWs, type WsConnectionState } from "../lib/hermesWs";
 import { cleanSearchSnippet, PRIVATE_CHAT_TITLE } from "../lib/privateVault";
+import { notifyIfBackgrounded } from "../lib/pushClient";
+import { detectBotSecretRequest, stripSecretRequestTag } from "../lib/secretDetection";
 import {
   EMPTY_CHAT_USAGE,
   formatCompactWindowLabel,
@@ -1237,7 +1239,11 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
   const [pendingConnection, setPendingConnection] = useState<HermesConnectionRequest | null>(null);
   const [pendingClarify, setPendingClarify] = useState<HermesServerRequest | null>(null);
   const [pendingSecret, setPendingSecret] = useState<HermesServerRequest | null>(null);
-  const [manualSecret, setManualSecret] = useState<{ open: boolean; initialKey: string }>({
+  const [manualSecret, setManualSecret] = useState<{
+    open: boolean;
+    initialKey: string;
+    promptText?: string;
+  }>({
     open: false,
     initialKey: "",
   });
@@ -1599,15 +1605,30 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
       }
       if (req.method === "clarify" || req.method === "clarify.request") {
         setPendingClarify(req);
+        notifyIfBackgrounded({
+          title: visual.label,
+          body: "Rückfrage im Chat – bitte kurz auswählen.",
+          bot: profile.name,
+        });
         scrollToBottomWithSettle();
       } else if (req.method === "approval") {
         setPendingApproval({
           ...(req.params as HermesPendingApproval),
           server_request_id: req.id,
         });
+        notifyIfBackgrounded({
+          title: `${visual.label} · Freigabe`,
+          body: "Der Bot bittet um deine Freigabe.",
+          bot: profile.name,
+        });
         scrollToBottomWithSettle();
       } else if (SECRET_REQUEST_METHODS.has(req.method)) {
         setPendingSecret(req);
+        notifyIfBackgrounded({
+          title: `${visual.label} · Sichere Abfrage`,
+          body: "Passwort oder API-Key wird sicher angefordert.",
+          bot: profile.name,
+        });
         scrollToBottomWithSettle();
       } else {
         // Decline desktop-only window requests cleanly so the agent doesn't wait 300s
@@ -1772,10 +1793,32 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
           }
           return next;
         });
+        // Automatically detect when a bot asks for an API key, token, or password and pop up
+        // our secure masked input box pre-filled with the exact variable name.
+        if (finalText) {
+          const detectedSecret = detectBotSecretRequest(finalText);
+          if (detectedSecret) {
+            setManualSecret({
+              open: true,
+              initialKey: detectedSecret.keyName,
+              promptText: detectedSecret.prompt,
+            });
+          }
+          notifyIfBackgrounded({
+            title: visual.label,
+            body: stripSecretRequestTag(finalText).slice(0, 180),
+            bot: profile.name,
+          });
+        }
         void refreshAccountUsage(activeSessionRef.current);
         scrollToBottom();
       } else if (ev.type === "approval.requested") {
         setPendingApproval(ev.payload as HermesPendingApproval);
+        notifyIfBackgrounded({
+          title: `${visual.label} · Freigabe`,
+          body: "Der Bot bittet um eine Freigabe.",
+          bot: profile.name,
+        });
         scrollToBottomWithSettle();
       } else if (ev.type === "approval.cancelled") {
         setPendingApproval(null);
@@ -2393,7 +2436,7 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
                         <span>{msg.tool_name || "Werkzeug"}</span>
                       </div>
                     ) : msg.content ? (
-                      <SafeMarkdown text={msg.content} />
+                      <SafeMarkdown text={stripSecretRequestTag(msg.content)} />
                     ) : msg.streaming ? (
                       <span style={{ color: "var(--text-muted)" }}>…</span>
                     ) : null}
@@ -2454,14 +2497,41 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
 
         {manualSecret.open && (
           <ManualSecretCard
+            key={manualSecret.initialKey || "manual-secret"}
             profileName={profile.name}
             botLabel={visual.label}
             initialKey={manualSecret.initialKey}
-            onSaved={(savedKey) => {
+            promptText={manualSecret.promptText}
+            onSaved={(savedKey, envPathHint) => {
               setManualSecret({ open: false, initialKey: "" });
+              const envPath =
+                envPathHint ||
+                (profile.name === "default"
+                  ? "~/.hermes/.env"
+                  : `~/.hermes/profiles/${profile.name}/.env`);
               appendSystemNotice(
-                `Schlüssel „${savedKey}“ sicher im geschützten Speicher von ${visual.label} hinterlegt.`
+                `Schlüssel „${savedKey}“ sicher in ${envPath} gespeichert – ${visual.label} wird informiert…`
               );
+              // Automatically notify the bot of the exact variable name & .env path (NEVER the secret value!)
+              const sid = activeSessionRef.current;
+              if (sid && wsState === "connected") {
+                const handoffText =
+                  `Ich habe den geheimen Wert für \`${savedKey}\` soeben sicher in deiner Profil-.env hinterlegt ` +
+                  `(Schlüssel: \`${savedKey}\`, Datei: \`${envPath}\`, auch für \`$${savedKey}\` freigegeben). ` +
+                  `Bitte lies \`${savedKey}\` direkt aus \`${envPath}\` bzw. der Umgebungsvariable aus und mache direkt weiter – gib den Klartextwert dabei niemals im Chat aus.`;
+                setIsStreaming(true);
+                void hermesWs
+                  .call("prompt.submit", {
+                    session_id: sid,
+                    profile: profile.name,
+                    submission_id: randomClientId("sub"),
+                    text: handoffText,
+                    ...(activeModelOverride ? { model_override: activeModelOverride } : {}),
+                  })
+                  .catch(() => {
+                    setIsStreaming(false);
+                  });
+              }
             }}
             onClose={() => setManualSecret({ open: false, initialKey: "" })}
           />

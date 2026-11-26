@@ -577,14 +577,15 @@ interface ManualSecretCardProps {
   profileName: string;
   botLabel: string;
   initialKey?: string;
-  onSaved: (keyName: string) => void;
+  promptText?: string;
+  onSaved: (keyName: string, envPathHint?: string) => void;
   onClose: () => void;
 }
 
 const COMMON_SECRET_PRESETS = [
-  "ANTHROPIC_API_KEY",
-  "OPENAI_API_KEY",
+  "HOME_ASSISTANT_TOKEN",
   "GITHUB_TOKEN",
+  "FRITZBOX_PASSWORD",
   "BRAVE_API_KEY",
 ];
 
@@ -592,6 +593,7 @@ export const ManualSecretCard: React.FC<ManualSecretCardProps> = ({
   profileName,
   botLabel,
   initialKey = "",
+  promptText,
   onSaved,
   onClose,
 }) => {
@@ -605,7 +607,7 @@ export const ManualSecretCard: React.FC<ManualSecretCardProps> = ({
     e.preventDefault();
     const cleanKey = keyName.trim().toUpperCase().replace(/[^A-Z0-9_]/g, "_");
     if (!/^[A-Z][A-Z0-9_]{1,63}$/.test(cleanKey)) {
-      setError("Bitte gültigen Schlüsselnamen angeben (z. B. GITHUB_TOKEN).");
+      setError("Bitte gültigen Schlüsselnamen angeben (z. B. HOME_ASSISTANT_TOKEN).");
       return;
     }
     if (!secretValue.trim()) {
@@ -615,9 +617,9 @@ export const ManualSecretCard: React.FC<ManualSecretCardProps> = ({
     setSaving(true);
     setError(null);
     try {
-      await saveProfileSecret(profileName, cleanKey, secretValue);
+      const res = await saveProfileSecret(profileName, cleanKey, secretValue);
       setSecretValue("");
-      onSaved(cleanKey);
+      onSaved(cleanKey, res.envPathHint);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Konnte nicht gespeichert werden.");
     } finally {
@@ -630,7 +632,7 @@ export const ManualSecretCard: React.FC<ManualSecretCardProps> = ({
       <div className="prompt-card-header">
         <div className="prompt-card-badge secret">
           <KeyRound size={14} />
-          <span>Passwort / API-Key sicher hinterlegen</span>
+          <span>Passwort / API-Key sicher eingeben</span>
         </div>
         <button
           type="button"
@@ -645,8 +647,12 @@ export const ManualSecretCard: React.FC<ManualSecretCardProps> = ({
 
       <div className="prompt-card-body">
         <p className="prompt-description">
-          Wird direkt im geschützten <code>.env</code>-Speicher von {botLabel} abgelegt und
-          erscheint niemals im Chatverlauf.
+          {promptText || (
+            <>
+              Wird direkt im geschützten <code>.env</code>-Speicher von {botLabel} abgelegt und{" "}
+              {botLabel} erfährt direkt den Variablennamen – niemals den Klartext im Chat.
+            </>
+          )}
         </p>
 
         <div className="chip-row" style={{ marginBottom: 8 }}>
@@ -713,7 +719,7 @@ export const ManualSecretCard: React.FC<ManualSecretCardProps> = ({
           className="btn sm primary"
           disabled={saving || !keyName.trim() || !secretValue.trim()}
         >
-          <Lock size={13} /> {saving ? "Speichere…" : "Sicher speichern"}
+          <Lock size={13} /> {saving ? "Speichere…" : "Sicher speichern & weiter"}
         </button>
       </div>
     </form>

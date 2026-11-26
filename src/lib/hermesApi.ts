@@ -200,15 +200,22 @@ export async function saveProfileSecret(
   profileName: string,
   key: string,
   value: string
-): Promise<{ ok: boolean; key: string }> {
+): Promise<{
+  ok: boolean;
+  key: string;
+  envPathHint?: string;
+  passthroughRegistered?: boolean;
+}> {
   const params = new URLSearchParams({ profile: profileName });
-  return requestJson<{ ok: boolean; key: string }>(
-    `/api/pocket/secret?${params.toString()}`,
-    {
-      method: "PUT",
-      body: JSON.stringify({ profile: profileName, key, value }),
-    }
-  );
+  return requestJson<{
+    ok: boolean;
+    key: string;
+    envPathHint?: string;
+    passthroughRegistered?: boolean;
+  }>(`/api/pocket/secret?${params.toString()}`, {
+    method: "PUT",
+    body: JSON.stringify({ profile: profileName, key, value }),
+  });
 }
 
 export async function updateProfilePrivacy(

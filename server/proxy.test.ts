@@ -1,5 +1,8 @@
 // @vitest-environment node
+import fs from "node:fs";
 import http from "node:http";
+import os from "node:os";
+import path from "node:path";
 import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createHermesPocketServer } from "./index.js";
@@ -8,8 +11,11 @@ describe("Hermes Pocket BFF HTTP Proxy", () => {
   let upstream: http.Server;
   let bff: http.Server;
   let bffUrl: string;
+  let tempPushDir: string;
 
   beforeAll(async () => {
+    tempPushDir = fs.mkdtempSync(path.join(os.tmpdir(), "hp-push-test-"));
+    process.env.PUSH_DATA_DIR = tempPushDir;
     upstream = http.createServer((req, res) => {
       if (req.url === "/api/status") {
         res.writeHead(200, { "Content-Type": "application/json" });
@@ -30,6 +36,16 @@ describe("Hermes Pocket BFF HTTP Proxy", () => {
           "Set-Cookie": "hermes_access=; Max-Age=0; HttpOnly; Path=/",
         });
         res.end();
+        return;
+      }
+      if (req.url === "/api/auth/me" && req.method === "GET") {
+        if (req.headers.cookie?.includes("hermes_access=valid")) {
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ user_id: "u1", display_name: "Tester" }));
+        } else {
+          res.writeHead(401, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "unauthorized" }));
+        }
         return;
       }
       if (req.url?.startsWith("/api/config") && req.method === "GET") {
@@ -74,6 +90,8 @@ describe("Hermes Pocket BFF HTTP Proxy", () => {
   afterAll(async () => {
     await new Promise<void>((resolve) => bff.close(() => resolve()));
     await new Promise<void>((resolve) => upstream.close(() => resolve()));
+    delete process.env.PUSH_DATA_DIR;
+    fs.rmSync(tempPushDir, { recursive: true, force: true });
   });
 
   it("proxies /api/status cleanly", async () => {
@@ -156,6 +174,21 @@ describe("Hermes Pocket BFF HTTP Proxy", () => {
       body: JSON.stringify({ key: "BRAVE_API_KEY", value: "demo-secret" }),
     });
     expect(okRes.status).toBe(200);
+    const secretData = (await okRes.json()) as { envPathHint?: string };
+    expect(secretData.envPathHint).toBe("~/.hermes/profiles/mika/.env");
+  });
+
+  it("protects /api/pocket/push/* with Hermes session auth", async () => {
+    const unauth = await fetch(`${bffUrl}/api/pocket/push/status`);
+    expect(unauth.status).toBe(401);
+
+    const authed = await fetch(`${bffUrl}/api/pocket/push/status`, {
+      headers: { Cookie: "hermes_access=valid" },
+    });
+    expect(authed.status).toBe(200);
+    const statusData = (await authed.json()) as { ok: boolean; vapidPublicKey: string };
+    expect(statusData.ok).toBe(true);
+    expect(statusData.vapidPublicKey.length).toBeGreaterThan(20);
   });
 
   it("updates agent.bot_mode_protocol safely via /api/pocket/privacy and refuses default profile", async () => {

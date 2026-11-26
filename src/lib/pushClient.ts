@@ -1,0 +1,190 @@
+function urlBase64ToUint8Array(base64String: string): Uint8Array<ArrayBuffer> {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const rawData = window.atob(base64);
+  const buffer = new ArrayBuffer(rawData.length);
+  const outputArray = new Uint8Array(buffer);
+  for (let i = 0; i < rawData.length; i++) {
+    outputArray[i] = rawData.charCodeAt(i);
+  }
+  return outputArray;
+}
+
+export interface PushStatusInfo {
+  browserSupported: boolean;
+  isStandaloneIos: boolean;
+  permission: NotificationPermission | "unsupported";
+  subscribed: boolean;
+  serverCount: number;
+}
+
+export function isPushSupportedInBrowser(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    "serviceWorker" in navigator &&
+    "PushManager" in window &&
+    "Notification" in window
+  );
+}
+
+export function isIosStandaloneMode(): boolean {
+  if (typeof window === "undefined") return false;
+  const nav = navigator as Navigator & { standalone?: boolean };
+  return (
+    Boolean(nav.standalone) ||
+    window.matchMedia?.("(display-mode: standalone)").matches
+  );
+}
+
+export async function getPushRegistration(): Promise<ServiceWorkerRegistration | null> {
+  if (!isPushSupportedInBrowser()) return null;
+  try {
+    const existing = await navigator.serviceWorker.getRegistration("/sw.js");
+    if (existing) return existing;
+    return await navigator.serviceWorker.register("/sw.js", { scope: "/" });
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchPushStatus(): Promise<PushStatusInfo> {
+  const supported = isPushSupportedInBrowser();
+  const isStandalone = isIosStandaloneMode();
+  if (!supported) {
+    return {
+      browserSupported: false,
+      isStandaloneIos: isStandalone,
+      permission: "unsupported",
+      subscribed: false,
+      serverCount: 0,
+    };
+  }
+
+  let subscribed = false;
+  let serverCount = 0;
+  try {
+    const reg = await navigator.serviceWorker.getRegistration("/sw.js");
+    const sub = reg ? await reg.pushManager.getSubscription() : null;
+    subscribed = Boolean(sub);
+
+    const res = await fetch("/api/pocket/push/status", { credentials: "same-origin" });
+    if (res.ok) {
+      const data = (await res.json()) as { subscribedCount?: number };
+      serverCount = Number(data.subscribedCount || 0);
+    }
+  } catch {
+    // ignore
+  }
+
+  return {
+    browserSupported: true,
+    isStandaloneIos: isStandalone,
+    permission: Notification.permission,
+    subscribed,
+    serverCount,
+  };
+}
+
+export async function enablePushNotifications(): Promise<{ ok: boolean; error?: string }> {
+  if (!isPushSupportedInBrowser()) {
+    return {
+      ok: false,
+      error:
+        "Push wird in diesem Browser nicht unterstützt. Auf dem iPhone bitte Hermes Pocket über „Zum Home-Bildschirm“ öffnen.",
+    };
+  }
+
+  const perm = await Notification.requestPermission();
+  if (perm !== "granted") {
+    return {
+      ok: false,
+      error: "Mitteilungen wurden nicht erlaubt. Du kannst sie in den iPhone-Einstellungen aktivieren.",
+    };
+  }
+
+  const reg = await getPushRegistration();
+  if (!reg) {
+    return { ok: false, error: "Service Worker konnte nicht registriert werden." };
+  }
+
+  const statusRes = await fetch("/api/pocket/push/status", { credentials: "same-origin" });
+  if (!statusRes.ok) {
+    return { ok: false, error: "Push-Konfiguration vom Server nicht erreichbar." };
+  }
+  const statusData = (await statusRes.json()) as { vapidPublicKey?: string };
+  if (!statusData.vapidPublicKey) {
+    return { ok: false, error: "Kein VAPID-Schlüssel vom Server erhalten." };
+  }
+
+  let sub = await reg.pushManager.getSubscription();
+  if (!sub) {
+    sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(statusData.vapidPublicKey),
+    });
+  }
+
+  const saveRes = await fetch("/api/pocket/push/subscribe", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ subscription: sub.toJSON() }),
+  });
+  if (!saveRes.ok) {
+    return { ok: false, error: "Push-Abo konnte nicht gespeichert werden." };
+  }
+  return { ok: true };
+}
+
+export async function disablePushNotifications(): Promise<void> {
+  if (!isPushSupportedInBrowser()) return;
+  try {
+    const reg = await navigator.serviceWorker.getRegistration("/sw.js");
+    const sub = reg ? await reg.pushManager.getSubscription() : null;
+    const endpoint = sub?.endpoint || "";
+    if (sub) {
+      await sub.unsubscribe();
+    }
+    await fetch("/api/pocket/push/unsubscribe", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ endpoint }),
+    });
+  } catch {
+    // ignore
+  }
+}
+
+export async function sendTestPushNotification(): Promise<{ sent: number; failed: number }> {
+  const res = await fetch("/api/pocket/push/test", {
+    method: "POST",
+    credentials: "same-origin",
+  });
+  if (!res.ok) {
+    throw new Error("Test-Benachrichtigung konnte nicht gesendet werden.");
+  }
+  const data = (await res.json()) as { sent?: number; failed?: number };
+  return { sent: Number(data.sent || 0), failed: Number(data.failed || 0) };
+}
+
+/**
+ * Triggers a server-sent Web Push when the app is backgrounded/locked so
+ * Alex gets a native iPhone banner when a bot replies or needs confirmation.
+ */
+export function notifyIfBackgrounded(payload: {
+  title: string;
+  body: string;
+  bot?: string;
+}): void {
+  if (typeof document === "undefined" || document.visibilityState === "visible") return;
+  void fetch("/api/pocket/push/notify", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+    keepalive: true,
+  }).catch(() => {
+    // Best-effort background notification
+  });
+}
