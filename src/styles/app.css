@@ -120,16 +120,18 @@ a {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: calc(var(--safe-top) + 10px) 16px 10px;
-  background: rgba(0, 0, 0, 0.88);
+  padding: calc(var(--safe-top) + 2px) 16px 10px;
+  background: rgba(8, 9, 12, 0.9);
   backdrop-filter: blur(22px);
   -webkit-backdrop-filter: blur(22px);
-  border-bottom: 1px solid var(--border-subtle);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  -webkit-user-select: none;
+  user-select: none;
   transition: padding 0.14s ease;
 }
 
 .kb-open .topbar {
-  padding: calc(var(--safe-top) + 4px) 14px 6px;
+  padding: calc(var(--safe-top) + 2px) 14px 6px;
 }
 
 .kb-open .topbar-subtitle {
@@ -139,13 +141,13 @@ a {
 .topbar-title-group {
   display: flex;
   align-items: center;
-  gap: 11px;
+  gap: 10px;
   min-width: 0;
 }
 
 .topbar-title {
   margin: 0;
-  font-size: 1.06rem;
+  font-size: 1.18rem;
   font-weight: 700;
   letter-spacing: -0.025em;
   white-space: nowrap;
@@ -205,26 +207,31 @@ a {
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior-y: contain;
-  padding: 14px 14px calc(var(--tabbar-height) + var(--safe-bottom) + 20px);
+  padding: 12px 14px calc(var(--safe-bottom) + 92px);
 }
 
-/* ── Bottom Tab Bar ────────────────────────────────────────────────────────── */
+/* ── Floating Frosted-Glass Bottom Dock (native iOS feel, zero dead bottom slab) ── */
 
 .tabbar {
   position: fixed;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  max-width: 760px;
+  bottom: max(var(--safe-bottom), 12px);
+  left: 16px;
+  right: 16px;
+  max-width: 520px;
   margin: 0 auto;
   z-index: 30;
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  padding: 6px 8px calc(var(--safe-bottom) + 4px);
-  background: rgba(8, 9, 12, 0.92);
-  backdrop-filter: blur(22px);
-  -webkit-backdrop-filter: blur(22px);
-  border-top: 1px solid var(--border-subtle);
+  gap: 2px;
+  padding: 5px;
+  border-radius: var(--radius-pill);
+  background: rgba(24, 26, 33, 0.84);
+  backdrop-filter: blur(26px);
+  -webkit-backdrop-filter: blur(26px);
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.58);
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .kb-open .tabbar {
@@ -236,17 +243,18 @@ a {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 3px;
+  gap: 2px;
   min-height: 46px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-pill);
   color: var(--text-muted);
-  font-size: 0.69rem;
+  font-size: 0.67rem;
   font-weight: 600;
-  transition: color 0.15s ease;
+  transition: color 0.15s ease, background 0.15s ease;
 }
 
 .tabbar-item.active {
   color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.1);
 }
 
 /* ── Segmented Control ─────────────────────────────────────────────────────── */
@@ -616,7 +624,7 @@ a {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: calc(var(--safe-top) + 8px) 14px 18px;
+  padding: calc(var(--safe-top) + 2px) 14px 16px;
   background: linear-gradient(
     to bottom,
     rgba(8, 9, 12, 0.92) 0%,
@@ -624,6 +632,8 @@ a {
     rgba(8, 9, 12, 0) 100%
   );
   pointer-events: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .kb-open .chat-floating-header {
@@ -745,6 +755,8 @@ a {
   font-size: 0.94rem;
   line-height: 1.5;
   word-break: break-word;
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 .msg-row.user .msg-bubble {

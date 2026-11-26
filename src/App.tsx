@@ -57,6 +57,15 @@ export const App: React.FC = () => {
 
   const [profiles, setProfiles] = useState<HermesProfile[]>([]);
   const [avatars, setAvatars] = useState<Record<string, string>>({});
+  const [hiddenProfiles, setHiddenProfiles] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem("hermes-pocket.hiddenProfiles");
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === "string") : [];
+    } catch {
+      return [];
+    }
+  });
   const [profilesLoading, setProfilesLoading] = useState(false);
   const [profilesError, setProfilesError] = useState<string | null>(null);
 
@@ -105,6 +114,20 @@ export const App: React.FC = () => {
         next[profileName] = dataUrl;
       } else {
         delete next[profileName];
+      }
+      return next;
+    });
+  }, []);
+
+  const handleToggleHideProfile = useCallback((profileName: string) => {
+    setHiddenProfiles((prev) => {
+      const next = prev.includes(profileName)
+        ? prev.filter((n) => n !== profileName)
+        : [...prev, profileName];
+      try {
+        localStorage.setItem("hermes-pocket.hiddenProfiles", JSON.stringify(next));
+      } catch {
+        // ignore storage errors
       }
       return next;
     });
@@ -206,16 +229,11 @@ export const App: React.FC = () => {
             <img
               src="/icon.svg"
               alt=""
-              width={28}
-              height={28}
-              style={{ borderRadius: 8, flexShrink: 0 }}
+              width={26}
+              height={26}
+              style={{ borderRadius: 7, flexShrink: 0 }}
             />
-            <div style={{ minWidth: 0 }}>
-              <h1 className="topbar-title">{TAB_TITLES[tab]}</h1>
-              <div className="topbar-subtitle">
-                {status ? `Hermes v${status.version}` : "Hermes Gateway"}
-              </div>
-            </div>
+            <h1 className="topbar-title">{TAB_TITLES[tab]}</h1>
           </div>
 
           <div className="topbar-actions">
@@ -253,6 +271,7 @@ export const App: React.FC = () => {
           <BotsView
             profiles={profiles}
             avatars={avatars}
+            hiddenProfiles={hiddenProfiles}
             loading={profilesLoading}
             error={profilesError}
             wsState={wsState}
@@ -261,6 +280,7 @@ export const App: React.FC = () => {
             onSelectBot={setSelectedBotName}
             onRefreshProfiles={() => loadProfiles()}
             onAvatarChange={handleAvatarChange}
+            onToggleHideProfile={handleToggleHideProfile}
             onOpenConnectors={() => {
               setSelectedBotName(null);
               setTab("connectors");
@@ -281,6 +301,7 @@ export const App: React.FC = () => {
             <BotsView
               profiles={profiles}
               avatars={avatars}
+              hiddenProfiles={hiddenProfiles}
               loading={profilesLoading}
               error={profilesError}
               wsState={wsState}
@@ -289,6 +310,7 @@ export const App: React.FC = () => {
               onSelectBot={setSelectedBotName}
               onRefreshProfiles={() => loadProfiles()}
               onAvatarChange={handleAvatarChange}
+              onToggleHideProfile={handleToggleHideProfile}
               onOpenConnectors={() => setTab("connectors")}
             />
           )}
@@ -398,6 +420,24 @@ export const App: React.FC = () => {
             <em>„Zum Home-Bildschirm“</em> wählen – Hermes Pocket startet dann im Vollbildmodus.
           </span>
         </div>
+
+        {hiddenProfiles.length > 0 && (
+          <button
+            type="button"
+            className="btn full"
+            style={{ marginBottom: 10 }}
+            onClick={() => {
+              setHiddenProfiles([]);
+              try {
+                localStorage.removeItem("hermes-pocket.hiddenProfiles");
+              } catch {
+                // ignore
+              }
+            }}
+          >
+            Ausgeblendete Bots wieder anzeigen ({hiddenProfiles.length})
+          </button>
+        )}
 
         <button
           type="button"

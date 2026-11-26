@@ -61,6 +61,7 @@ import { Sheet } from "./Sheet";
 interface BotsViewProps {
   profiles: HermesProfile[];
   avatars: Record<string, string>;
+  hiddenProfiles?: string[];
   loading: boolean;
   error: string | null;
   wsState: WsConnectionState;
@@ -69,6 +70,7 @@ interface BotsViewProps {
   onSelectBot: (name: string | null) => void;
   onRefreshProfiles: () => Promise<void> | void;
   onAvatarChange: (profileName: string, dataUrl: string | null) => void;
+  onToggleHideProfile?: (profileName: string) => void;
   onOpenConnectors?: () => void;
 }
 
@@ -88,6 +90,7 @@ function slugifyProfileName(raw: string): string {
 export const BotsView: React.FC<BotsViewProps> = ({
   profiles,
   avatars,
+  hiddenProfiles = [],
   loading,
   error,
   wsState,
@@ -96,6 +99,7 @@ export const BotsView: React.FC<BotsViewProps> = ({
   onSelectBot,
   onRefreshProfiles,
   onAvatarChange,
+  onToggleHideProfile,
   onOpenConnectors,
 }) => {
   const [query, setQuery] = useState("");
@@ -166,7 +170,9 @@ export const BotsView: React.FC<BotsViewProps> = ({
 
   const filteredProfiles = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const sorted = [...profiles].sort((a, b) => {
+    const hiddenSet = new Set(hiddenProfiles);
+    const visible = profiles.filter((p) => !hiddenSet.has(p.name));
+    const sorted = [...visible].sort((a, b) => {
       const rank = (n: string) => (n === "mika" ? 0 : n === "default" ? 1 : 2);
       const diff = rank(a.name) - rank(b.name);
       if (diff !== 0) return diff;
@@ -181,7 +187,7 @@ export const BotsView: React.FC<BotsViewProps> = ({
         (p.description || "").toLowerCase().includes(q)
       );
     });
-  }, [profiles, query]);
+  }, [profiles, hiddenProfiles, query]);
 
   async function openManageSheet(profile: HermesProfile) {
     setManageProfile(profile);
@@ -347,6 +353,15 @@ export const BotsView: React.FC<BotsViewProps> = ({
             onClearImage={() => void handleClearAvatar()}
             onSave={handleSaveBotDetails}
             onRequestDelete={() => setConfirmDeleteBot(manageProfile)}
+            onRequestHide={
+              onToggleHideProfile
+                ? () => {
+                    onToggleHideProfile(manageProfile.name);
+                    if (selectedBotName === manageProfile.name) onSelectBot(null);
+                    setManageProfile(null);
+                  }
+                : undefined
+            }
             onClose={() => setManageProfile(null)}
           />
         )}
@@ -593,6 +608,14 @@ export const BotsView: React.FC<BotsViewProps> = ({
           onClearImage={() => void handleClearAvatar()}
           onSave={handleSaveBotDetails}
           onRequestDelete={() => setConfirmDeleteBot(manageProfile)}
+          onRequestHide={
+            onToggleHideProfile
+              ? () => {
+                  onToggleHideProfile(manageProfile.name);
+                  setManageProfile(null);
+                }
+              : undefined
+          }
           onClose={() => setManageProfile(null)}
         />
       )}
@@ -629,6 +652,7 @@ interface BotManageSheetProps {
   onClearImage: () => void;
   onSave: (e: React.FormEvent) => void;
   onRequestDelete: () => void;
+  onRequestHide?: () => void;
   onClose: () => void;
 }
 
@@ -647,6 +671,7 @@ const BotManageSheet: React.FC<BotManageSheetProps> = ({
   onClearImage,
   onSave,
   onRequestDelete,
+  onRequestHide,
   onClose,
 }) => {
   const vis = getBotVisual(profile);
@@ -744,18 +769,34 @@ const BotManageSheet: React.FC<BotManageSheetProps> = ({
         </button>
       </form>
 
-      {!profile.is_default && (
-        <div style={{ marginTop: 16, paddingTop: 14, borderTop: "1px solid var(--border-subtle)" }}>
+      <div style={{ marginTop: 16, paddingTop: 14, borderTop: "1px solid var(--border-subtle)", display: "flex", flexDirection: "column", gap: 8 }}>
+        {!profile.is_default ? (
           <button
             type="button"
             className="btn danger full"
             disabled={saving}
             onClick={onRequestDelete}
           >
-            <Trash2 size={15} /> Bot aus Hermes entfernen
+            <Trash2 size={15} /> Bot dauerhaft aus Hermes löschen
           </button>
-        </div>
-      )}
+        ) : (
+          onRequestHide && (
+            <>
+              <button
+                type="button"
+                className="btn danger full"
+                disabled={saving}
+                onClick={onRequestHide}
+              >
+                Aus meiner Bot-Liste ausblenden
+              </button>
+              <span style={{ fontSize: "0.75rem", color: "var(--text-muted)", textAlign: "center" }}>
+                Hinweis: Das System-Basisprofil „default“ trägt den Hermes-Gateway und kann nicht gelöscht, aber jederzeit ausgeblendet werden.
+              </span>
+            </>
+          )
+        )}
+      </div>
     </Sheet>
   );
 };
