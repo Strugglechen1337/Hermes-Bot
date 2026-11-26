@@ -5,6 +5,8 @@ import {
   Camera,
   Check,
   ChevronLeft,
+  Cpu,
+  Download,
   FileText,
   History,
   Image as ImageIcon,
@@ -42,19 +44,23 @@ import {
   createProfile,
   deleteProfile,
   deleteSession,
+  fetchModelOptions,
   fetchProfileSoul,
   fetchSessionMessages,
   fetchSessions,
   normalizeMessages,
   prepareChatImageDataUrl,
   updateProfileDescription,
+  updateProfileModel,
   updateProfileSoul,
   uploadChatFile,
 } from "../lib/hermesApi";
 import { hermesWs, type WsConnectionState } from "../lib/hermesWs";
 import { BotAvatar } from "./BotAvatar";
+import { BotImportSheet } from "./BotImportSheet";
 import { ConfirmSheet } from "./ConfirmSheet";
 import { InChatConnectionCard } from "./InChatConnectionCard";
+import { ModelPickerSheet } from "./ModelPickerSheet";
 import { SafeMarkdown } from "./SafeMarkdown";
 import { Sheet } from "./Sheet";
 
@@ -105,8 +111,9 @@ export const BotsView: React.FC<BotsViewProps> = ({
   const [query, setQuery] = useState("");
   const [recentByProfile, setRecentByProfile] = useState<Record<string, HermesSessionSummary>>({});
 
-  // Create Bot Sheet
+  // Create Bot & Import Sheets
   const [showCreateSheet, setShowCreateSheet] = useState(false);
+  const [showImportSheet, setShowImportSheet] = useState(false);
   const [createName, setCreateName] = useState("");
   const [createDesc, setCreateDesc] = useState("");
   const [createSoul, setCreateSoul] = useState("");
@@ -114,6 +121,9 @@ export const BotsView: React.FC<BotsViewProps> = ({
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const createFileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Model Picker Sheet (for BotManageSheet)
+  const [modelPickerProfile, setModelPickerProfile] = useState<HermesProfile | null>(null);
 
   // Manage / Edit Bot Sheet
   const [manageProfile, setManageProfile] = useState<HermesProfile | null>(null);
@@ -329,6 +339,7 @@ export const BotsView: React.FC<BotsViewProps> = ({
           onBack={() => onSelectBot(null)}
           onOpenBotSettings={() => void openManageSheet(selectedProfile)}
           onOpenConnectors={onOpenConnectors}
+          onRefreshProfiles={onRefreshProfiles}
         />
         <input
           ref={editFileInputRef}
@@ -351,6 +362,11 @@ export const BotsView: React.FC<BotsViewProps> = ({
             onChangeSoul={setEditSoul}
             onPickImage={() => editFileInputRef.current?.click()}
             onClearImage={() => void handleClearAvatar()}
+            onOpenModelPicker={() => {
+              const target = manageProfile;
+              setManageProfile(null);
+              setModelPickerProfile(target);
+            }}
             onSave={handleSaveBotDetails}
             onRequestDelete={() => setConfirmDeleteBot(manageProfile)}
             onRequestHide={
@@ -376,6 +392,17 @@ export const BotsView: React.FC<BotsViewProps> = ({
           onCancel={() => setConfirmDeleteBot(null)}
           onConfirm={() => void handleConfirmDeleteBot()}
         />
+        {modelPickerProfile && (
+          <ModelPickerSheet
+            open
+            profileName={modelPickerProfile.name}
+            botLabel={getBotVisual(modelPickerProfile).label}
+            currentProvider={modelPickerProfile.provider}
+            currentModel={modelPickerProfile.model}
+            onSwitched={() => void onRefreshProfiles()}
+            onClose={() => setModelPickerProfile(null)}
+          />
+        )}
       </>
     );
   }
@@ -501,7 +528,7 @@ export const BotsView: React.FC<BotsViewProps> = ({
         }}
       >
         <div className="sheet-header">
-          <h2 className="sheet-title">Neuer Bot</h2>
+          <h2 className="sheet-title">Bot hinzufügen</h2>
           <button
             type="button"
             className="icon-btn ghost"
@@ -512,6 +539,20 @@ export const BotsView: React.FC<BotsViewProps> = ({
             <X size={20} />
           </button>
         </div>
+
+        <button
+          type="button"
+          className="btn full"
+          style={{ marginBottom: 16, borderColor: "rgba(245, 158, 11, 0.4)" }}
+          disabled={creating}
+          onClick={() => {
+            setShowCreateSheet(false);
+            setShowImportSheet(true);
+          }}
+        >
+          <Download size={16} style={{ color: "var(--accent-send)" }} />
+          Aus Grok Bot importieren…
+        </button>
 
         <form onSubmit={handleCreateBot}>
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, marginBottom: 16 }}>
@@ -606,6 +647,11 @@ export const BotsView: React.FC<BotsViewProps> = ({
           onChangeSoul={setEditSoul}
           onPickImage={() => editFileInputRef.current?.click()}
           onClearImage={() => void handleClearAvatar()}
+          onOpenModelPicker={() => {
+            const target = manageProfile;
+            setManageProfile(null);
+            setModelPickerProfile(target);
+          }}
           onSave={handleSaveBotDetails}
           onRequestDelete={() => setConfirmDeleteBot(manageProfile)}
           onRequestHide={
@@ -617,6 +663,29 @@ export const BotsView: React.FC<BotsViewProps> = ({
               : undefined
           }
           onClose={() => setManageProfile(null)}
+        />
+      )}
+
+      <BotImportSheet
+        open={showImportSheet}
+        wsState={wsState}
+        onClose={() => setShowImportSheet(false)}
+        onImported={async (name, avatarData) => {
+          if (avatarData) onAvatarChange(name, avatarData);
+          await onRefreshProfiles();
+          onSelectBot(name);
+        }}
+      />
+
+      {modelPickerProfile && (
+        <ModelPickerSheet
+          open
+          profileName={modelPickerProfile.name}
+          botLabel={getBotVisual(modelPickerProfile).label}
+          currentProvider={modelPickerProfile.provider}
+          currentModel={modelPickerProfile.model}
+          onSwitched={() => void onRefreshProfiles()}
+          onClose={() => setModelPickerProfile(null)}
         />
       )}
 
@@ -650,6 +719,7 @@ interface BotManageSheetProps {
   onChangeSoul: (val: string) => void;
   onPickImage: () => void;
   onClearImage: () => void;
+  onOpenModelPicker: () => void;
   onSave: (e: React.FormEvent) => void;
   onRequestDelete: () => void;
   onRequestHide?: () => void;
@@ -669,6 +739,7 @@ const BotManageSheet: React.FC<BotManageSheetProps> = ({
   onChangeSoul,
   onPickImage,
   onClearImage,
+  onOpenModelPicker,
   onSave,
   onRequestDelete,
   onRequestHide,
@@ -728,9 +799,16 @@ const BotManageSheet: React.FC<BotManageSheetProps> = ({
             </button>
           )}
         </div>
-        {profile.model && (
-          <span className="mini-tag">Modell: {profile.model} · Profil: {profile.name}</span>
-        )}
+        <button
+          type="button"
+          className="btn sm"
+          disabled={saving}
+          onClick={onOpenModelPicker}
+        >
+          <Cpu size={14} />
+          {profile.provider ? `${profile.provider} / ` : ""}
+          {profile.model || "Modell & Anbieter wählen"}
+        </button>
       </div>
 
       <form onSubmit={onSave}>
@@ -810,6 +888,7 @@ interface DirectChatViewProps {
   onBack: () => void;
   onOpenBotSettings: () => void;
   onOpenConnectors?: () => void;
+  onRefreshProfiles: () => Promise<void> | void;
 }
 
 interface QueuedAttachment {
@@ -826,6 +905,7 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
   onBack,
   onOpenBotSettings,
   onOpenConnectors,
+  onRefreshProfiles,
 }) => {
   const visual = getBotVisual(profile);
 
@@ -846,6 +926,16 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
   const [pendingConnection, setPendingConnection] = useState<HermesConnectionRequest | null>(null);
   const [pendingClarify, setPendingClarify] = useState<HermesServerRequest | null>(null);
   const [clarifyCustomAnswer, setClarifyCustomAnswer] = useState("");
+
+  const [activeModelOverride, setActiveModelOverride] = useState<{
+    provider: string;
+    model: string;
+  } | null>(null);
+  const [modelPickerState, setModelPickerState] = useState<{
+    open: boolean;
+    search: string;
+    provider: string;
+  }>({ open: false, search: "", provider: "" });
 
   const [showSessionsSheet, setShowSessionsSheet] = useState(false);
   const [showActionsSheet, setShowActionsSheet] = useState(false);
@@ -1179,10 +1269,123 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
     });
   }
 
+  function appendSystemNotice(text: string) {
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: `sys-${Date.now()}`,
+        role: "system",
+        content: text,
+        timestamp: Date.now(),
+      },
+    ]);
+    scrollToBottom();
+  }
+
+  async function tryHandleSlashCommand(rawText: string): Promise<boolean> {
+    if (!rawText.startsWith("/")) return false;
+    const [cmdRaw, ...rest] = rawText.trim().split(/\s+/);
+    const cmd = cmdRaw.toLowerCase();
+    const arg = rest.join(" ").trim();
+
+    if (cmd === "/new" || cmd === "/neu") {
+      await startNewChat();
+      return true;
+    }
+
+    if (cmd === "/help" || cmd === "/hilfe") {
+      appendSystemNotice(
+        "Chat-Befehle: /model (Auswahl öffnen) · /model <Name> (direkt wechseln) · /provider <Anbieter> · /new (neuer Chat)"
+      );
+      return true;
+    }
+
+    if (cmd === "/provider" || cmd === "/anbieter") {
+      setModelPickerState({ open: true, search: "", provider: arg });
+      return true;
+    }
+
+    if (cmd === "/model" || cmd === "/modell") {
+      if (!arg) {
+        setModelPickerState({ open: true, search: "", provider: "" });
+        return true;
+      }
+
+      // Support explicit provider/model syntax or fuzzy search across configured Hermes providers
+      try {
+        const options = await fetchModelOptions(profile.name, false);
+        const providers = options.providers || [];
+
+        if (arg.includes("/")) {
+          const [provRaw, ...modelParts] = arg.split("/");
+          const modelQuery = modelParts.join("/").trim();
+          const matchedProv = providers.find(
+            (p) =>
+              p.slug.toLowerCase() === provRaw.toLowerCase() ||
+              p.name.toLowerCase() === provRaw.toLowerCase()
+          );
+          if (matchedProv && modelQuery) {
+            const exactModel =
+              matchedProv.models.find((m) => m.toLowerCase() === modelQuery.toLowerCase()) ||
+              modelQuery;
+            const res = await updateProfileModel(profile.name, matchedProv.slug, exactModel);
+            setActiveModelOverride({ provider: res.provider, model: res.model });
+            appendSystemNotice(`Modell gewechselt: ${res.provider} / ${res.model}`);
+            void onRefreshProfiles();
+            return true;
+          }
+        }
+
+        const q = arg.toLowerCase();
+        const matches: Array<{ provider: string; model: string }> = [];
+        for (const p of providers) {
+          for (const m of p.models || []) {
+            if (m.toLowerCase() === q) {
+              matches.unshift({ provider: p.slug, model: m });
+            } else if (m.toLowerCase().includes(q)) {
+              matches.push({ provider: p.slug, model: m });
+            }
+          }
+        }
+
+        const exact = matches.find((m) => m.model.toLowerCase() === q);
+        if (exact || matches.length === 1) {
+          const target = exact || matches[0];
+          const res = await updateProfileModel(profile.name, target.provider, target.model);
+          setActiveModelOverride({ provider: res.provider, model: res.model });
+          appendSystemNotice(`Modell gewechselt: ${res.provider} / ${res.model}`);
+          void onRefreshProfiles();
+          return true;
+        }
+
+        // Multiple or no exact match: open picker pre-filtered so the user picks with one tap
+        setModelPickerState({ open: true, search: arg, provider: "" });
+        return true;
+      } catch (err) {
+        setChatError(
+          err instanceof Error ? err.message : "Modellwechsel fehlgeschlagen."
+        );
+        return true;
+      }
+    }
+
+    return false;
+  }
+
   async function handleSend() {
     const text = input.trim();
     const pendingFiles = [...attachments];
     if (!text && pendingFiles.length === 0) return;
+
+    // Handle /model, /provider, /new, /help directly in chat
+    if (pendingFiles.length === 0 && text.startsWith("/")) {
+      setInput("");
+      if (textareaRef.current) textareaRef.current.style.height = "auto";
+      const handled = await tryHandleSlashCommand(text);
+      if (handled) return;
+      // Unknown slash command falls through as normal text
+    }
+
     if (wsState !== "connected") {
       setChatError("Keine Live-Verbindung zum Hermes-Gateway. Bitte kurz warten.");
       return;
@@ -1313,6 +1516,7 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
         submission_id: randomClientId("sub"),
         text: combinedText,
         ...(imageAttachments.length > 0 ? { attachments: imageAttachments } : {}),
+        ...(activeModelOverride ? { model_override: activeModelOverride } : {}),
       });
     } catch (err) {
       setUploadingAttachments(false);
@@ -1762,6 +1966,17 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
             className="btn full"
             onClick={() => {
               setShowActionsSheet(false);
+              setModelPickerState({ open: true, search: "", provider: "" });
+            }}
+          >
+            <Cpu size={17} /> Modell &amp; KI-Anbieter (
+            {activeModelOverride?.model || profile.model || "Standard"})
+          </button>
+          <button
+            type="button"
+            className="btn full"
+            onClick={() => {
+              setShowActionsSheet(false);
               void startNewChat();
             }}
           >
@@ -1875,6 +2090,22 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
           </div>
         )}
       </Sheet>
+
+      <ModelPickerSheet
+        open={modelPickerState.open}
+        profileName={profile.name}
+        botLabel={visual.label}
+        currentProvider={activeModelOverride?.provider || profile.provider}
+        currentModel={activeModelOverride?.model || profile.model}
+        initialSearch={modelPickerState.search}
+        initialProvider={modelPickerState.provider}
+        onSwitched={(prov, mod) => {
+          setActiveModelOverride({ provider: prov, model: mod });
+          appendSystemNotice(`Modell gewechselt: ${prov} / ${mod}`);
+          void onRefreshProfiles();
+        }}
+        onClose={() => setModelPickerState((s) => ({ ...s, open: false }))}
+      />
 
       <ConfirmSheet
         open={Boolean(sessionToDelete)}

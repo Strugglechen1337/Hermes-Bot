@@ -27,6 +27,10 @@ const ALLOWED_HTTP_RULES: Array<{ methods: Set<string>; pattern: RegExp }> = [
   { methods: new Set(["GET"]), pattern: /^\/api\/sessions\/[^/]+\/timeline$/ },
   { methods: new Set(["POST"]), pattern: /^\/api\/chat\/file-upload$/ },
 
+  // Models & AI providers
+  { methods: new Set(["GET"]), pattern: /^\/api\/model\/(info|options|recommended-default)$/ },
+  { methods: new Set(["POST"]), pattern: /^\/api\/model\/set$/ },
+
   // Routines (cron)
   { methods: new Set(["GET", "POST"]), pattern: /^\/api\/cron\/jobs$/ },
   { methods: new Set(["GET"]), pattern: /^\/api\/cron\/delivery-targets$/ },

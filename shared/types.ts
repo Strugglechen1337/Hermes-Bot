@@ -335,6 +335,24 @@ export interface HermesMcpCatalogEntry {
   [k: string]: unknown;
 }
 
+export interface HermesModelOptionProvider {
+  slug: string;
+  name: string;
+  models: string[];
+  featured_models?: string[] | null;
+  total_models?: number | null;
+  is_current?: boolean | null;
+  authenticated?: boolean | null;
+  warning?: string | null;
+  unavailable_models?: string[] | null;
+}
+
+export interface HermesModelOptionsResponse {
+  providers: HermesModelOptionProvider[];
+  model: string;
+  provider: string;
+}
+
 export interface JsonRpcRequest {
   jsonrpc: "2.0";
   id: string | number;

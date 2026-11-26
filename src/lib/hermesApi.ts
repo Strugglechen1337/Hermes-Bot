@@ -6,6 +6,7 @@ import type {
   HermesMcpCatalogEntry,
   HermesMcpServer,
   HermesMessagingPlatform,
+  HermesModelOptionsResponse,
   HermesProfile,
   HermesSessionSummary,
   HermesStatusResponse,
@@ -138,6 +139,31 @@ export async function updateProfileDescription(name: string, description: string
     method: "PUT",
     body: JSON.stringify({ description }),
   });
+}
+
+export async function fetchModelOptions(
+  profile?: string,
+  refresh = false
+): Promise<HermesModelOptionsResponse> {
+  const params = new URLSearchParams();
+  if (profile) params.set("profile", profile);
+  if (refresh) params.set("refresh", "true");
+  const query = params.toString() ? `?${params.toString()}` : "";
+  return requestJson<HermesModelOptionsResponse>(`/api/model/options${query}`);
+}
+
+export async function updateProfileModel(
+  profileName: string,
+  provider: string,
+  model: string
+): Promise<{ ok: boolean; provider: string; model: string }> {
+  return requestJson<{ ok: boolean; provider: string; model: string }>(
+    `/api/profiles/${encodeURIComponent(profileName)}/model`,
+    {
+      method: "PUT",
+      body: JSON.stringify({ provider, model }),
+    }
+  );
 }
 
 export async function fetchSessions(profile?: string, limit = 40): Promise<HermesSessionSummary[]> {
