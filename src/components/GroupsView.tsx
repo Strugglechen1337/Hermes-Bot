@@ -1,12 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
-  ArrowLeft,
   ArrowUp,
+  ChevronLeft,
   ChevronRight,
+  MoreHorizontal,
   Plus,
   RefreshCw,
-  SlidersHorizontal,
   Square,
   Trash2,
   Users,
@@ -613,37 +613,33 @@ const GroupRoomView: React.FC<GroupRoomViewProps> = ({
 
   return (
     <div className="chat-screen">
-      <header className="topbar">
-        <div className="topbar-title-group">
-          <button
-            type="button"
-            className="icon-btn ghost"
-            aria-label="Zurück zu Gruppen"
-            onClick={onBack}
-            style={{ marginLeft: -6 }}
-          >
-            <ArrowLeft size={21} />
-          </button>
-          <div style={{ minWidth: 0 }}>
-            <h1 className="topbar-title">{room.name}</h1>
-            <div className="topbar-subtitle">
-              {room.members
-                .map((m) => m.display_name || m.profile || m.member_id)
-                .join(", ")}
-            </div>
-          </div>
-        </div>
+      <header className="chat-floating-header">
+        <button
+          type="button"
+          className="glass-circle-btn"
+          aria-label="Zurück zu Gruppen"
+          onClick={onBack}
+        >
+          <ChevronLeft size={22} />
+        </button>
 
-        <div className="topbar-actions">
-          <button
-            type="button"
-            className="icon-btn"
-            aria-label="Gruppenkontext bearbeiten"
-            onClick={() => setShowContextSheet(true)}
-          >
-            <SlidersHorizontal size={17} />
-          </button>
-        </div>
+        <button
+          type="button"
+          className="glass-title-pill"
+          onClick={() => setShowContextSheet(true)}
+        >
+          <Users size={16} />
+          <span className="glass-title-pill-label">{room.name}</span>
+        </button>
+
+        <button
+          type="button"
+          className="glass-circle-btn"
+          aria-label="Gruppenkontext bearbeiten"
+          onClick={() => setShowContextSheet(true)}
+        >
+          <MoreHorizontal size={20} />
+        </button>
       </header>
 
       <div ref={scrollRef} className="chat-messages">

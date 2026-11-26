@@ -1,10 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
-  ArrowLeft,
   ArrowUp,
   Camera,
   Check,
+  ChevronLeft,
   History,
   MessageSquarePlus,
   MoreHorizontal,
@@ -12,6 +12,7 @@ import {
   Plus,
   RefreshCw,
   Search,
+  Settings2,
   ShieldAlert,
   Square,
   Trash2,
@@ -28,7 +29,12 @@ import type {
 } from "../../shared/types";
 import { clearBotAvatar, prepareAvatarDataUrl, saveBotAvatar } from "../lib/avatarStore";
 import { getBotVisual } from "../lib/botTheme";
-import { formatRelativeTime, formatShortTime, randomClientId } from "../lib/format";
+import {
+  formatChatDividerTime,
+  formatRelativeTime,
+  randomClientId,
+  toTimestampMs,
+} from "../lib/format";
 import {
   createProfile,
   deleteProfile,
@@ -796,6 +802,7 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
   const [clarifyCustomAnswer, setClarifyCustomAnswer] = useState("");
 
   const [showSessionsSheet, setShowSessionsSheet] = useState(false);
+  const [showActionsSheet, setShowActionsSheet] = useState(false);
   const [sessionToDelete, setSessionToDelete] = useState<HermesSessionSummary | null>(null);
   const [deletingSession, setDeletingSession] = useState(false);
 
@@ -1258,70 +1265,33 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
 
   return (
     <div className="chat-screen">
-      <header className="topbar">
-        <div className="topbar-title-group">
-          <button
-            type="button"
-            className="icon-btn ghost"
-            aria-label="Zurück zu Bots"
-            onClick={onBack}
-            style={{ marginLeft: -6 }}
-          >
-            <ArrowLeft size={21} />
-          </button>
-          <button
-            type="button"
-            style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0, textAlign: "left" }}
-            onClick={onOpenBotSettings}
-          >
-            <BotAvatar visual={visual} imageUrl={avatarUrl} size="sm" />
-            <div style={{ minWidth: 0 }}>
-              <h1 className="topbar-title">{visual.label}</h1>
-              <div className="topbar-subtitle">
-                {isStreaming
-                  ? activeTool
-                    ? `Nutzt ${activeTool}…`
-                    : "schreibt…"
-                  : activeTitle}
-              </div>
-            </div>
-          </button>
-        </div>
+      <header className="chat-floating-header">
+        <button
+          type="button"
+          className="glass-circle-btn"
+          aria-label="Zurück zu Bots"
+          onClick={onBack}
+        >
+          <ChevronLeft size={22} />
+        </button>
 
-        <div className="topbar-actions">
-          {onOpenConnectors && (
-            <button
-              type="button"
-              className="icon-btn ghost"
-              aria-label="Connectoren"
-              title="Connectoren"
-              onClick={onOpenConnectors}
-            >
-              <Plug size={17} />
-            </button>
-          )}
-          <button
-            type="button"
-            className="icon-btn ghost"
-            aria-label="Chats wechseln"
-            title="Chats wechseln"
-            onClick={() => {
-              void refreshSessionsList(false);
-              setShowSessionsSheet(true);
-            }}
-          >
-            <History size={18} />
-          </button>
-          <button
-            type="button"
-            className="icon-btn ghost"
-            aria-label="Neuer Chat"
-            title="Neuer Chat"
-            onClick={() => void startNewChat()}
-          >
-            <MessageSquarePlus size={18} />
-          </button>
-        </div>
+        <button
+          type="button"
+          className="glass-title-pill"
+          onClick={onOpenBotSettings}
+        >
+          <BotAvatar visual={visual} imageUrl={avatarUrl} size="sm" />
+          <span className="glass-title-pill-label">{visual.label}</span>
+        </button>
+
+        <button
+          type="button"
+          className="glass-circle-btn"
+          aria-label="Chat-Optionen"
+          onClick={() => setShowActionsSheet(true)}
+        >
+          <MoreHorizontal size={20} />
+        </button>
       </header>
 
       <div ref={scrollRef} className="chat-messages">
@@ -1342,11 +1312,11 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
         )}
 
         {loadingChat ? (
-          <div className="empty-state">
+          <div className="empty-state" style={{ background: "transparent", border: "none" }}>
             <p>Lade Verlauf…</p>
           </div>
         ) : messages.length === 0 ? (
-          <div className="empty-state" style={{ marginTop: 24, background: "transparent", border: "none" }}>
+          <div className="empty-state" style={{ marginTop: 32, background: "transparent", border: "none" }}>
             <div style={{ display: "flex", justifyContent: "center", marginBottom: 14 }}>
               <BotAvatar visual={visual} imageUrl={avatarUrl} size="lg" />
             </div>
@@ -1354,42 +1324,53 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
             <p>{profile.description || `Schreibe eine Nachricht an ${visual.label}.`}</p>
           </div>
         ) : (
-          messages.map((msg, i) => (
-            <div key={String(msg.id ?? i)} className={`msg-row ${msg.role}`}>
-              {msg.role === "assistant" && msg.streaming && (
-                <div className="msg-author">
-                  <span className="pulse-dot" />
-                  <span>{visual.label} schreibt…</span>
+          messages.map((msg, i) => {
+            const curMs = toTimestampMs(msg.timestamp);
+            const prevMs = i > 0 ? toTimestampMs(messages[i - 1].timestamp) : null;
+            const showDivider =
+              curMs !== null && (prevMs === null || curMs - prevMs > 10 * 60 * 1000);
+
+            return (
+              <React.Fragment key={String(msg.id ?? i)}>
+                {showDivider && (
+                  <div className="chat-time-divider">
+                    {formatChatDividerTime(msg.timestamp)}
+                  </div>
+                )}
+                <div className={`msg-row ${msg.role}`}>
+                  {msg.role === "assistant" && msg.streaming && (
+                    <div className="msg-author">
+                      <span className="pulse-dot" />
+                      <span>{visual.label} schreibt…</span>
+                    </div>
+                  )}
+                  <div className="msg-bubble">
+                    {msg.reasoning && (
+                      <details className="reasoning-box">
+                        <summary>Gedankengang</summary>
+                        <pre>{msg.reasoning}</pre>
+                      </details>
+                    )}
+                    {msg.role === "tool" ? (
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.8rem", color: "var(--text-secondary)" }}>
+                        <Wrench size={13} />
+                        <span>{msg.tool_name || "Werkzeug"}</span>
+                      </div>
+                    ) : msg.content ? (
+                      <SafeMarkdown text={msg.content} />
+                    ) : msg.streaming ? (
+                      <span style={{ color: "var(--text-muted)" }}>…</span>
+                    ) : null}
+                    {msg.error && (
+                      <div style={{ marginTop: 8, color: "var(--status-err)", fontSize: "0.82rem" }}>
+                        Fehler: {msg.error}
+                      </div>
+                    )}
+                  </div>
                 </div>
-              )}
-              <div className="msg-bubble">
-                {msg.reasoning && (
-                  <details className="reasoning-box">
-                    <summary>Gedankengang</summary>
-                    <pre>{msg.reasoning}</pre>
-                  </details>
-                )}
-                {msg.role === "tool" ? (
-                  <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.8rem", color: "var(--text-secondary)" }}>
-                    <Wrench size={13} />
-                    <span>{msg.tool_name || "Werkzeug"}</span>
-                  </div>
-                ) : msg.content ? (
-                  <SafeMarkdown text={msg.content} />
-                ) : msg.streaming ? (
-                  <span style={{ color: "var(--text-muted)" }}>…</span>
-                ) : null}
-                {msg.error && (
-                  <div style={{ marginTop: 8, color: "var(--status-err)", fontSize: "0.82rem" }}>
-                    Fehler: {msg.error}
-                  </div>
-                )}
-              </div>
-              {msg.timestamp && (
-                <div className="msg-time">{formatShortTime(msg.timestamp)}</div>
-              )}
-            </div>
-          ))
+              </React.Fragment>
+            );
+          })
         )}
 
         {(activeTool || liveStatus) && (
@@ -1482,6 +1463,14 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
 
       <div className="composer-wrap">
         <div className="composer-box">
+          <button
+            type="button"
+            className="composer-plus-btn"
+            aria-label="Aktionen"
+            onClick={() => setShowActionsSheet(true)}
+          >
+            <Plus size={19} />
+          </button>
           <textarea
             ref={textareaRef}
             className="composer-input"
@@ -1498,7 +1487,7 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
                 if (!isStreaming) void handleSend();
               }
             }}
-            placeholder={`Frag ${visual.label}…`}
+            placeholder={`${visual.label} fragen`}
           />
           {isStreaming ? (
             <button
@@ -1517,11 +1506,82 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
               disabled={!input.trim() || wsState !== "connected"}
               onClick={() => void handleSend()}
             >
-              <ArrowUp size={19} />
+              <ArrowUp size={18} strokeWidth={2.5} />
             </button>
           )}
         </div>
       </div>
+
+      {showActionsSheet && (
+        <div
+          className="sheet-backdrop"
+          role="dialog"
+          aria-modal="true"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowActionsSheet(false);
+          }}
+        >
+          <div className="sheet">
+            <div className="sheet-header">
+              <h2 className="sheet-title">{visual.label}</h2>
+              <button
+                type="button"
+                className="icon-btn ghost"
+                aria-label="Schließen"
+                onClick={() => setShowActionsSheet(false)}
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="card-stack">
+              <button
+                type="button"
+                className="btn full"
+                onClick={() => {
+                  setShowActionsSheet(false);
+                  void startNewChat();
+                }}
+              >
+                <MessageSquarePlus size={17} /> Neuen Chat starten
+              </button>
+              <button
+                type="button"
+                className="btn full"
+                onClick={() => {
+                  setShowActionsSheet(false);
+                  void refreshSessionsList(false);
+                  setShowSessionsSheet(true);
+                }}
+              >
+                <History size={17} /> Chat-Verlauf ({sessions.length})
+              </button>
+              {onOpenConnectors && (
+                <button
+                  type="button"
+                  className="btn full"
+                  onClick={() => {
+                    setShowActionsSheet(false);
+                    onOpenConnectors();
+                  }}
+                >
+                  <Plug size={17} /> Connectoren &amp; E-Mail
+                </button>
+              )}
+              <button
+                type="button"
+                className="btn full"
+                onClick={() => {
+                  setShowActionsSheet(false);
+                  onOpenBotSettings();
+                }}
+              >
+                <Settings2 size={17} /> Bot &amp; Profilbild bearbeiten
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showSessionsSheet && (
         <div
