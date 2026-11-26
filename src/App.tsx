@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Bell,
   BellOff,
@@ -18,9 +18,13 @@ import {
 } from "lucide-react";
 import type {
   HermesAuthUser,
+  HermesChatMessage,
   HermesProfile,
+  HermesRoom,
+  HermesSessionSummary,
   HermesStatusResponse,
 } from "../shared/types";
+import { BotAvatar } from "./components/BotAvatar";
 import { BotsView } from "./components/BotsView";
 import { ConnectorsView } from "./components/ConnectorsView";
 import { CredentialVaultSheet } from "./components/CredentialVaultSheet";
@@ -31,9 +35,13 @@ import { RoutinesView } from "./components/RoutinesView";
 import { Sheet } from "./components/Sheet";
 import { loadAutoApproveSafe, saveAutoApproveSafe } from "./lib/approvalPolicy";
 import { fetchBotAvatar } from "./lib/avatarStore";
+import { getBotVisual } from "./lib/botTheme";
+import { toTimestampMs } from "./lib/format";
 import {
   fetchCurrentUser,
   fetchProfiles,
+  fetchSessionMessages,
+  fetchSessions,
   fetchStatus,
   logout,
   updateProfilePrivacy,
@@ -52,6 +60,24 @@ import {
   sendTestPushNotification,
   type PushStatusInfo,
 } from "./lib/pushClient";
+import {
+  buildReadCursorFromSession,
+  detectGroupUnread,
+  detectUnreadAssistantMessages,
+  extractSessionMetrics,
+  formatBadgeCount,
+  formatUnreadPreview,
+  hasSessionNewActivity,
+  loadBotReadCursors,
+  loadGroupReadCursors,
+  pickSessionForUnreadCheck,
+  saveBotReadCursors,
+  saveGroupReadCursors,
+  type BotReadCursor,
+  type BotUnreadInfo,
+  type GroupReadCursor,
+  type GroupUnreadInfo,
+} from "./lib/unreadStore";
 import { useVisualViewport } from "./lib/useVisualViewport";
 
 type TabKey = "bots" | "groups" | "routines" | "connectors";
@@ -107,7 +133,213 @@ export const App: React.FC = () => {
   const [pushFeedback, setPushFeedback] = useState<string | null>(null);
   const [autoApproveSafe, setAutoApproveSafe] = useState<boolean>(() => loadAutoApproveSafe());
 
-  // Open specific bot when launched or tapped from a Push Notification
+  // Live unread / new-bot-message tracking across all bots and groups
+  const [recentByProfile, setRecentByProfile] = useState<Record<string, HermesSessionSummary>>({});
+  const [unreadByBot, setUnreadByBot] = useState<Record<string, BotUnreadInfo>>({});
+  const [unreadByGroup, setUnreadByGroup] = useState<Record<string, GroupUnreadInfo>>({});
+  const [newMsgToast, setNewMsgToast] = useState<{
+    id: number;
+    botName: string;
+    botLabel: string;
+    preview: string;
+  } | null>(null);
+
+  const botReadCursorsRef = useRef<Record<string, BotReadCursor>>(loadBotReadCursors());
+  const groupReadCursorsRef = useRef<Record<string, GroupReadCursor>>(loadGroupReadCursors());
+  const sessionToProfileRef = useRef<Map<string, string>>(new Map());
+  const pollInitializedRef = useRef(false);
+  const toastTimerRef = useRef<number | null>(null);
+
+  const tabRef = useRef<TabKey>(tab);
+  const selectedBotNameRef = useRef<string | null>(selectedBotName);
+  const selectedRoomIdRef = useRef<string | null>(selectedRoomId);
+  const profilesRef = useRef<HermesProfile[]>(profiles);
+  const hiddenProfilesRef = useRef<string[]>(hiddenProfiles);
+
+  tabRef.current = tab;
+  selectedBotNameRef.current = selectedBotName;
+  selectedRoomIdRef.current = selectedRoomId;
+  profilesRef.current = profiles;
+  hiddenProfilesRef.current = hiddenProfiles;
+
+  const dismissNewMsgToast = useCallback(() => {
+    if (toastTimerRef.current !== null) {
+      window.clearTimeout(toastTimerRef.current);
+      toastTimerRef.current = null;
+    }
+    setNewMsgToast(null);
+  }, []);
+
+  const showNewMsgToast = useCallback(
+    (botName: string, preview: string) => {
+      const prof = profilesRef.current.find((p) => p.name === botName);
+      if (!prof) return;
+      if (isProfilePrivate(prof, loadLocalPrivateProfiles())) return;
+      if (hiddenProfilesRef.current.includes(botName)) return;
+      const label = getBotVisual(prof).label;
+      if (toastTimerRef.current !== null) {
+        window.clearTimeout(toastTimerRef.current);
+      }
+      setNewMsgToast({
+        id: Date.now(),
+        botName,
+        botLabel: label,
+        preview: formatUnreadPreview(preview, 96),
+      });
+      toastTimerRef.current = window.setTimeout(() => {
+        setNewMsgToast(null);
+        toastTimerRef.current = null;
+      }, 5500);
+    },
+    []
+  );
+
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current !== null) {
+        window.clearTimeout(toastTimerRef.current);
+      }
+    };
+  }, []);
+
+  const registerBotSession = useCallback((profileName: string, sessionId: string | null) => {
+    if (profileName && sessionId) {
+      sessionToProfileRef.current.set(sessionId, profileName);
+    }
+  }, []);
+
+  const markBotRead = useCallback(
+    (
+      profileName: string,
+      info?: {
+        sessionId?: string | null;
+        lastActiveMs?: number;
+        messageCount?: number;
+        messages?: HermesChatMessage[];
+      }
+    ) => {
+      if (!profileName) return;
+      if (info?.sessionId) {
+        sessionToProfileRef.current.set(info.sessionId, profileName);
+      }
+      setUnreadByBot((prev) => {
+        if (!prev[profileName]) return prev;
+        const next = { ...prev };
+        delete next[profileName];
+        return next;
+      });
+      setNewMsgToast((cur) => (cur && cur.botName === profileName ? null : cur));
+
+      const existing = botReadCursorsRef.current[profileName];
+      const recent = recentByProfile[profileName];
+      const recentMetrics = recent ? extractSessionMetrics(recent) : null;
+      let latestMs = Math.max(
+        existing?.lastActiveMs ?? 0,
+        recentMetrics?.lastActiveMs ?? 0,
+        info?.lastActiveMs ?? 0
+      );
+      if (info?.messages && info.messages.length > 0) {
+        for (const m of info.messages) {
+          const ts = toTimestampMs(m.timestamp);
+          if (ts !== null && ts > latestMs) latestMs = ts;
+        }
+      }
+      const msgTurnCount = info?.messages
+        ? info.messages.filter((m) => m.role === "user" || m.role === "assistant").length
+        : 0;
+      const nextSessionId = info?.sessionId || recentMetrics?.sessionId || existing?.sessionId || "";
+      const sameSession = !existing?.sessionId || existing.sessionId === nextSessionId;
+      const nextCount = Math.max(
+        sameSession ? existing?.messageCount ?? 0 : 0,
+        sameSession ? recentMetrics?.messageCount ?? 0 : 0,
+        info?.messageCount ?? 0,
+        msgTurnCount
+      );
+
+      botReadCursorsRef.current = {
+        ...botReadCursorsRef.current,
+        [profileName]: {
+          sessionId: nextSessionId,
+          lastActiveMs: latestMs,
+          messageCount: nextCount,
+          readAtMs: Date.now(),
+        },
+      };
+      saveBotReadCursors(botReadCursorsRef.current);
+    },
+    [recentByProfile]
+  );
+
+  const markGroupRead = useCallback((roomId: string, latestSeq?: number, updatedAtMs?: number) => {
+    if (!roomId) return;
+    setUnreadByGroup((prev) => {
+      if (!prev[roomId]) return prev;
+      const next = { ...prev };
+      delete next[roomId];
+      return next;
+    });
+    const existing = groupReadCursorsRef.current[roomId];
+    const nextSeq = Math.max(existing?.latestSeq ?? 0, latestSeq ?? 0);
+    const nextUpdated = Math.max(existing?.updatedAtMs ?? 0, updatedAtMs ?? Date.now());
+    groupReadCursorsRef.current = {
+      ...groupReadCursorsRef.current,
+      [roomId]: { latestSeq: nextSeq, updatedAtMs: nextUpdated },
+    };
+    saveGroupReadCursors(groupReadCursorsRef.current);
+  }, []);
+
+  const markBotUnread = useCallback(
+    (
+      profileName: string,
+      opts: {
+        preview?: string;
+        timestampMs?: number;
+        sessionId?: string;
+        count?: number;
+        increment?: boolean;
+        source: "ws" | "poll" | "push";
+        allowToast?: boolean;
+      }
+    ) => {
+      if (!profileName) return;
+      const isViewingBot =
+        tabRef.current === "bots" &&
+        selectedBotNameRef.current === profileName &&
+        document.visibilityState === "visible";
+      if (isViewingBot) return;
+
+      const ts = opts.timestampMs ?? Date.now();
+      let shouldToast = false;
+      setUnreadByBot((prev) => {
+        const cur = prev[profileName];
+        const nextCount = opts.increment
+          ? (cur?.count ?? 0) + (opts.count ?? 1)
+          : Math.max(cur?.count ?? 0, opts.count ?? 1);
+        const isNewer = !cur || ts > cur.latestTimestampMs + 500 || nextCount > cur.count;
+        if (opts.allowToast && isNewer) {
+          shouldToast = true;
+        }
+        return {
+          ...prev,
+          [profileName]: {
+            count: Math.max(1, nextCount),
+            latestTimestampMs: Math.max(cur?.latestTimestampMs ?? 0, ts),
+            preview: opts.preview || cur?.preview || "Neue Nachricht",
+            sessionId: opts.sessionId || cur?.sessionId,
+            source: opts.source,
+          },
+        };
+      });
+
+      if (shouldToast) {
+        showNewMsgToast(profileName, opts.preview || "Neue Nachricht");
+      }
+    },
+    [showNewMsgToast]
+  );
+
+  // Open specific bot when launched or tapped from a Push Notification,
+  // or immediately flag unread when Service Worker receives a push for a bot
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const botParam = params.get("bot")?.trim();
@@ -117,15 +349,28 @@ export const App: React.FC = () => {
       window.history.replaceState({}, "", window.location.pathname);
     }
     const onSwMessage = (ev: MessageEvent) => {
-      const data = ev.data as { type?: string; bot?: string } | null;
+      const data = ev.data as {
+        type?: string;
+        bot?: string;
+        body?: string;
+        title?: string;
+      } | null;
       if (data?.type === "hp:open-bot" && data.bot) {
         setTab("bots");
         setSelectedBotName(data.bot);
+      } else if (data?.type === "hp:bot-message" && data.bot) {
+        markBotUnread(data.bot, {
+          preview: data.body || data.title || "Neue Nachricht",
+          timestampMs: Date.now(),
+          increment: true,
+          source: "push",
+          allowToast: document.visibilityState === "visible",
+        });
       }
     };
     navigator.serviceWorker?.addEventListener("message", onSwMessage);
     return () => navigator.serviceWorker?.removeEventListener("message", onSwMessage);
-  }, []);
+  }, [markBotUnread]);
 
   useEffect(() => {
     if (showAccountSheet) {
@@ -221,11 +466,27 @@ export const App: React.FC = () => {
     });
   }, []);
 
-  const handleSelectBot = useCallback((name: string | null) => {
-    setCreateBotTrigger(0);
-    setCreatePrivateMode(false);
-    setSelectedBotName(name);
-  }, []);
+  const handleSelectBot = useCallback(
+    (name: string | null) => {
+      setCreateBotTrigger(0);
+      setCreatePrivateMode(false);
+      setSelectedBotName(name);
+      if (name) {
+        markBotRead(name);
+      }
+    },
+    [markBotRead]
+  );
+
+  const handleSelectRoom = useCallback(
+    (roomId: string | null) => {
+      setSelectedRoomId(roomId);
+      if (roomId) {
+        markGroupRead(roomId);
+      }
+    },
+    [markGroupRead]
+  );
 
   const privateProfiles = useMemo(
     () => profiles.filter((p) => isProfilePrivate(p, localPrivateProfiles)),
@@ -341,6 +602,287 @@ export const App: React.FC = () => {
     });
   }, []);
 
+  // Poll Hermes sessions for all profiles to detect proactive/background bot replies
+  const pollBotSessions = useCallback(
+    async (allowToast: boolean) => {
+      const currentProfiles = profilesRef.current;
+      if (currentProfiles.length === 0) return;
+
+      const privateList = loadLocalPrivateProfiles();
+      const entries = await Promise.all(
+        currentProfiles.map(async (p) => {
+          try {
+            const list = await fetchSessions(p.name, 5);
+            return [p, list] as const;
+          } catch {
+            return [p, null] as const;
+          }
+        })
+      );
+
+      let cursorsDirty = false;
+      const nextRecent: Record<string, HermesSessionSummary> = {};
+
+      for (const [profile, list] of entries) {
+        if (!list) continue;
+        for (const s of list) {
+          if (s.id) sessionToProfileRef.current.set(s.id, profile.name);
+        }
+        const isPriv = isProfilePrivate(profile, privateList);
+        const primary = pickSessionForUnreadCheck(list, isPriv);
+        if (!primary) continue;
+        nextRecent[profile.name] = primary;
+
+        const isViewingNow =
+          tabRef.current === "bots" &&
+          selectedBotNameRef.current === profile.name &&
+          document.visibilityState === "visible";
+
+        const existingCursor = botReadCursorsRef.current[profile.name];
+
+        if (isViewingNow) {
+          const updated = buildReadCursorFromSession(primary);
+          if (updated) {
+            botReadCursorsRef.current[profile.name] = {
+              sessionId: updated.sessionId || existingCursor?.sessionId || "",
+              lastActiveMs: Math.max(existingCursor?.lastActiveMs ?? 0, updated.lastActiveMs),
+              messageCount: Math.max(
+                existingCursor?.sessionId === updated.sessionId ? existingCursor.messageCount : 0,
+                updated.messageCount
+              ),
+              readAtMs: Date.now(),
+            };
+            cursorsDirty = true;
+          }
+          continue;
+        }
+
+        if (!existingCursor) {
+          // First-time baseline seed — avoid false unread badges for existing history
+          const seeded = buildReadCursorFromSession(primary);
+          if (seeded) {
+            botReadCursorsRef.current[profile.name] = seeded;
+            cursorsDirty = true;
+          }
+          continue;
+        }
+
+        if (hasSessionNewActivity(primary, existingCursor)) {
+          try {
+            const msgs = await fetchSessionMessages(primary.id, profile.name);
+            const metrics = extractSessionMetrics(primary);
+            const detected = detectUnreadAssistantMessages(
+              msgs,
+              existingCursor,
+              metrics.lastActiveMs || Date.now(),
+              primary.id
+            );
+            if (detected) {
+              markBotUnread(profile.name, {
+                count: detected.count,
+                preview: detected.preview,
+                timestampMs: detected.latestTimestampMs,
+                sessionId: primary.id,
+                source: "poll",
+                allowToast,
+              });
+            }
+          } catch {
+            // Skip transient fetch errors
+          }
+        }
+      }
+
+      if (Object.keys(nextRecent).length > 0) {
+        setRecentByProfile((prev) => ({ ...prev, ...nextRecent }));
+      }
+      if (cursorsDirty) {
+        saveBotReadCursors(botReadCursorsRef.current);
+      }
+    },
+    [markBotUnread]
+  );
+
+  // Sync group rooms to detect unread bot/group messages
+  const syncGroupUnreads = useCallback(async () => {
+    if (hermesWs.getState() !== "connected") return;
+    try {
+      const listRes = await hermesWs.call<{ rooms?: HermesRoom[] }>("groups.list", {
+        include_disbanded: false,
+        limit: 50,
+      });
+      const rooms = Array.isArray(listRes?.rooms) ? listRes.rooms : [];
+      let cursorsDirty = false;
+      const nextUnread: Record<string, GroupUnreadInfo> = {};
+
+      for (const room of rooms) {
+        const latestSeq = typeof room.latest_seq === "number" ? room.latest_seq : 0;
+        const updatedMs = toTimestampMs(room.updated_at) ?? Date.now();
+        const isOpen =
+          tabRef.current === "groups" &&
+          selectedRoomIdRef.current === room.room_id &&
+          document.visibilityState === "visible";
+
+        const existing = groupReadCursorsRef.current[room.room_id];
+        if (isOpen || !existing) {
+          groupReadCursorsRef.current[room.room_id] = {
+            latestSeq: Math.max(existing?.latestSeq ?? 0, latestSeq),
+            updatedAtMs: Math.max(existing?.updatedAtMs ?? 0, updatedMs),
+          };
+          cursorsDirty = true;
+          continue;
+        }
+
+        const detected = detectGroupUnread(room, existing);
+        if (detected) {
+          nextUnread[room.room_id] = detected;
+        }
+      }
+
+      if (cursorsDirty) {
+        saveGroupReadCursors(groupReadCursorsRef.current);
+      }
+      setUnreadByGroup(nextUnread);
+    } catch {
+      // Optional when groups unavailable
+    }
+  }, []);
+
+  // Poll on profiles load, every 15s while visible, on tab focus, and on WS reconnect
+  useEffect(() => {
+    if (profiles.length === 0) return;
+    const allowToastOnThisRun = pollInitializedRef.current;
+    pollInitializedRef.current = true;
+    void pollBotSessions(allowToastOnThisRun);
+
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === "visible") {
+        void pollBotSessions(true);
+      }
+    }, 15_000);
+
+    const onVisible = () => {
+      if (document.visibilityState === "visible") {
+        void pollBotSessions(true);
+        void syncGroupUnreads();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [pollBotSessions, profiles, syncGroupUnreads]);
+
+  // Global real-time WebSocket event watcher for instant bot & group message indicators
+  useEffect(() => {
+    if (wsState === "connected") {
+      void syncGroupUnreads();
+    }
+  }, [syncGroupUnreads, wsState]);
+
+  useEffect(() => {
+    return hermesWs.onEvent((ev) => {
+      if (ev.type === "groups.changed") {
+        void syncGroupUnreads();
+        return;
+      }
+
+      if (ev.type !== "message.complete" && ev.type !== "approval.requested") {
+        return;
+      }
+
+      const payloadProfile =
+        typeof ev.payload.profile === "string" && ev.payload.profile.trim()
+          ? ev.payload.profile.trim()
+          : undefined;
+      const resolvedProfile =
+        payloadProfile || (ev.sessionId ? sessionToProfileRef.current.get(ev.sessionId) : undefined);
+
+      if (!resolvedProfile) return;
+
+      if (ev.type === "message.complete") {
+        const finalText = typeof ev.payload.text === "string" ? ev.payload.text.trim() : "";
+        if (!finalText) return;
+        const now = Date.now();
+        setRecentByProfile((prev) => {
+          const cur = prev[resolvedProfile];
+          if (!cur) return prev;
+          return {
+            ...prev,
+            [resolvedProfile]: { ...cur, last_active: now },
+          };
+        });
+        markBotUnread(resolvedProfile, {
+          preview: formatUnreadPreview(finalText),
+          timestampMs: now,
+          sessionId: ev.sessionId,
+          increment: true,
+          source: "ws",
+          allowToast: document.visibilityState === "visible",
+        });
+      } else if (ev.type === "approval.requested") {
+        markBotUnread(resolvedProfile, {
+          preview: "Freigabe im Chat erforderlich",
+          timestampMs: Date.now(),
+          sessionId: ev.sessionId,
+          increment: true,
+          source: "ws",
+          allowToast: document.visibilityState === "visible",
+        });
+      }
+    });
+  }, [markBotUnread, syncGroupUnreads]);
+
+  // Public unread totals (strictly excluding private & hidden bots to preserve vault privacy)
+  const publicUnreadBotTotal = useMemo(() => {
+    const privateSet = new Set(privateProfileNames);
+    const hiddenSet = new Set(hiddenProfiles);
+    let total = 0;
+    for (const [name, info] of Object.entries(unreadByBot)) {
+      if (!privateSet.has(name) && !hiddenSet.has(name)) {
+        total += Math.max(1, info.count);
+      }
+    }
+    return total;
+  }, [hiddenProfiles, privateProfileNames, unreadByBot]);
+
+  const otherPublicBotUnreadTotal = useMemo(() => {
+    const privateSet = new Set(privateProfileNames);
+    const hiddenSet = new Set(hiddenProfiles);
+    let total = 0;
+    for (const [name, info] of Object.entries(unreadByBot)) {
+      if (name === selectedBotName) continue;
+      if (!privateSet.has(name) && !hiddenSet.has(name)) {
+        total += Math.max(1, info.count);
+      }
+    }
+    return total;
+  }, [hiddenProfiles, privateProfileNames, selectedBotName, unreadByBot]);
+
+  const groupUnreadRoomCount = useMemo(
+    () => Object.keys(unreadByGroup).length,
+    [unreadByGroup]
+  );
+
+  // Sync native PWA Home Screen badge (iOS 16.4+ & desktop PWAs; never includes private bots)
+  useEffect(() => {
+    const nav = navigator as Navigator & {
+      setAppBadge?: (count?: number) => Promise<void>;
+      clearAppBadge?: () => Promise<void>;
+    };
+    const totalPublic = publicUnreadBotTotal + groupUnreadRoomCount;
+    try {
+      if (totalPublic > 0 && typeof nav.setAppBadge === "function") {
+        void nav.setAppBadge(totalPublic).catch(() => undefined);
+      } else if (totalPublic === 0 && typeof nav.clearAppBadge === "function") {
+        void nav.clearAppBadge().catch(() => undefined);
+      }
+    } catch {
+      // App Badging API optional
+    }
+  }, [groupUnreadRoomCount, publicUnreadBotTotal]);
+
   async function handleLogout() {
     setLoggingOut(true);
     try {
@@ -352,6 +894,10 @@ export const App: React.FC = () => {
       setUser(null);
       setProfiles([]);
       setAvatars({});
+      setRecentByProfile({});
+      setUnreadByBot({});
+      setUnreadByGroup({});
+      setNewMsgToast(null);
       setSelectedBotName(null);
       setSelectedRoomId(null);
     }
@@ -392,6 +938,51 @@ export const App: React.FC = () => {
 
   return (
     <div className="app-shell">
+      {newMsgToast && (
+        <div className="new-msg-toast" role="status" aria-live="polite">
+          <button
+            type="button"
+            className="new-msg-toast-main"
+            onClick={() => {
+              const target = newMsgToast.botName;
+              dismissNewMsgToast();
+              setTab("bots");
+              handleSelectBot(target);
+            }}
+          >
+            <BotAvatar
+              visual={getBotVisual(
+                profiles.find((p) => p.name === newMsgToast.botName) || {
+                  name: newMsgToast.botName,
+                  display_name: newMsgToast.botLabel,
+                  bot_title: newMsgToast.botLabel,
+                  description: "",
+                  model: null,
+                }
+              )}
+              imageUrl={avatars[newMsgToast.botName]}
+              size="sm"
+            />
+            <div className="new-msg-toast-body">
+              <div className="new-msg-toast-title">
+                <span className="unread-dot-inline" aria-hidden="true" />
+                <span>{newMsgToast.botLabel}</span>
+                <span className="new-msg-toast-tag">Neue Nachricht</span>
+              </div>
+              <div className="new-msg-toast-preview">{newMsgToast.preview}</div>
+            </div>
+          </button>
+          <button
+            type="button"
+            className="new-msg-toast-close"
+            aria-label="Hinweis schließen"
+            onClick={dismissNewMsgToast}
+          >
+            <X size={16} />
+          </button>
+        </div>
+      )}
+
       {!inFullscreenChat && (
         <header className="topbar">
           <div className="topbar-title-group">
@@ -440,6 +1031,9 @@ export const App: React.FC = () => {
           <BotsView
             profiles={profiles}
             avatars={avatars}
+            recentByProfile={recentByProfile}
+            unreadByBot={unreadByBot}
+            otherUnreadCount={otherPublicBotUnreadTotal}
             hiddenProfiles={hiddenProfiles}
             privateProfileNames={privateProfileNames}
             loading={profilesLoading}
@@ -449,6 +1043,8 @@ export const App: React.FC = () => {
             openCreateTrigger={createBotTrigger}
             createAsPrivate={createPrivateMode}
             onSelectBot={handleSelectBot}
+            onMarkBotRead={markBotRead}
+            onRegisterSession={registerBotSession}
             onRefreshProfiles={() => loadProfiles()}
             onAvatarChange={handleAvatarChange}
             onToggleHideProfile={handleToggleHideProfile}
@@ -463,9 +1059,11 @@ export const App: React.FC = () => {
           <GroupsView
             profiles={publicProfiles}
             avatars={avatars}
+            unreadByGroup={unreadByGroup}
             wsState={wsState}
             selectedRoomId={selectedRoomId}
-            onSelectRoom={setSelectedRoomId}
+            onSelectRoom={handleSelectRoom}
+            onMarkGroupRead={markGroupRead}
           />
         )
       ) : (
@@ -474,6 +1072,9 @@ export const App: React.FC = () => {
             <BotsView
               profiles={profiles}
               avatars={avatars}
+              recentByProfile={recentByProfile}
+              unreadByBot={unreadByBot}
+              otherUnreadCount={otherPublicBotUnreadTotal}
               hiddenProfiles={hiddenProfiles}
               privateProfileNames={privateProfileNames}
               loading={profilesLoading}
@@ -483,6 +1084,8 @@ export const App: React.FC = () => {
               openCreateTrigger={createBotTrigger}
               createAsPrivate={createPrivateMode}
               onSelectBot={handleSelectBot}
+              onMarkBotRead={markBotRead}
+              onRegisterSession={registerBotSession}
               onRefreshProfiles={() => loadProfiles()}
               onAvatarChange={handleAvatarChange}
               onToggleHideProfile={handleToggleHideProfile}
@@ -495,9 +1098,11 @@ export const App: React.FC = () => {
             <GroupsView
               profiles={publicProfiles}
               avatars={avatars}
+              unreadByGroup={unreadByGroup}
               wsState={wsState}
               selectedRoomId={selectedRoomId}
-              onSelectRoom={setSelectedRoomId}
+              onSelectRoom={handleSelectRoom}
+              onMarkGroupRead={markGroupRead}
             />
           )}
           {tab === "routines" && <RoutinesView profiles={publicProfiles} />}
@@ -508,7 +1113,7 @@ export const App: React.FC = () => {
               wsState={wsState}
               onOpenBotChat={(name) => {
                 setTab("bots");
-                setSelectedBotName(name);
+                handleSelectBot(name);
               }}
             />
           )}
@@ -520,24 +1125,48 @@ export const App: React.FC = () => {
           <button
             type="button"
             className={`tabbar-item ${tab === "bots" ? "active" : ""}`}
+            aria-label={
+              publicUnreadBotTotal > 0
+                ? `Bots (${publicUnreadBotTotal} ungelesene ${publicUnreadBotTotal === 1 ? "Nachricht" : "Nachrichten"})`
+                : "Bots"
+            }
             onClick={() => {
               setTab("bots");
               setSelectedBotName(null);
             }}
           >
-            <Bot size={20} />
+            <span className="tabbar-icon-wrap">
+              <Bot size={20} />
+              {publicUnreadBotTotal > 0 && (
+                <span className="tabbar-badge" aria-hidden="true">
+                  {formatBadgeCount(publicUnreadBotTotal)}
+                </span>
+              )}
+            </span>
             <span>Bots</span>
           </button>
 
           <button
             type="button"
             className={`tabbar-item ${tab === "groups" ? "active" : ""}`}
+            aria-label={
+              groupUnreadRoomCount > 0
+                ? `Gruppen (${groupUnreadRoomCount} mit neuen Nachrichten)`
+                : "Gruppen"
+            }
             onClick={() => {
               setTab("groups");
               setSelectedRoomId(null);
             }}
           >
-            <Users size={20} />
+            <span className="tabbar-icon-wrap">
+              <Users size={20} />
+              {groupUnreadRoomCount > 0 && (
+                <span className="tabbar-badge" aria-hidden="true">
+                  {formatBadgeCount(groupUnreadRoomCount)}
+                </span>
+              )}
+            </span>
             <span>Gruppen</span>
           </button>
 
@@ -740,6 +1369,7 @@ export const App: React.FC = () => {
         privateProfiles={privateProfiles}
         regularProfiles={publicProfiles.filter((p) => !p.is_default && p.name !== "default")}
         avatars={avatars}
+        unreadByBot={unreadByBot}
         onUnlocked={() => setVaultUnlocked(true)}
         onLock={() => {
           setVaultUnlocked(false);
@@ -749,7 +1379,7 @@ export const App: React.FC = () => {
         }}
         onOpenPrivateBot={(name) => {
           setTab("bots");
-          setSelectedBotName(name);
+          handleSelectBot(name);
         }}
         onToggleBotPrivate={handleToggleBotPrivate}
         onCreatePrivateBot={() => {

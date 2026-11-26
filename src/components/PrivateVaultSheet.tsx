@@ -16,6 +16,7 @@ import {
   setVaultPin,
   verifyVaultPin,
 } from "../lib/privateVault";
+import { formatBadgeCount, type BotUnreadInfo } from "../lib/unreadStore";
 import { BotAvatar } from "./BotAvatar";
 import { Sheet } from "./Sheet";
 
@@ -25,6 +26,7 @@ interface PrivateVaultSheetProps {
   privateProfiles: HermesProfile[];
   regularProfiles: HermesProfile[];
   avatars: Record<string, string>;
+  unreadByBot?: Record<string, BotUnreadInfo>;
   onUnlocked: () => void;
   onLock: () => void;
   onOpenPrivateBot: (profileName: string) => void;
@@ -39,6 +41,7 @@ export const PrivateVaultSheet: React.FC<PrivateVaultSheetProps> = ({
   privateProfiles,
   regularProfiles,
   avatars,
+  unreadByBot = {},
   onUnlocked,
   onLock,
   onOpenPrivateBot,
@@ -215,10 +218,11 @@ export const PrivateVaultSheet: React.FC<PrivateVaultSheetProps> = ({
             <div className="card-stack" style={{ marginBottom: 14 }}>
               {privateProfiles.map((p) => {
                 const vis = getBotVisual(p);
+                const unread = unreadByBot[p.name];
                 return (
                   <div
                     key={p.name}
-                    className="card"
+                    className={`card ${unread ? "has-unread-card" : ""}`}
                     style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px" }}
                   >
                     <button
@@ -230,10 +234,28 @@ export const PrivateVaultSheet: React.FC<PrivateVaultSheetProps> = ({
                       }}
                     >
                       <BotAvatar visual={vis} imageUrl={avatars[p.name]} size="sm" />
-                      <div style={{ minWidth: 0 }}>
-                        <div style={{ fontWeight: 700, fontSize: "0.94rem" }}>{vis.label}</div>
-                        <div style={{ fontSize: "0.76rem", color: "var(--text-secondary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                          {p.description || "Privater Chat · isoliert"}
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                          <span style={{ fontWeight: 700, fontSize: "0.94rem" }}>{vis.label}</span>
+                          {unread && (
+                            <span
+                              className="unread-badge"
+                              aria-label={`${unread.count} neue ${unread.count === 1 ? "Nachricht" : "Nachrichten"}`}
+                            >
+                              {formatBadgeCount(unread.count)}
+                            </span>
+                          )}
+                        </div>
+                        <div
+                          style={{
+                            fontSize: "0.76rem",
+                            color: unread ? "var(--text-primary)" : "var(--text-secondary)",
+                            whiteSpace: "nowrap",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                          }}
+                        >
+                          {unread?.preview || p.description || "Privater Chat · isoliert"}
                         </div>
                       </div>
                     </button>

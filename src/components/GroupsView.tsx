@@ -23,8 +23,9 @@ import type {
 } from "../../shared/types";
 import { buildGroupMembersPayload } from "../lib/botCollaboration";
 import { getBotVisual, getProfileAvatarByName } from "../lib/botTheme";
-import { formatRelativeTime, formatShortTime, randomClientId } from "../lib/format";
+import { formatRelativeTime, formatShortTime, randomClientId, toTimestampMs } from "../lib/format";
 import { hermesWs, type WsConnectionState } from "../lib/hermesWs";
+import type { GroupUnreadInfo } from "../lib/unreadStore";
 import { BotAvatar } from "./BotAvatar";
 import { ConfirmSheet } from "./ConfirmSheet";
 import { SafeMarkdown } from "./SafeMarkdown";
@@ -33,17 +34,21 @@ import { Sheet } from "./Sheet";
 interface GroupsViewProps {
   profiles: HermesProfile[];
   avatars: Record<string, string>;
+  unreadByGroup?: Record<string, GroupUnreadInfo>;
   wsState: WsConnectionState;
   selectedRoomId: string | null;
   onSelectRoom: (roomId: string | null) => void;
+  onMarkGroupRead?: (roomId: string, latestSeq?: number, updatedAtMs?: number) => void;
 }
 
 export const GroupsView: React.FC<GroupsViewProps> = ({
   profiles,
   avatars,
+  unreadByGroup = {},
   wsState,
   selectedRoomId,
   onSelectRoom,
+  onMarkGroupRead,
 }) => {
   const [rooms, setRooms] = useState<HermesRoom[]>([]);
   const [capabilities, setCapabilities] = useState<HermesGroupsCapabilities | null>(null);
@@ -178,6 +183,7 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
         profiles={profiles}
         avatars={avatars}
         wsState={wsState}
+        onMarkGroupRead={onMarkGroupRead}
         onBack={() => {
           onSelectRoom(null);
           void loadRooms();
@@ -268,41 +274,63 @@ export const GroupsView: React.FC<GroupsViewProps> = ({
         </div>
       ) : (
         <div className="card-stack">
-          {rooms.map((room) => (
-            <button
-              key={room.room_id}
-              type="button"
-              className="bot-card"
-              onClick={() => onSelectRoom(room.room_id)}
-            >
-              <div
-                className="avatar"
-                style={{ background: "linear-gradient(135deg, #6366f1 0%, #f59e0b 100%)" }}
+          {rooms.map((room) => {
+            const unread = unreadByGroup[room.room_id];
+            return (
+              <button
+                key={room.room_id}
+                type="button"
+                className={`bot-card ${unread ? "has-unread-card" : ""}`}
+                onClick={() => {
+                  onMarkGroupRead?.(
+                    room.room_id,
+                    typeof room.latest_seq === "number" ? room.latest_seq : undefined,
+                    toTimestampMs(room.updated_at) ?? Date.now()
+                  );
+                  onSelectRoom(room.room_id);
+                }}
               >
-                <Users size={20} color="#090b10" />
-              </div>
-              <div className="bot-card-body">
-                <div className="bot-card-row">
-                  <span className="bot-card-name">{room.name}</span>
-                  <span style={{ fontSize: "0.72rem", color: "var(--text-muted)", flexShrink: 0 }}>
-                    {formatRelativeTime(room.updated_at)}
-                  </span>
+                <div
+                  className="avatar"
+                  style={{ background: "linear-gradient(135deg, #6366f1 0%, #f59e0b 100%)" }}
+                >
+                  <Users size={20} color="#090b10" />
                 </div>
-                <div className="bot-card-meta">
-                  {room.members
-                    .map((m) => m.display_name || m.profile || m.member_id || "Bot")
-                    .join(" · ")}
+                <div className="bot-card-body">
+                  <div className="bot-card-row">
+                    <span className="bot-card-name">{room.name}</span>
+                    <div className="bot-list-right-meta">
+                      <span
+                        className={`bot-list-time ${unread ? "unread" : ""}`}
+                      >
+                        {formatRelativeTime(room.updated_at)}
+                      </span>
+                      {unread && (
+                        <span
+                          className="unread-badge"
+                          aria-label="Neue Nachrichten in dieser Gruppe"
+                        >
+                          Neu
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="bot-card-meta">
+                    {room.members
+                      .map((m) => m.display_name || m.profile || m.member_id || "Bot")
+                      .join(" · ")}
+                  </div>
+                  <div className="bot-card-tags">
+                    <span className="mini-tag">{room.members.length} Bots</span>
+                    {typeof room.latest_seq === "number" && (
+                      <span className="mini-tag">{room.latest_seq} Ereignisse</span>
+                    )}
+                  </div>
                 </div>
-                <div className="bot-card-tags">
-                  <span className="mini-tag">{room.members.length} Bots</span>
-                  {typeof room.latest_seq === "number" && (
-                    <span className="mini-tag">{room.latest_seq} Ereignisse</span>
-                  )}
-                </div>
-              </div>
-              <ChevronRight size={18} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
-            </button>
-          ))}
+                <ChevronRight size={18} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
+              </button>
+            );
+          })}
         </div>
       )}
 
@@ -409,6 +437,7 @@ interface GroupRoomViewProps {
   profiles: HermesProfile[];
   avatars: Record<string, string>;
   wsState: WsConnectionState;
+  onMarkGroupRead?: (roomId: string, latestSeq?: number, updatedAtMs?: number) => void;
   onBack: () => void;
   onDisbanded: () => void;
 }
@@ -418,6 +447,7 @@ const GroupRoomView: React.FC<GroupRoomViewProps> = ({
   profiles,
   avatars,
   wsState,
+  onMarkGroupRead,
   onBack,
   onDisbanded,
 }) => {
@@ -515,6 +545,12 @@ const GroupRoomView: React.FC<GroupRoomViewProps> = ({
         if (typeof logRes?.cursor === "number") {
           cursorRef.current = Math.max(cursorRef.current, logRes.cursor);
         }
+        const latestSeq = Math.max(
+          typeof logRes?.latest_seq === "number" ? logRes.latest_seq : 0,
+          typeof stateRes?.latest_seq === "number" ? stateRes.latest_seq : 0,
+          cursorRef.current
+        );
+        onMarkGroupRead?.(room.room_id, latestSeq, Date.now());
         setError(null);
       } catch (err) {
         setError(
@@ -524,7 +560,7 @@ const GroupRoomView: React.FC<GroupRoomViewProps> = ({
         setLoading(false);
       }
     },
-    [room.room_id, scrollToBottom, wsState]
+    [onMarkGroupRead, room.room_id, scrollToBottom, wsState]
   );
 
   useEffect(() => {

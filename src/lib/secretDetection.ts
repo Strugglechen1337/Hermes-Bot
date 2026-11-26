@@ -25,6 +25,7 @@ export interface DetectedDealCard {
   price: string;
   oldPrice?: string;
   url: string;
+  imageUrl?: string;
 }
 
 const EXPLICIT_FORM_TITLE_RE = /\[SECRET_FORM:\s*([^\]]+)\]/i;
@@ -35,7 +36,7 @@ const EXPLICIT_VAULT_RE =
 const EXPLICIT_VAULT_GLOBAL_RE =
   /\[VAULT_REQUEST:\s*(payment|address|login)(?:\s*\|\s*([^|\]]+))?(?:\s*\|\s*([^\]]+))?\]/gi;
 const EXPLICIT_DEAL_GLOBAL_RE =
-  /\[DEAL_CARD:\s*([^|\]]+)\|\s*([^|\]]+)\|\s*([^|\]]+)(?:\|\s*([^|\]]*))?(?:\|\s*([^\]]+))?\]/gi;
+  /\[DEAL_CARD:\s*([^|\]]+)\|\s*([^|\]]+)\|\s*([^|\]]+)(?:\|\s*([^|\]]*))?(?:\|\s*([^|\]]*))?(?:\|\s*([^\]]+))?\]/gi;
 
 const ENV_VAR_CANDIDATE_RE =
   /\b([A-Z][A-Z0-9_]{2,48}_(?:API_KEY|TOKEN|SECRET|PASSWORD|PASSWD|KEY|PAT|AUTH))\b/g;
@@ -131,8 +132,8 @@ export function detectBotVaultRequest(text: string): DetectedVaultRequest | null
 }
 
 /**
- * Extracts structured `[DEAL_CARD: Shop | Title | Price | OldPrice | URL]` product cards
- * from an assistant message so Hermes Pocket renders clickable deal cards with "Jetzt kaufen".
+ * Extracts structured `[DEAL_CARD: Shop | Title | Price | OldPrice | URL | ImageURL]` product cards
+ * from an assistant message so Hermes Pocket renders swipeable deal cards with thumbnails & "Jetzt kaufen".
  */
 export function extractProductDeals(text: string): DetectedDealCard[] {
   const deals: DetectedDealCard[] = [];
@@ -142,17 +143,44 @@ export function extractProductDeals(text: string): DetectedDealCard[] {
     const price = (m[3] || "").trim();
     const col4 = (m[4] || "").trim();
     const col5 = (m[5] || "").trim();
-    // Allow both 4-column (Shop|Title|Price|URL) and 5-column (Shop|Title|Price|OldPrice|URL)
+    const col6 = (m[6] || "").trim();
+    // Support 4-col (Shop|Title|Price|URL), 5-col (Shop|Title|Price|OldPrice|URL or ...|URL|ImageURL),
+    // and 6-col (Shop|Title|Price|OldPrice|URL|ImageURL)
     let oldPrice: string | undefined;
-    let url = col5;
-    if (!url && /^https?:\/\//i.test(col4)) {
-      url = col4;
+    let url = "";
+    let imageUrl: string | undefined;
+
+    if (col6) {
+      if (col4) oldPrice = col4;
+      url = col5;
+      imageUrl = col6;
+    } else if (col5) {
+      if (/^https?:\/\//i.test(col4) && /^https?:\/\//i.test(col5)) {
+        url = col4;
+        imageUrl = col5;
+      } else {
+        if (col4) oldPrice = col4;
+        url = col5;
+      }
     } else if (col4) {
-      oldPrice = col4;
+      if (/^https?:\/\//i.test(col4)) {
+        url = col4;
+      } else {
+        oldPrice = col4;
+      }
     }
+
     if (!shop || !title || !price) continue;
     if (url && !/^https?:\/\//i.test(url)) url = "";
-    deals.push({ shop, title, price, ...(oldPrice ? { oldPrice } : {}), url });
+    if (imageUrl && !/^https?:\/\//i.test(imageUrl)) imageUrl = undefined;
+    deals.push({
+      shop,
+      title,
+      price,
+      ...(oldPrice ? { oldPrice } : {}),
+      url,
+      ...(imageUrl ? { imageUrl } : {}),
+    });
   }
   return deals;
 }

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom";
 import {
   AlertCircle,
+  ArrowDown,
   ArrowUp,
   Camera,
   ChevronLeft,
@@ -18,6 +19,7 @@ import {
   MessageSquarePlus,
   MoreHorizontal,
   Paperclip,
+  Pin,
   Plug,
   Plus,
   RefreshCw,
@@ -25,6 +27,7 @@ import {
   Settings2,
   ShieldCheck,
   Square,
+  Star,
   Trash2,
   Unlock,
   Wrench,
@@ -52,7 +55,20 @@ import {
   getBotHandle,
   pickPreferredBotSession,
 } from "../lib/botCollaboration";
+import {
+  getPocketUiMeta,
+  loadChiefBot,
+  loadPinnedBots,
+  resolveChiefBotName,
+  resolvePinnedBotNames,
+  saveChiefBot,
+  savePinnedBots,
+} from "../lib/botPinStore";
 import { getBotVisual } from "../lib/botTheme";
+import {
+  formatBadgeCount,
+  type BotUnreadInfo,
+} from "../lib/unreadStore";
 import {
   formatChatDividerTime,
   formatRelativeTime,
@@ -122,6 +138,9 @@ import { Sheet } from "./Sheet";
 interface BotsViewProps {
   profiles: HermesProfile[];
   avatars: Record<string, string>;
+  recentByProfile?: Record<string, HermesSessionSummary>;
+  unreadByBot?: Record<string, BotUnreadInfo>;
+  otherUnreadCount?: number;
   hiddenProfiles?: string[];
   privateProfileNames?: string[];
   loading: boolean;
@@ -131,6 +150,16 @@ interface BotsViewProps {
   openCreateTrigger?: number;
   createAsPrivate?: boolean;
   onSelectBot: (name: string | null) => void;
+  onMarkBotRead?: (
+    profileName: string,
+    info?: {
+      sessionId?: string | null;
+      lastActiveMs?: number;
+      messageCount?: number;
+      messages?: HermesChatMessage[];
+    }
+  ) => void;
+  onRegisterSession?: (profileName: string, sessionId: string | null) => void;
   onRefreshProfiles: () => Promise<void> | void;
   onAvatarChange: (profileName: string, dataUrl: string | null) => void;
   onToggleHideProfile?: (profileName: string) => void;
@@ -152,11 +181,18 @@ function slugifyProfileName(raw: string): string {
     .slice(0, 32);
 }
 
+const EMPTY_STRING_LIST: string[] = [];
+const EMPTY_RECENT_MAP: Record<string, HermesSessionSummary> = {};
+const EMPTY_UNREAD_MAP: Record<string, BotUnreadInfo> = {};
+
 export const BotsView: React.FC<BotsViewProps> = ({
   profiles,
   avatars,
-  hiddenProfiles = [],
-  privateProfileNames = [],
+  recentByProfile = EMPTY_RECENT_MAP,
+  unreadByBot = EMPTY_UNREAD_MAP,
+  otherUnreadCount = 0,
+  hiddenProfiles = EMPTY_STRING_LIST,
+  privateProfileNames = EMPTY_STRING_LIST,
   loading,
   error,
   wsState,
@@ -164,6 +200,8 @@ export const BotsView: React.FC<BotsViewProps> = ({
   openCreateTrigger = 0,
   createAsPrivate = false,
   onSelectBot,
+  onMarkBotRead,
+  onRegisterSession,
   onRefreshProfiles,
   onAvatarChange,
   onToggleHideProfile,
@@ -179,7 +217,8 @@ export const BotsView: React.FC<BotsViewProps> = ({
     sessionId: string;
     title?: string | null;
   } | null>(null);
-  const [recentByProfile, setRecentByProfile] = useState<Record<string, HermesSessionSummary>>({});
+  const [localChiefBot, setLocalChiefBot] = useState<string | null>(() => loadChiefBot());
+  const [localPinnedBots, setLocalPinnedBots] = useState<string[]>(() => loadPinnedBots());
 
   // Create Bot & Import Sheets
   const [showCreateSheet, setShowCreateSheet] = useState(false);
@@ -222,32 +261,6 @@ export const BotsView: React.FC<BotsViewProps> = ({
     }
   }, [openCreateTrigger]);
 
-  useEffect(() => {
-    if (profiles.length === 0) return;
-    let cancelled = false;
-    void (async () => {
-      const entries = await Promise.all(
-        profiles.map(async (p) => {
-          try {
-            const sessions = await fetchSessions(p.name, 1);
-            return [p.name, sessions[0]] as const;
-          } catch {
-            return [p.name, undefined] as const;
-          }
-        })
-      );
-      if (cancelled) return;
-      const map: Record<string, HermesSessionSummary> = {};
-      for (const [name, session] of entries) {
-        if (session) map[name] = session;
-      }
-      setRecentByProfile(map);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [profiles]);
-
   const selectedProfile = useMemo(
     () => profiles.find((p) => p.name === selectedBotName) || null,
     [profiles, selectedBotName]
@@ -260,6 +273,116 @@ export const BotsView: React.FC<BotsViewProps> = ({
     return profiles.filter((p) => !hiddenSet.has(p.name) && !privateSet.has(p.name));
   }, [profiles, hiddenProfiles, privateSet]);
 
+  const chiefBotName = useMemo(
+    () => resolveChiefBotName(publicProfiles, localChiefBot),
+    [publicProfiles, localChiefBot]
+  );
+
+  const pinnedBotNames = useMemo(
+    () => resolvePinnedBotNames(publicProfiles, localPinnedBots, chiefBotName),
+    [publicProfiles, localPinnedBots, chiefBotName]
+  );
+
+  const showcaseProfiles = useMemo(() => {
+    const byName = new Map(publicProfiles.map((p) => [p.name, p]));
+    const list: HermesProfile[] = [];
+    if (chiefBotName && byName.has(chiefBotName)) {
+      list.push(byName.get(chiefBotName)!);
+    }
+    for (const name of pinnedBotNames) {
+      const p = byName.get(name);
+      if (p && p.name !== chiefBotName) list.push(p);
+    }
+    return list;
+  }, [chiefBotName, pinnedBotNames, publicProfiles]);
+
+  const showcaseNameSet = useMemo(
+    () => new Set(showcaseProfiles.map((p) => p.name)),
+    [showcaseProfiles]
+  );
+
+  const handleToggleChiefBot = useCallback(
+    async (profile: HermesProfile) => {
+      const isAlreadyChief = chiefBotName === profile.name;
+      const prevChiefProfile =
+        chiefBotName && chiefBotName !== profile.name
+          ? profiles.find((p) => p.name === chiefBotName) || null
+          : null;
+      const nextChief = isAlreadyChief ? null : profile.name;
+      setLocalChiefBot(nextChief);
+      saveChiefBot(nextChief);
+
+      if (!isAlreadyChief && localPinnedBots.includes(profile.name)) {
+        const cleaned = localPinnedBots.filter((n) => n !== profile.name);
+        setLocalPinnedBots(cleaned);
+        savePinnedBots(cleaned);
+      }
+
+      if (wsState === "connected") {
+        const calls: Promise<unknown>[] = [
+          hermesWs
+            .call("profiles.configure", {
+              name: profile.name,
+              ui_meta: {
+                "hermes-pocket": {
+                  ...getPocketUiMeta(profile),
+                  chief: !isAlreadyChief,
+                  ...(!isAlreadyChief ? { pinned: false } : {}),
+                },
+              },
+            })
+            .catch(() => null),
+        ];
+        if (prevChiefProfile) {
+          calls.push(
+            hermesWs
+              .call("profiles.configure", {
+                name: prevChiefProfile.name,
+                ui_meta: {
+                  "hermes-pocket": {
+                    ...getPocketUiMeta(prevChiefProfile),
+                    chief: false,
+                  },
+                },
+              })
+              .catch(() => null)
+          );
+        }
+        await Promise.all(calls);
+        void onRefreshProfiles();
+      }
+    },
+    [chiefBotName, localPinnedBots, onRefreshProfiles, profiles, wsState]
+  );
+
+  const handleTogglePinBot = useCallback(
+    async (profile: HermesProfile) => {
+      if (chiefBotName === profile.name) return;
+      const isPinned = pinnedBotNames.includes(profile.name);
+      const nextPinned = isPinned
+        ? pinnedBotNames.filter((n) => n !== profile.name)
+        : [...pinnedBotNames, profile.name].slice(0, 3);
+      setLocalPinnedBots(nextPinned);
+      savePinnedBots(nextPinned);
+
+      if (wsState === "connected") {
+        await hermesWs
+          .call("profiles.configure", {
+            name: profile.name,
+            ui_meta: {
+              "hermes-pocket": {
+                ...getPocketUiMeta(profile),
+                pinned: !isPinned,
+              },
+            },
+          })
+          .catch(() => null);
+        void onRefreshProfiles();
+      }
+    },
+    [chiefBotName, onRefreshProfiles, pinnedBotNames, wsState]
+  );
+
   const filteredProfiles = useMemo(() => {
     const q = query.trim().toLowerCase();
     const sorted = [...publicProfiles].sort((a, b) => {
@@ -268,7 +391,9 @@ export const BotsView: React.FC<BotsViewProps> = ({
       if (diff !== 0) return diff;
       return a.name.localeCompare(b.name, "de");
     });
-    if (!q) return sorted;
+    if (!q) {
+      return sorted.filter((p) => !showcaseNameSet.has(p.name));
+    }
     return sorted.filter((p) => {
       const vis = getBotVisual(p);
       return (
@@ -277,7 +402,7 @@ export const BotsView: React.FC<BotsViewProps> = ({
         (p.description || "").toLowerCase().includes(q)
       );
     });
-  }, [publicProfiles, query]);
+  }, [publicProfiles, query, showcaseNameSet]);
 
   // Debounced full-text search across all non-private bot conversations
   useEffect(() => {
@@ -289,7 +414,7 @@ export const BotsView: React.FC<BotsViewProps> = ({
       return;
     }
     if (trimmed.length < 2 || publicProfiles.length === 0) {
-      setSearchHits([]);
+      setSearchHits((prev) => (prev.length === 0 ? prev : []));
       setSearchingMessages(false);
       return;
     }
@@ -512,11 +637,14 @@ export const BotsView: React.FC<BotsViewProps> = ({
           initialSessionId={matchingTargetSession?.sessionId || null}
           initialSessionTitle={matchingTargetSession?.title || null}
           avatarUrl={avatars[selectedProfile.name] || null}
+          otherUnreadCount={otherUnreadCount}
           wsState={wsState}
           onBack={() => {
             setOpenTargetSession(null);
             onSelectBot(null);
           }}
+          onMarkBotRead={onMarkBotRead}
+          onRegisterSession={onRegisterSession}
           onOpenBotSettings={() => void openManageSheet(selectedProfile)}
           onOpenConnectors={onOpenConnectors}
           onRefreshProfiles={onRefreshProfiles}
@@ -552,6 +680,18 @@ export const BotsView: React.FC<BotsViewProps> = ({
             onSave={handleSaveBotDetails}
             onRequestDelete={() => setConfirmDeleteBot(manageProfile)}
             isPrivate={privateSet.has(manageProfile.name)}
+            isChief={chiefBotName === manageProfile.name}
+            isPinned={pinnedBotNames.includes(manageProfile.name)}
+            onToggleChief={
+              !privateSet.has(manageProfile.name)
+                ? () => void handleToggleChiefBot(manageProfile)
+                : undefined
+            }
+            onTogglePin={
+              !privateSet.has(manageProfile.name) && chiefBotName !== manageProfile.name
+                ? () => void handleTogglePinBot(manageProfile)
+                : undefined
+            }
             onTogglePrivate={
               onToggleBotPrivate && !manageProfile.is_default
                 ? async () => {
@@ -635,7 +775,7 @@ export const BotsView: React.FC<BotsViewProps> = ({
         <div className="empty-state">
           <p>Lade Bots…</p>
         </div>
-      ) : filteredProfiles.length === 0 ? (
+      ) : filteredProfiles.length === 0 && (query.trim() || showcaseProfiles.length === 0) ? (
         <div className="empty-state">
           <h3>Keine Bots gefunden</h3>
           <p>
@@ -652,51 +792,134 @@ export const BotsView: React.FC<BotsViewProps> = ({
           </button>
         </div>
       ) : (
-        <div className="bot-list">
-          {filteredProfiles.map((profile) => {
-            const visual = getBotVisual(profile);
-            const recent = recentByProfile[profile.name];
-            return (
-              <div key={profile.name} className="bot-list-item">
-                <button
-                  type="button"
-                  className="bot-list-main"
-                  onClick={() => onSelectBot(profile.name)}
-                >
-                  <BotAvatar
-                    visual={visual}
-                    imageUrl={avatars[profile.name]}
-                    online={profile.gateway_running}
-                    showStatus
-                  />
-                  <div className="bot-card-body">
-                    <div className="bot-card-row">
-                      <span className="bot-card-name">{visual.label}</span>
-                      {recent?.last_active && (
-                        <span className="bot-list-time">
-                          {formatRelativeTime(recent.last_active)}
-                        </span>
-                      )}
-                    </div>
-                    <div className="bot-card-meta">
-                      {profile.description?.trim() || recent?.title || "Bereit zum Chatten"}
-                    </div>
+        <>
+          {!query.trim() && showcaseProfiles.length > 0 && (
+            <section className="bot-showcase" aria-label="Chef und angeheftete Bots">
+              {showcaseProfiles.map((profile) => {
+                const visual = getBotVisual(profile);
+                const isChief = chiefBotName === profile.name;
+                const unread = unreadByBot[profile.name];
+                return (
+                  <div key={profile.name} className="bot-showcase-item">
+                    <button
+                      type="button"
+                      className={`bot-showcase-btn ${isChief ? "is-chief" : ""} ${unread ? "has-unread" : ""}`}
+                      aria-label={
+                        unread
+                          ? `${visual.label}${isChief ? " (Chef)" : ""} – ${unread.count} neue ${unread.count === 1 ? "Nachricht" : "Nachrichten"}`
+                          : `${visual.label}${isChief ? " (Chef)" : ""}`
+                      }
+                      onClick={() => onSelectBot(profile.name)}
+                    >
+                      <span className="bot-showcase-avatar-wrap">
+                        <BotAvatar
+                          visual={visual}
+                          imageUrl={avatars[profile.name]}
+                          size="xl"
+                          online={profile.gateway_running}
+                          showStatus={!isChief}
+                        />
+                        {isChief && (
+                          <span
+                            className="chief-star-badge"
+                            title="Chef-Bot"
+                            aria-hidden="true"
+                          >
+                            <Star size={14} fill="currentColor" strokeWidth={2.2} />
+                          </span>
+                        )}
+                        {unread && (
+                          <span
+                            className="showcase-unread-badge"
+                            aria-hidden="true"
+                          >
+                            {formatBadgeCount(unread.count)}
+                          </span>
+                        )}
+                      </span>
+                      <span className="bot-showcase-label">{visual.label}</span>
+                    </button>
                   </div>
-                </button>
+                );
+              })}
+            </section>
+          )}
 
-                <button
-                  type="button"
-                  className="icon-btn ghost"
-                  aria-label={`${visual.label} verwalten`}
-                  style={{ minWidth: 36, minHeight: 36, color: "var(--text-muted)" }}
-                  onClick={() => void openManageSheet(profile)}
-                >
-                  <MoreHorizontal size={18} />
-                </button>
-              </div>
-            );
-          })}
-        </div>
+          {filteredProfiles.length > 0 && (
+            <div className="bot-list">
+              {filteredProfiles.map((profile) => {
+                const visual = getBotVisual(profile);
+                const recent = recentByProfile[profile.name];
+                const unread = unreadByBot[profile.name];
+                const displayTime = unread?.latestTimestampMs || recent?.last_active;
+                const isChief = chiefBotName === profile.name;
+                return (
+                  <div
+                    key={profile.name}
+                    className={`bot-list-item ${unread ? "has-unread" : ""}`}
+                  >
+                    <button
+                      type="button"
+                      className="bot-list-main"
+                      onClick={() => onSelectBot(profile.name)}
+                    >
+                      <BotAvatar
+                        visual={visual}
+                        imageUrl={avatars[profile.name]}
+                        online={profile.gateway_running}
+                        showStatus
+                      />
+                      <div className="bot-card-body">
+                        <div className="bot-card-row">
+                          <span className="bot-card-name-wrap">
+                            <span className="bot-card-name">{visual.label}</span>
+                            {isChief && (
+                              <span className="chief-inline-pill" title="Chef-Bot">
+                                <Star size={10} fill="currentColor" />
+                                Chef
+                              </span>
+                            )}
+                          </span>
+                          {displayTime && (
+                            <span className={`bot-list-time ${unread ? "unread" : ""}`}>
+                              {formatRelativeTime(displayTime)}
+                            </span>
+                          )}
+                        </div>
+                        <div className="bot-card-subrow">
+                          <span className={`bot-card-meta ${unread ? "unread" : ""}`}>
+                            {unread?.preview ||
+                              profile.description?.trim() ||
+                              recent?.title ||
+                              "Bereit zum Chatten"}
+                          </span>
+                          {unread && (
+                            <span
+                              className="unread-badge"
+                              aria-label={`${unread.count} neue ${unread.count === 1 ? "Nachricht" : "Nachrichten"}`}
+                            >
+                              {formatBadgeCount(unread.count)}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </button>
+
+                    <button
+                      type="button"
+                      className="icon-btn ghost"
+                      aria-label={`${visual.label} verwalten`}
+                      style={{ minWidth: 36, minHeight: 36, color: "var(--text-muted)" }}
+                      onClick={() => void openManageSheet(profile)}
+                    >
+                      <MoreHorizontal size={18} />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </>
       )}
 
       {query.trim().length >= 2 && (
@@ -923,6 +1146,18 @@ export const BotsView: React.FC<BotsViewProps> = ({
           onSave={handleSaveBotDetails}
           onRequestDelete={() => setConfirmDeleteBot(manageProfile)}
           isPrivate={privateSet.has(manageProfile.name)}
+          isChief={chiefBotName === manageProfile.name}
+          isPinned={pinnedBotNames.includes(manageProfile.name)}
+          onToggleChief={
+            !privateSet.has(manageProfile.name)
+              ? () => void handleToggleChiefBot(manageProfile)
+              : undefined
+          }
+          onTogglePin={
+            !privateSet.has(manageProfile.name) && chiefBotName !== manageProfile.name
+              ? () => void handleTogglePinBot(manageProfile)
+              : undefined
+          }
           onTogglePrivate={
             onToggleBotPrivate && !manageProfile.is_default
               ? async () => {
@@ -1006,6 +1241,10 @@ interface BotManageSheetProps {
   onSave: (e: React.FormEvent) => void;
   onRequestDelete: () => void;
   isPrivate?: boolean;
+  isChief?: boolean;
+  isPinned?: boolean;
+  onToggleChief?: () => void;
+  onTogglePin?: () => void;
   onTogglePrivate?: () => Promise<void> | void;
   onRequestHide?: () => void;
   onClose: () => void;
@@ -1030,6 +1269,10 @@ const BotManageSheet: React.FC<BotManageSheetProps> = ({
   onSave,
   onRequestDelete,
   isPrivate = false,
+  isChief = false,
+  isPinned = false,
+  onToggleChief,
+  onTogglePin,
   onTogglePrivate,
   onRequestHide,
   onClose,
@@ -1098,6 +1341,33 @@ const BotManageSheet: React.FC<BotManageSheetProps> = ({
           {profile.provider ? `${profile.provider} / ` : ""}
           {profile.model || "Modell & Anbieter wählen"}
         </button>
+
+        {(onToggleChief || onTogglePin) && (
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "center" }}>
+            {onToggleChief && (
+              <button
+                type="button"
+                className={`btn sm ${isChief ? "chief-active-btn" : ""}`}
+                disabled={saving}
+                onClick={onToggleChief}
+              >
+                <Star size={14} fill={isChief ? "currentColor" : "none"} />
+                {isChief ? "Chef-Bot (entfernen)" : "Als Chef oben markieren"}
+              </button>
+            )}
+            {onTogglePin && (
+              <button
+                type="button"
+                className={`btn sm ${isPinned ? "primary" : ""}`}
+                disabled={saving}
+                onClick={onTogglePin}
+              >
+                <Pin size={14} />
+                {isPinned ? "Oben angeheftet" : "Oben anheften"}
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       <form onSubmit={onSave}>
@@ -1202,8 +1472,19 @@ interface DirectChatViewProps {
   initialSessionId?: string | null;
   initialSessionTitle?: string | null;
   avatarUrl: string | null;
+  otherUnreadCount?: number;
   wsState: WsConnectionState;
   onBack: () => void;
+  onMarkBotRead?: (
+    profileName: string,
+    info?: {
+      sessionId?: string | null;
+      lastActiveMs?: number;
+      messageCount?: number;
+      messages?: HermesChatMessage[];
+    }
+  ) => void;
+  onRegisterSession?: (profileName: string, sessionId: string | null) => void;
   onOpenBotSettings: () => void;
   onOpenConnectors?: () => void;
   onRefreshProfiles: () => Promise<void> | void;
@@ -1223,8 +1504,11 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
   initialSessionId = null,
   initialSessionTitle = null,
   avatarUrl,
+  otherUnreadCount = 0,
   wsState,
   onBack,
+  onMarkBotRead,
+  onRegisterSession,
   onOpenBotSettings,
   onOpenConnectors,
   onRefreshProfiles,
@@ -1285,6 +1569,7 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
   const [showActionsSheet, setShowActionsSheet] = useState(false);
   const [sessionToDelete, setSessionToDelete] = useState<HermesSessionSummary | null>(null);
   const [deletingSession, setDeletingSession] = useState(false);
+  const [hasNewBelow, setHasNewBelow] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -1294,16 +1579,38 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
   const attachedOnWsRef = useRef<boolean>(false);
   const execGenerationRef = useRef<number>(0);
   const scrollTimersRef = useRef<number[]>([]);
+  const isNearBottomRef = useRef<boolean>(true);
 
   activeSessionRef.current = activeSessionId;
+
+  const handleMessagesScroll = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const near = distanceFromBottom < 140;
+    isNearBottomRef.current = near;
+    if (near) {
+      setHasNewBelow(false);
+    }
+  }, []);
 
   const scrollToBottom = useCallback(() => {
     requestAnimationFrame(() => {
       if (scrollRef.current) {
         scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+        isNearBottomRef.current = true;
+        setHasNewBelow(false);
       }
     });
   }, []);
+
+  const scrollIfNearBottom = useCallback(() => {
+    if (isNearBottomRef.current) {
+      scrollToBottom();
+    } else {
+      setHasNewBelow(true);
+    }
+  }, [scrollToBottom]);
 
   const scrollToBottomWithSettle = useCallback(() => {
     for (const id of scrollTimersRef.current) window.clearTimeout(id);
@@ -1427,6 +1734,8 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
             });
           }
           setMessages(loaded);
+          onRegisterSession?.(profile.name, resolvedSid);
+          onMarkBotRead?.(profile.name, { sessionId: resolvedSid, messages: loaded });
           setIsStreaming(Boolean(snapshot?.running || snapshot?.inflight?.streaming));
           setPendingApproval(snapshot?.pending_approval || snapshot?.prompts?.[0] || null);
           setPendingConnection(snapshot?.pending_connection || null);
@@ -1438,6 +1747,8 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
         } else {
           const loaded = await fetchSessionMessages(sessionId, profile.name);
           setMessages(loaded);
+          onRegisterSession?.(profile.name, sessionId);
+          onMarkBotRead?.(profile.name, { sessionId, messages: loaded });
         }
         scrollToBottom();
       } catch (err) {
@@ -1524,6 +1835,8 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
         if (loaded.length > 0 || !silentReattach) {
           setMessages(loaded);
         }
+        onRegisterSession?.(profile.name, resolvedSid);
+        onMarkBotRead?.(profile.name, { sessionId: resolvedSid, messages: loaded });
         setIsStreaming(Boolean(snapshot?.running || snapshot?.inflight?.streaming));
         setPendingApproval(snapshot?.pending_approval || snapshot?.prompts?.[0] || null);
         setPendingConnection(snapshot?.pending_connection || null);
@@ -1843,8 +2156,14 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
             bot: profile.name,
           });
         }
+        if (document.visibilityState === "visible") {
+          onMarkBotRead?.(profile.name, {
+            sessionId: activeSessionRef.current,
+            lastActiveMs: Date.now(),
+          });
+        }
         void refreshAccountUsage(activeSessionRef.current);
-        scrollToBottom();
+        scrollIfNearBottom();
       } else if (ev.type === "approval.requested") {
         const appr = ev.payload as HermesPendingApproval;
         const decision = evaluateApprovalPolicy(appr, loadAutoApproveSafe());
@@ -1974,6 +2293,8 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
         }
         setActiveSessionId(created.session_id);
         setActiveTitle(canonicalTitle);
+        onRegisterSession?.(profile.name, created.session_id);
+        onMarkBotRead?.(profile.name, { sessionId: created.session_id, lastActiveMs: Date.now() });
         if (typeof created.execution_generation === "number") {
           execGenerationRef.current = created.execution_generation;
         }
@@ -2189,6 +2510,7 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
         }
         attachedOnWsRef.current = true;
         setActiveSessionId(sid);
+        onRegisterSession?.(profile.name, sid);
         setActiveTitle(
           !hasCanonical ? canonicalTitle : (text || pendingFiles[0]?.file.name || "Chat").slice(0, 48)
         );
@@ -2442,10 +2764,19 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
         <button
           type="button"
           className="glass-circle-btn"
-          aria-label="Zurück zu Bots"
+          aria-label={
+            otherUnreadCount > 0
+              ? `Zurück zu Bots (${otherUnreadCount} neue ${otherUnreadCount === 1 ? "Nachricht" : "Nachrichten"})`
+              : "Zurück zu Bots"
+          }
           onClick={onBack}
         >
           <ChevronLeft size={22} />
+          {otherUnreadCount > 0 && (
+            <span className="back-unread-badge" aria-hidden="true">
+              {formatBadgeCount(otherUnreadCount)}
+            </span>
+          )}
         </button>
 
         <div className="glass-title-pill-group">
@@ -2479,7 +2810,7 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
         </button>
       </header>
 
-      <div ref={scrollRef} className="chat-messages">
+      <div ref={scrollRef} className="chat-messages" onScroll={handleMessagesScroll}>
         {wsState !== "connected" && (
           <div className="notice warn">
             <AlertCircle size={17} style={{ flexShrink: 0, marginTop: 2 }} />
@@ -2575,40 +2906,51 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
                           <SafeMarkdown text={stripSecretRequestTag(msg.content)} />
                         )}
                         {msg.role === "assistant" &&
-                          extractProductDeals(msg.content).map((deal, dIdx) => (
-                            <ProductDealCard
-                              key={`${deal.shop}-${deal.title}-${dIdx}`}
-                              deal={deal}
-                              disabled={isStreaming || wsState !== "connected"}
-                              onBuy={(picked: DetectedDealCard) => {
-                                const sid = activeSessionRef.current;
-                                if (!sid || wsState !== "connected" || isStreaming) return;
-                                const buyText = picked.url
-                                  ? `Bitte bestelle ${picked.title} bei ${picked.shop} für ${picked.price} (${picked.url}) und bereite alles bis zur finalen Bestellübersicht vor.`
-                                  : `Bitte bestelle ${picked.title} bei ${picked.shop} für ${picked.price} und bereite alles bis zur finalen Bestellübersicht vor.`;
-                                setMessages((prev) => [
-                                  ...prev,
-                                  {
-                                    id: `u-buy-${Date.now()}`,
-                                    role: "user",
-                                    content: buyText,
-                                    timestamp: Date.now(),
-                                  },
-                                ]);
-                                setIsStreaming(true);
-                                scrollToBottomWithSettle();
-                                void hermesWs
-                                  .call("prompt.submit", {
-                                    session_id: sid,
-                                    profile: profile.name,
-                                    submission_id: randomClientId("sub"),
-                                    text: buyText,
-                                    ...(activeModelOverride ? { model_override: activeModelOverride } : {}),
-                                  })
-                                  .catch(() => setIsStreaming(false));
-                              }}
-                            />
-                          ))}
+                          (() => {
+                            const deals = extractProductDeals(msg.content);
+                            if (deals.length === 0) return null;
+                            return (
+                              <div
+                                className={`deal-carousel ${deals.length === 1 ? "single" : ""}`}
+                                aria-label="Gefundene Angebote"
+                              >
+                                {deals.map((deal, dIdx) => (
+                                  <ProductDealCard
+                                    key={`${deal.shop}-${deal.title}-${dIdx}`}
+                                    deal={deal}
+                                    disabled={isStreaming || wsState !== "connected"}
+                                    onBuy={(picked: DetectedDealCard) => {
+                                      const sid = activeSessionRef.current;
+                                      if (!sid || wsState !== "connected" || isStreaming) return;
+                                      const buyText = picked.url
+                                        ? `Bitte bestelle ${picked.title} bei ${picked.shop} für ${picked.price} (${picked.url}) und bereite alles bis zur finalen Bestellübersicht vor.`
+                                        : `Bitte bestelle ${picked.title} bei ${picked.shop} für ${picked.price} und bereite alles bis zur finalen Bestellübersicht vor.`;
+                                      setMessages((prev) => [
+                                        ...prev,
+                                        {
+                                          id: `u-buy-${Date.now()}`,
+                                          role: "user",
+                                          content: buyText,
+                                          timestamp: Date.now(),
+                                        },
+                                      ]);
+                                      setIsStreaming(true);
+                                      scrollToBottomWithSettle();
+                                      void hermesWs
+                                        .call("prompt.submit", {
+                                          session_id: sid,
+                                          profile: profile.name,
+                                          submission_id: randomClientId("sub"),
+                                          text: buyText,
+                                          ...(activeModelOverride ? { model_override: activeModelOverride } : {}),
+                                        })
+                                        .catch(() => setIsStreaming(false));
+                                    }}
+                                  />
+                                ))}
+                              </div>
+                            );
+                          })()}
                       </>
                     ) : msg.streaming ? (
                       <span style={{ color: "var(--text-muted)" }}>…</span>
@@ -2778,6 +3120,18 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
       </div>
 
       <div className="composer-wrap">
+        {hasNewBelow && (
+          <div className="new-msg-scroll-wrap">
+            <button
+              type="button"
+              className="new-msg-scroll-pill"
+              onClick={scrollToBottom}
+            >
+              <ArrowDown size={14} />
+              <span>Neue Nachricht</span>
+            </button>
+          </div>
+        )}
         <button
           type="button"
           className={`chat-limit-bar ${limitSummary.severity === "normal" ? "" : limitSummary.severity}`}

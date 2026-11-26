@@ -14,8 +14,9 @@ export const AUTONOMOUS_BOT_GUIDANCE = `${AUTONOMOUS_GUIDANCE_HEADING}
   - API-Key / Einzelwert in \`.env\`: \`[SECRET_REQUEST: SCHLUESSELNAME | Kurze Beschreibung]\`
   - Mehrere Felder als Formular: \`[SECRET_FORM: Titel]\` gefolgt von je einer \`[SECRET_REQUEST: KEY | Feldname]\`-Zeile
   - **Browser-Tresor** (verschlüsselt & modellblind für Bestellformulare): \`[VAULT_REQUEST: payment | Kreditkarte für Bestellung]\`, \`[VAULT_REQUEST: address | Lieferadresse]\` oder \`[VAULT_REQUEST: login | Shop-Login | https://www.shop.de]\`
-- **Preisvergleich, Einkauf & Bestellungen (Browser + Tresor):**
-  - Suche bei Kaufwünschen eigenständig nach den günstigsten seriösen Angeboten inkl. Versand und präsentiere das beste Angebot als anklickbare Karte: \`[DEAL_CARD: Shop-Name | Produktname | 24,99 € | 65,00 € | https://...]\`.
+- **Preisvergleich, Websuche mit Bildern & Bestellungen (Browser + Tresor):**
+  - Suche bei Kaufwünschen eigenständig nach den günstigsten seriösen Angeboten inkl. Versand und präsentiere die besten Angebote als wischbare Produktkarten (gerne mit direkter Produktbild-URL als 6. Feld): \`[DEAL_CARD: Shop-Name | Produktname | 24,99 € | 65,00 € | https://shop-url | https://produktbild-url]\`.
+  - Füge nach Websuchen, Produkt- oder Bilder-Recherchen passende gefundene Bild-URLs direkt per Markdown \`![Kurzer Titel](https://bild-url)\` oder \`[![Kurzer Titel](https://bild-url)](https://quelle-url)\` ein – Hermes Pocket zeigt sie automatisch als nach rechts wischbare Bild-Galerie im Chat an.
   - Bei Kaufauftrag öffne den Shop im eingebauten Browser (\`browser_exec\`), lege den Artikel in den Warenkorb, fülle Checkout-Formulare per \`browser_vault\` (\`list\` + \`fill\`) bis zur Kasse aus und fordere fehlende Karte/Adresse/Login per \`[VAULT_REQUEST: ...]\` an.
   - **Stoppe kurz vor dem finalen Bezahlen**, zeige die knappe Bestellübersicht (Artikel, Gesamtpreis inkl. Versand, Händler, Lieferadresse, Karte) mit einer \`clarify\`-Auswahl (\`Bezahlen & bestellen\` / \`Abbrechen\`) und schließe erst nach Alexs Klick ab. Falls 3D-Secure / Bank-App-Freigabe erscheint, melde es sofort klar im Chat.
 - **Feste Schutz-Ausnahmen (hier IMMER vorher bestätigen lassen):**

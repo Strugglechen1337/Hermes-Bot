@@ -81,9 +81,11 @@ describe("secretDetection", () => {
     expect(natural?.explicit).toBe(false);
   });
 
-  it("extracts [DEAL_CARD] entries and strips them from prose", () => {
+  it("extracts [DEAL_CARD] entries (including optional image URL) and strips them from prose", () => {
     const raw =
-      "Hier ist der aktuelle Bestpreis:\n[DEAL_CARD: BeispielShop DE | PS5 Spiel (Disc) | 24,99 € | 65,00 € | https://example.com/product]";
+      "Hier ist der aktuelle Bestpreis:\n" +
+      "[DEAL_CARD: BeispielShop DE | PS5 Spiel (Disc) | 24,99 € | 65,00 € | https://example.com/product]\n" +
+      "[DEAL_CARD: OTTO | Beispiel-Artikel | 14,99 € | 20,00 € | https://otto.example/p | https://cdn.example/p.jpg]";
     const deals = extractProductDeals(raw);
     expect(deals).toEqual([
       {
@@ -92,6 +94,14 @@ describe("secretDetection", () => {
         price: "24,99 €",
         oldPrice: "65,00 €",
         url: "https://example.com/product",
+      },
+      {
+        shop: "OTTO",
+        title: "Beispiel-Artikel",
+        price: "14,99 €",
+        oldPrice: "20,00 €",
+        url: "https://otto.example/p",
+        imageUrl: "https://cdn.example/p.jpg",
       },
     ]);
     expect(stripSecretRequestTag(raw)).toBe("Hier ist der aktuelle Bestpreis:");

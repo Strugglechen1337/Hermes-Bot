@@ -32,17 +32,33 @@ self.addEventListener("push", (event) => {
   }
 
   event.waitUntil(
-    self.registration.showNotification(data.title, {
-      body: data.body,
-      icon: "/icon-180.png",
-      badge: "/icon-180.png",
-      tag: data.tag || "hermes-pocket",
-      renotify: true,
-      data: {
-        bot: data.bot || "",
-        url: data.url || "/",
-      },
-    })
+    Promise.all([
+      self.registration.showNotification(data.title, {
+        body: data.body,
+        icon: "/icon-180.png",
+        badge: "/icon-180.png",
+        tag: data.tag || "hermes-pocket",
+        renotify: true,
+        data: {
+          bot: data.bot || "",
+          url: data.url || "/",
+        },
+      }),
+      data.bot
+        ? self.clients
+            .matchAll({ type: "window", includeUncontrolled: true })
+            .then((clients) => {
+              for (const client of clients) {
+                client.postMessage({
+                  type: "hp:bot-message",
+                  bot: data.bot,
+                  title: data.title,
+                  body: data.body,
+                });
+              }
+            })
+        : Promise.resolve(),
+    ])
   );
 });
 

@@ -1300,38 +1300,59 @@ interface ProductDealCardProps {
 }
 
 export const ProductDealCard: React.FC<ProductDealCardProps> = ({ deal, disabled, onBuy }) => {
+  const [imgFailed, setImgFailed] = useState(false);
+
   return (
     <div className="deal-card">
-      <div className="deal-card-top">
-        <span className="deal-card-shop">
-          <ShoppingBag size={13} />
-          <span>{deal.shop}</span>
-        </span>
-        {deal.url && (
-          <a
-            href={deal.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="deal-card-ext"
-            aria-label={`Angebot bei ${deal.shop} öffnen`}
-          >
-            <ExternalLink size={13} />
-          </a>
-        )}
+      {deal.imageUrl && !imgFailed && (
+        <a
+          href={deal.url || deal.imageUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="deal-card-media"
+        >
+          <img
+            src={deal.imageUrl}
+            alt={deal.title}
+            className="deal-card-img"
+            loading="lazy"
+            referrerPolicy="no-referrer"
+            onError={() => setImgFailed(true)}
+          />
+        </a>
+      )}
+      <div className="deal-card-content">
+        <div className="deal-card-title">{deal.title}</div>
+        <div className="deal-card-prices">
+          <span className="deal-card-price">{deal.price}</span>
+          {deal.oldPrice && <span className="deal-card-old">{deal.oldPrice}</span>}
+        </div>
+        <div className="deal-card-top">
+          <span className="deal-card-shop">
+            <ShoppingBag size={12} />
+            <span>{deal.shop}</span>
+          </span>
+          {deal.url && (
+            <a
+              href={deal.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="deal-card-ext"
+              aria-label={`Angebot bei ${deal.shop} öffnen`}
+            >
+              <ExternalLink size={13} />
+            </a>
+          )}
+        </div>
+        <button
+          type="button"
+          className="btn primary full deal-card-buy"
+          disabled={disabled}
+          onClick={() => onBuy(deal)}
+        >
+          Jetzt kaufen
+        </button>
       </div>
-      <div className="deal-card-title">{deal.title}</div>
-      <div className="deal-card-prices">
-        <span className="deal-card-price">{deal.price}</span>
-        {deal.oldPrice && <span className="deal-card-old">{deal.oldPrice}</span>}
-      </div>
-      <button
-        type="button"
-        className="btn primary full deal-card-buy"
-        disabled={disabled}
-        onClick={() => onBuy(deal)}
-      >
-        Jetzt kaufen
-      </button>
     </div>
   );
 };

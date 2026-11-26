@@ -4,7 +4,7 @@ import type { BotVisualIdentity } from "../lib/botTheme";
 interface BotAvatarProps {
   visual: BotVisualIdentity;
   imageUrl?: string | null;
-  size?: "xs" | "sm" | "md" | "lg";
+  size?: "xs" | "sm" | "md" | "lg" | "xl";
   online?: boolean;
   showStatus?: boolean;
   className?: string;
