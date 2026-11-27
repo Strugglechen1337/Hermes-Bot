@@ -996,7 +996,7 @@ export const App: React.FC = () => {
       <div className="login-shell">
         <div style={{ textAlign: "center", color: "var(--text-secondary)" }}>
           <img
-            src="/icon.svg"
+            src="/icon-180.png"
             alt="Hermes Bots"
             width={56}
             height={56}
@@ -1029,7 +1029,7 @@ export const App: React.FC = () => {
     <header className="topbar">
       <div className="topbar-title-group">
         <img
-          src="/icon.svg"
+          src="/icon-180.png"
           alt=""
           width={26}
           height={26}

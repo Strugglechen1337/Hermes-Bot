@@ -51,7 +51,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
       <div className="login-card">
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
           <img
-            src="/icon.svg"
+            src="/icon-180.png"
             alt="Hermes Bots"
             width={48}
             height={48}
