@@ -15,7 +15,7 @@ import { formatRelativeTime } from "../lib/format";
 import { fetchPocketPages, type PocketPageSummary } from "../lib/hermesApi";
 import type { DetectedPocketPage } from "../lib/secretDetection";
 import { BotAvatar } from "./BotAvatar";
-import { PocketPageViewer } from "./InChatPromptCards";
+import { PocketPageViewer, sharePocketPage } from "./InChatPromptCards";
 import { Sheet } from "./Sheet";
 
 interface PagesArchiveSheetProps {
@@ -154,10 +154,6 @@ export const PagesArchiveSheet: React.FC<PagesArchiveSheetProps> = ({
                       model: null,
                     })
                   : null;
-              const fullUrl =
-                typeof window !== "undefined"
-                  ? `${window.location.origin}/api/pocket/pages/${encodeURIComponent(page.id)}`
-                  : `/api/pocket/pages/${encodeURIComponent(page.id)}`;
               return (
                 <div key={page.id} className="archive-page-card">
                   <button
@@ -202,20 +198,19 @@ export const PagesArchiveSheet: React.FC<PagesArchiveSheetProps> = ({
                     type="button"
                     className="icon-btn ghost"
                     style={{ minWidth: 34, minHeight: 34, color: "var(--text-muted)" }}
-                    aria-label={`„${page.title}“ teilen`}
-                    title="Teilen"
+                    aria-label={`„${page.title}“ als Text teilen`}
+                    title="Als Text teilen"
                     onClick={() => {
-                      const shareText = page.summary ? `${page.title}\n${page.summary}` : page.title;
-                      if (typeof navigator !== "undefined" && typeof navigator.share === "function") {
-                        void navigator
-                          .share({ title: page.title, text: shareText, url: fullUrl })
-                          .catch(() => undefined);
-                      } else {
-                        void navigator.clipboard?.writeText(`${shareText}\n${fullUrl}`).then(() => {
+                      void sharePocketPage({
+                        id: page.id,
+                        title: page.title,
+                        summary: page.summary,
+                      }).then((res) => {
+                        if (res === "copied") {
                           setCopiedId(page.id);
                           window.setTimeout(() => setCopiedId((c) => (c === page.id ? null : c)), 1600);
-                        });
-                      }
+                        }
+                      });
                     }}
                   >
                     {copiedId === page.id ? <Check size={15} /> : <Share2 size={15} />}

@@ -1368,19 +1368,51 @@ interface PocketPageCardProps {
   onOpen: (page: DetectedPocketPage) => void;
 }
 
-async function sharePocketPage(page: DetectedPocketPage): Promise<"shared" | "copied" | "cancelled"> {
-  const fullUrl =
-    typeof window !== "undefined"
-      ? `${window.location.origin}/api/pocket/pages/${encodeURIComponent(page.id)}`
-      : `/api/pocket/pages/${encodeURIComponent(page.id)}`;
-  const shareText = page.summary ? `${page.title}\n${page.summary}` : page.title;
+function extractReadableTextFromBriefingHtml(rawHtml: string, fallbackTitle: string): string {
+  try {
+    const doc = new DOMParser().parseFromString(rawHtml, "text/html");
+    doc.querySelectorAll("script, style, nav, iframe").forEach((el) => el.remove());
+    const main = doc.querySelector("main") || doc.body;
+    const lines: string[] = [];
+    main.querySelectorAll("h1, h2, h3, p, li").forEach((el) => {
+      const txt = (el.textContent || "").replace(/\s+/g, " ").trim();
+      if (!txt) return;
+      const tag = el.tagName.toLowerCase();
+      if (tag === "h1") lines.push(txt, "");
+      else if (tag === "h2") lines.push("", `— ${txt} —`);
+      else if (tag === "h3") lines.push(`• ${txt}`);
+      else if (tag === "li") lines.push(`• ${txt}`);
+      else lines.push(txt);
+    });
+    const combined = lines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+    return combined || fallbackTitle;
+  } catch {
+    return fallbackTitle;
+  }
+}
+
+export async function sharePocketPage(
+  page: DetectedPocketPage
+): Promise<"shared" | "copied" | "cancelled"> {
+  const pagePath = `/api/pocket/pages/${encodeURIComponent(page.id)}`;
+  let shareText = page.summary ? `${page.title}\n\n${page.summary}` : page.title;
+
+  try {
+    const res = await fetch(pagePath, { credentials: "same-origin" });
+    if (res.ok) {
+      const html = await res.text();
+      const extracted = extractReadableTextFromBriefingHtml(html, shareText);
+      if (extracted) shareText = extracted;
+    }
+  } catch {
+    // Fall back to title + summary
+  }
 
   if (typeof navigator !== "undefined" && typeof navigator.share === "function") {
     try {
       await navigator.share({
         title: page.title,
         text: shareText,
-        url: fullUrl,
       });
       return "shared";
     } catch (err) {
@@ -1391,7 +1423,7 @@ async function sharePocketPage(page: DetectedPocketPage): Promise<"shared" | "co
   }
 
   try {
-    await navigator.clipboard?.writeText(`${shareText}\n${fullUrl}`);
+    await navigator.clipboard?.writeText(shareText);
     return "copied";
   } catch {
     return "cancelled";
