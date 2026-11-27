@@ -40,8 +40,9 @@ describe("PagesArchiveSheet", () => {
 
     expect(await screen.findByText("Dein Morgenüberblick")).toBeInTheDocument();
     expect(screen.queryByText("Versteckte Seite")).toBeNull();
+    expect(screen.getByRole("button", { name: /Dein Morgenüberblick.*teilen/i })).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: /Dein Morgenüberblick/i }));
+    fireEvent.click(screen.getByText("Dein Morgenüberblick"));
     expect(screen.getByRole("dialog", { name: "Dein Morgenüberblick" })).toBeInTheDocument();
   });
 });

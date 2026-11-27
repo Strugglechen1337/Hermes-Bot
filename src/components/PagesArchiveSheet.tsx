@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   AlertCircle,
-  ExternalLink,
+  Check,
   FileText,
   RefreshCw,
   Search,
+  Share2,
   Sparkles,
   X,
 } from "lucide-react";
@@ -37,6 +38,7 @@ export const PagesArchiveSheet: React.FC<PagesArchiveSheetProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [activePage, setActivePage] = useState<DetectedPocketPage | null>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
 
   const loadPages = useCallback(async () => {
     setLoading(true);
@@ -152,7 +154,10 @@ export const PagesArchiveSheet: React.FC<PagesArchiveSheetProps> = ({
                       model: null,
                     })
                   : null;
-              const pageUrl = `/api/pocket/pages/${encodeURIComponent(page.id)}`;
+              const fullUrl =
+                typeof window !== "undefined"
+                  ? `${window.location.origin}/api/pocket/pages/${encodeURIComponent(page.id)}`
+                  : `/api/pocket/pages/${encodeURIComponent(page.id)}`;
               return (
                 <div key={page.id} className="archive-page-card">
                   <button
@@ -193,17 +198,28 @@ export const PagesArchiveSheet: React.FC<PagesArchiveSheetProps> = ({
                       )}
                     </div>
                   </button>
-                  <a
-                    href={pageUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
+                  <button
+                    type="button"
                     className="icon-btn ghost"
                     style={{ minWidth: 34, minHeight: 34, color: "var(--text-muted)" }}
-                    aria-label={`„${page.title}“ in neuem Tab öffnen`}
-                    title="In neuem Tab öffnen"
+                    aria-label={`„${page.title}“ teilen`}
+                    title="Teilen"
+                    onClick={() => {
+                      const shareText = page.summary ? `${page.title}\n${page.summary}` : page.title;
+                      if (typeof navigator !== "undefined" && typeof navigator.share === "function") {
+                        void navigator
+                          .share({ title: page.title, text: shareText, url: fullUrl })
+                          .catch(() => undefined);
+                      } else {
+                        void navigator.clipboard?.writeText(`${shareText}\n${fullUrl}`).then(() => {
+                          setCopiedId(page.id);
+                          window.setTimeout(() => setCopiedId((c) => (c === page.id ? null : c)), 1600);
+                        });
+                      }
+                    }}
                   >
-                    <ExternalLink size={15} />
-                  </a>
+                    {copiedId === page.id ? <Check size={15} /> : <Share2 size={15} />}
+                  </button>
                 </div>
               );
             })}

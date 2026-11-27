@@ -14,6 +14,7 @@ import {
   MapPin,
   RefreshCw,
   Send,
+  Share2,
   ShieldAlert,
   ShieldCheck,
   ShoppingBag,
@@ -1367,8 +1368,39 @@ interface PocketPageCardProps {
   onOpen: (page: DetectedPocketPage) => void;
 }
 
+async function sharePocketPage(page: DetectedPocketPage): Promise<"shared" | "copied" | "cancelled"> {
+  const fullUrl =
+    typeof window !== "undefined"
+      ? `${window.location.origin}/api/pocket/pages/${encodeURIComponent(page.id)}`
+      : `/api/pocket/pages/${encodeURIComponent(page.id)}`;
+  const shareText = page.summary ? `${page.title}\n${page.summary}` : page.title;
+
+  if (typeof navigator !== "undefined" && typeof navigator.share === "function") {
+    try {
+      await navigator.share({
+        title: page.title,
+        text: shareText,
+        url: fullUrl,
+      });
+      return "shared";
+    } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") {
+        return "cancelled";
+      }
+    }
+  }
+
+  try {
+    await navigator.clipboard?.writeText(`${shareText}\n${fullUrl}`);
+    return "copied";
+  } catch {
+    return "cancelled";
+  }
+}
+
 export const PocketPageCard: React.FC<PocketPageCardProps> = ({ page, onOpen }) => {
-  const pageUrl = `/api/pocket/pages/${encodeURIComponent(page.id)}`;
+  const [shareState, setShareState] = useState<"idle" | "copied">("idle");
+
   return (
     <div className="pocket-page-card">
       <div className="pocket-page-card-head">
@@ -1376,16 +1408,22 @@ export const PocketPageCard: React.FC<PocketPageCardProps> = ({ page, onOpen }) 
           <Sparkles size={13} />
           <span>Briefing &amp; Seite</span>
         </span>
-        <a
-          href={pageUrl}
-          target="_blank"
-          rel="noopener noreferrer"
+        <button
+          type="button"
           className="deal-card-ext"
-          aria-label={`„${page.title}“ in neuem Tab öffnen`}
-          title="In neuem Tab öffnen"
+          aria-label={`„${page.title}“ teilen`}
+          title="Teilen"
+          onClick={() => {
+            void sharePocketPage(page).then((res) => {
+              if (res === "copied") {
+                setShareState("copied");
+                window.setTimeout(() => setShareState("idle"), 1600);
+              }
+            });
+          }}
         >
-          <ExternalLink size={14} />
-        </a>
+          {shareState === "copied" ? <Check size={14} /> : <Share2 size={14} />}
+        </button>
       </div>
       <div className="pocket-page-title">{page.title}</div>
       {page.summary && <div className="pocket-page-summary">{page.summary}</div>}
@@ -1407,6 +1445,7 @@ interface PocketPageViewerProps {
 }
 
 export const PocketPageViewer: React.FC<PocketPageViewerProps> = ({ page, onClose }) => {
+  const [copiedLink, setCopiedLink] = useState(false);
   if (!page || typeof document === "undefined") return null;
   const pageUrl = `/api/pocket/pages/${encodeURIComponent(page.id)}`;
 
@@ -1418,16 +1457,22 @@ export const PocketPageViewer: React.FC<PocketPageViewerProps> = ({ page, onClos
           <span className="page-viewer-title">{page.title}</span>
         </div>
         <div className="page-viewer-actions">
-          <a
-            href={pageUrl}
-            target="_blank"
-            rel="noopener noreferrer"
+          <button
+            type="button"
             className="icon-btn ghost"
-            aria-label="In neuem Tab öffnen"
-            title="In neuem Tab öffnen"
+            aria-label="Seite teilen"
+            title="Teilen"
+            onClick={() => {
+              void sharePocketPage(page).then((res) => {
+                if (res === "copied") {
+                  setCopiedLink(true);
+                  window.setTimeout(() => setCopiedLink(false), 1600);
+                }
+              });
+            }}
           >
-            <ExternalLink size={17} />
-          </a>
+            {copiedLink ? <Check size={17} /> : <Share2 size={17} />}
+          </button>
           <button
             type="button"
             className="icon-btn ghost"
