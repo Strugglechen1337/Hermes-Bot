@@ -310,8 +310,9 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
         rec.onresult = null;
         rec.onerror = null;
         rec.onend = null;
-        if (typeof rec.abort === "function") rec.abort();
-        else rec.stop();
+        // Always use stop() instead of abort(): iOS Safari WebKit can wedge
+        // SFSpeechRecognizer on the next start() after abort().
+        rec.stop();
       } catch {
         // ignore
       }

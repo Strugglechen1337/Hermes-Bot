@@ -507,8 +507,8 @@ const GroupRoomView: React.FC<GroupRoomViewProps> = ({
         rec.onresult = null;
         rec.onerror = null;
         rec.onend = null;
-        if (typeof rec.abort === "function") rec.abort();
-        else rec.stop();
+        // Always use stop() instead of abort() so iOS Safari SFSpeechRecognizer stays healthy
+        rec.stop();
       } catch {
         // ignore
       }
