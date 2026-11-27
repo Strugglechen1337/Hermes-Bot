@@ -564,9 +564,7 @@ export const ConnectorsView: React.FC<ConnectorsViewProps> = ({
         EMAIL_ADDRESS: addr,
         EMAIL_PASSWORD: pass,
         EMAIL_IMAP_HOST: isGmail ? "imap.gmail.com" : "outlook.office365.com",
-        EMAIL_IMAP_PORT: "993",
         EMAIL_SMTP_HOST: isGmail ? "smtp.gmail.com" : "smtp.office365.com",
-        EMAIL_SMTP_PORT: "587",
       };
       await updateMessagingPlatform("email", { enabled: true, env: envPayload }, selectedProfile);
       // Mirror address & app password into profile .env for scripts/skills as well
