@@ -208,4 +208,74 @@ describe("Hermes Pocket BFF HTTP Proxy", () => {
     const data = (await okRes.json()) as { ok: boolean; private: boolean };
     expect(data).toMatchObject({ ok: true, private: true });
   });
+
+  it("enriches GET /api/profiles payloads with chief, pinned and private flags from profile.yaml", async () => {
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const { enrichProfilesPayloadWithPocketMeta } = await import("./proxy.js");
+
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "hermes-meta-test-"));
+    try {
+      const emmaDir = path.join(tmpHome, "profiles", "emma");
+      const novaDir = path.join(tmpHome, "profiles", "nova-chief");
+      const isolatedDir = path.join(tmpHome, "profiles", "secret-bot");
+      fs.mkdirSync(emmaDir, { recursive: true });
+      fs.mkdirSync(novaDir, { recursive: true });
+      fs.mkdirSync(isolatedDir, { recursive: true });
+
+      fs.writeFileSync(
+        path.join(emmaDir, "profile.yaml"),
+        [
+          "ui_meta:",
+          "  hermes-bots:",
+          "    title: Emma",
+          "  hermes-pocket:",
+          "    private: true",
+        ].join("\n"),
+        "utf8"
+      );
+      fs.writeFileSync(
+        path.join(novaDir, "profile.yaml"),
+        [
+          "ui_meta:",
+          "  hermes-pocket:",
+          "    chief: true",
+          "    pinned: false",
+        ].join("\n"),
+        "utf8"
+      );
+      fs.writeFileSync(
+        path.join(isolatedDir, "config.yaml"),
+        "agent:\n  bot_mode_protocol: false\n",
+        "utf8"
+      );
+
+      const raw = JSON.stringify({
+        profiles: [
+          { name: "default", is_default: true },
+          { name: "emma", ui_meta: { "hermes-bots": { title: "Emma" } } },
+          { name: "nova-chief" },
+          { name: "secret-bot" },
+        ],
+      });
+
+      const enriched = JSON.parse(
+        enrichProfilesPayloadWithPocketMeta(raw, tmpHome)
+      ) as { profiles: Array<{ name: string; ui_meta?: Record<string, unknown> }> };
+
+      expect(enriched.profiles[1].ui_meta).toEqual({
+        "hermes-bots": { title: "Emma" },
+        "hermes-pocket": { private: true },
+      });
+      expect(enriched.profiles[2].ui_meta).toEqual({
+        "hermes-pocket": { chief: true, pinned: false },
+      });
+      expect(enriched.profiles[3].ui_meta).toEqual({
+        "hermes-pocket": { private: true },
+      });
+    } finally {
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
 });

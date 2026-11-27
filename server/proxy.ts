@@ -5,7 +5,11 @@ import path from "node:path";
 import type { ServerConfig } from "./config.js";
 import { appendAutonomousGuidance } from "../shared/botAutonomy.js";
 import { handlePocketPagesRoute } from "./pages.js";
-import { handlePocketPushRoute, setBotPrivateInPushStore } from "./push.js";
+import {
+  handlePocketPushRoute,
+  isBotPrivateOnServer,
+  setBotPrivateInPushStore,
+} from "./push.js";
 import {
   adaptSetCookieHeader,
   isAllowedHermesPath,
@@ -519,6 +523,167 @@ async function bootstrapNewProfileDefaults(
   }
 }
 
+export interface PocketProfileMeta {
+  private?: boolean;
+  chief?: boolean;
+  pinned?: boolean;
+}
+
+const SAFE_PROFILE_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
+
+/**
+ * Reads `ui_meta.hermes-pocket` flags (`private`, `chief`, `pinned`) from a
+ * Hermes profile's `profile.yaml` (and falls back to `config.yaml`
+ * `bot_mode_protocol: false` / server push store for private isolation).
+ * Ensures fresh PWA installs / new devices hydrate Chief, Pinned and Private
+ * bots immediately even if Hermes's REST `GET /api/profiles` omits `ui_meta`.
+ */
+export function readPocketProfileMeta(
+  profileName: string,
+  hermesHomeOverride?: string
+): PocketProfileMeta {
+  const clean = profileName.trim();
+  if (!clean || clean === "default" || !SAFE_PROFILE_NAME_RE.test(clean)) {
+    return {};
+  }
+
+  const hermesHome =
+    hermesHomeOverride ||
+    process.env.HERMES_HOME?.trim() ||
+    path.join(os.homedir(), ".hermes");
+  const profileDir = path.join(hermesHome, "profiles", clean);
+  const out: PocketProfileMeta = {};
+
+  try {
+    const profileYamlPath = path.join(profileDir, "profile.yaml");
+    if (fs.existsSync(profileYamlPath)) {
+      const lines = fs.readFileSync(profileYamlPath, "utf8").split(/\r?\n/);
+      let inUiMeta = false;
+      let uiMetaIndent = -1;
+      let inPocket = false;
+      let pocketIndent = -1;
+
+      for (const line of lines) {
+        if (!line.trim() || line.trim().startsWith("#")) continue;
+        const indent = line.length - line.trimStart().length;
+        const trimmed = line.trim();
+
+        if (!inUiMeta) {
+          if (/^ui_meta\s*:\s*$/.test(trimmed)) {
+            inUiMeta = true;
+            uiMetaIndent = indent;
+          }
+          continue;
+        }
+
+        if (indent <= uiMetaIndent) {
+          inUiMeta = false;
+          inPocket = false;
+          continue;
+        }
+
+        if (!inPocket) {
+          if (/^["']?hermes-pocket["']?\s*:\s*$/.test(trimmed)) {
+            inPocket = true;
+            pocketIndent = indent;
+          }
+          continue;
+        }
+
+        if (indent <= pocketIndent) {
+          inPocket = false;
+          continue;
+        }
+
+        const match = trimmed.match(/^(private|chief|pinned)\s*:\s*(true|false)\b/i);
+        if (match) {
+          const key = match[1].toLowerCase() as keyof PocketProfileMeta;
+          out[key] = match[2].toLowerCase() === "true";
+        }
+      }
+    }
+
+    if (out.private === undefined) {
+      const configPath = path.join(profileDir, "config.yaml");
+      if (fs.existsSync(configPath)) {
+        const cfgText = fs.readFileSync(configPath, "utf8");
+        if (/^\s*bot_mode_protocol\s*:\s*false\b/m.test(cfgText)) {
+          out.private = true;
+        }
+      }
+      if (!hermesHomeOverride && out.private === undefined && isBotPrivateOnServer(clean)) {
+        out.private = true;
+      }
+    }
+  } catch {
+    // Non-fatal
+  }
+
+  return out;
+}
+
+export function enrichProfilesPayloadWithPocketMeta(
+  rawJson: string,
+  hermesHomeOverride?: string
+): string {
+  try {
+    const parsed = JSON.parse(rawJson) as unknown;
+    const isArrayRoot = Array.isArray(parsed);
+    const list = isArrayRoot
+      ? (parsed as Array<Record<string, unknown>>)
+      : parsed &&
+          typeof parsed === "object" &&
+          Array.isArray((parsed as { profiles?: unknown }).profiles)
+        ? ((parsed as { profiles: Array<Record<string, unknown>> }).profiles)
+        : null;
+    if (!list) return rawJson;
+
+    let mutated = false;
+    for (const item of list) {
+      if (!item || typeof item !== "object") continue;
+      const name = typeof item.name === "string" ? item.name.trim() : "";
+      if (!name || name === "default") continue;
+
+      const diskMeta = readPocketProfileMeta(name, hermesHomeOverride);
+      if (
+        diskMeta.private === undefined &&
+        diskMeta.chief === undefined &&
+        diskMeta.pinned === undefined
+      ) {
+        continue;
+      }
+
+      const existingUiMeta =
+        item.ui_meta && typeof item.ui_meta === "object" && !Array.isArray(item.ui_meta)
+          ? { ...(item.ui_meta as Record<string, unknown>) }
+          : {};
+      const existingPocket =
+        existingUiMeta["hermes-pocket"] &&
+        typeof existingUiMeta["hermes-pocket"] === "object" &&
+        !Array.isArray(existingUiMeta["hermes-pocket"])
+          ? { ...(existingUiMeta["hermes-pocket"] as Record<string, unknown>) }
+          : {};
+
+      const mergedPocket: Record<string, unknown> = {
+        ...diskMeta,
+        ...existingPocket,
+      };
+      // Disk private isolation always wins if Hermes REST omitted it
+      if (diskMeta.private === true && existingPocket.private === undefined) {
+        mergedPocket.private = true;
+      }
+
+      existingUiMeta["hermes-pocket"] = mergedPocket;
+      item.ui_meta = existingUiMeta;
+      mutated = true;
+    }
+
+    return mutated ? JSON.stringify(parsed) : rawJson;
+  } catch {
+    return rawJson;
+  }
+}
+
 export async function handleHermesHttpProxy(
   req: IncomingMessage,
   res: ServerResponse,
@@ -645,7 +810,15 @@ export async function handleHermesHttpProxy(
       return true;
     }
 
-    const resBuffer = Buffer.from(await upstreamRes.arrayBuffer());
+    let resBuffer = Buffer.from(await upstreamRes.arrayBuffer());
+
+    // Enrich GET /api/profiles with persisted ui_meta["hermes-pocket"] flags
+    // (chief, pinned, private) from disk so fresh PWA installs / new devices
+    // hydrate immediately without losing Chief or Private Vault isolation.
+    if (method === "GET" && pathname === "/api/profiles" && upstreamRes.ok) {
+      const enriched = enrichProfilesPayloadWithPocketMeta(resBuffer.toString("utf8"));
+      resBuffer = Buffer.from(enriched, "utf8");
+    }
 
     // Automatically equip newly created/imported Hermes profiles with safe non-destructive
     // command_allowlist + pocket-push & pocket-secret skills.
