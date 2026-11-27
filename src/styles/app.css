@@ -2504,3 +2504,89 @@ a {
   border: none;
   background: var(--bg-canvas);
 }
+
+/* ── Push Master & Per-Bot Toggle Switches ─────────────────────────────────── */
+
+.push-pref-section {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.push-pref-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 220px;
+  overflow-y: auto;
+  padding-right: 2px;
+  transition: opacity 0.15s ease;
+}
+
+.push-pref-list.dimmed {
+  opacity: 0.45;
+}
+
+.push-pref-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 5px 2px;
+}
+
+.push-pref-row.master {
+  padding: 6px 2px 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.push-pref-name {
+  font-size: 0.84rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.push-toggle-switch {
+  position: relative;
+  width: 44px;
+  height: 26px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.14);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  padding: 2px;
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  transition: background 0.18s ease, border-color 0.18s ease;
+}
+
+.push-toggle-switch.on {
+  background: var(--status-ok);
+  border-color: transparent;
+}
+
+.push-toggle-knob {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+  transform: translateX(0);
+  transition: transform 0.18s ease;
+}
+
+.push-toggle-switch.on .push-toggle-knob {
+  transform: translateX(18px);
+}
+
+.push-active-btn {
+  background: var(--status-ok-soft);
+  border-color: rgba(52, 211, 153, 0.38);
+  color: var(--status-ok);
+}

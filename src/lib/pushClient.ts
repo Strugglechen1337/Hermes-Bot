@@ -10,12 +10,18 @@ function urlBase64ToUint8Array(base64String: string): Uint8Array<ArrayBuffer> {
   return outputArray;
 }
 
+export interface PushPreferences {
+  globalEnabled: boolean;
+  disabledBots: string[];
+}
+
 export interface PushStatusInfo {
   browserSupported: boolean;
   isStandaloneIos: boolean;
   permission: NotificationPermission | "unsupported";
   subscribed: boolean;
   serverCount: number;
+  preferences: PushPreferences;
 }
 
 export function isPushSupportedInBrowser(): boolean {
@@ -50,6 +56,7 @@ export async function getPushRegistration(): Promise<ServiceWorkerRegistration |
 export async function fetchPushStatus(): Promise<PushStatusInfo> {
   const supported = isPushSupportedInBrowser();
   const isStandalone = isIosStandaloneMode();
+  const defaultPrefs: PushPreferences = { globalEnabled: true, disabledBots: [] };
   if (!supported) {
     return {
       browserSupported: false,
@@ -57,11 +64,13 @@ export async function fetchPushStatus(): Promise<PushStatusInfo> {
       permission: "unsupported",
       subscribed: false,
       serverCount: 0,
+      preferences: defaultPrefs,
     };
   }
 
   let subscribed = false;
   let serverCount = 0;
+  let preferences: PushPreferences = defaultPrefs;
   try {
     const reg = await navigator.serviceWorker.getRegistration("/sw.js");
     const sub = reg ? await reg.pushManager.getSubscription() : null;
@@ -69,8 +78,22 @@ export async function fetchPushStatus(): Promise<PushStatusInfo> {
 
     const res = await fetch("/api/pocket/push/status", { credentials: "same-origin" });
     if (res.ok) {
-      const data = (await res.json()) as { subscribedCount?: number };
+      const data = (await res.json()) as {
+        subscribedCount?: number;
+        preferences?: PushPreferences;
+      };
       serverCount = Number(data.subscribedCount || 0);
+      if (data.preferences && typeof data.preferences === "object") {
+        preferences = {
+          globalEnabled:
+            typeof data.preferences.globalEnabled === "boolean"
+              ? data.preferences.globalEnabled
+              : true,
+          disabledBots: Array.isArray(data.preferences.disabledBots)
+            ? data.preferences.disabledBots.filter((x): x is string => typeof x === "string")
+            : [],
+        };
+      }
     }
   } catch {
     // ignore
@@ -82,6 +105,50 @@ export async function fetchPushStatus(): Promise<PushStatusInfo> {
     permission: Notification.permission,
     subscribed,
     serverCount,
+    preferences,
+  };
+}
+
+export async function fetchPushPreferences(): Promise<PushPreferences> {
+  try {
+    const res = await fetch("/api/pocket/push/preferences", { credentials: "same-origin" });
+    if (!res.ok) return { globalEnabled: true, disabledBots: [] };
+    const data = (await res.json()) as { preferences?: PushPreferences };
+    return {
+      globalEnabled:
+        typeof data.preferences?.globalEnabled === "boolean"
+          ? data.preferences.globalEnabled
+          : true,
+      disabledBots: Array.isArray(data.preferences?.disabledBots)
+        ? data.preferences.disabledBots.filter((x): x is string => typeof x === "string")
+        : [],
+    };
+  } catch {
+    return { globalEnabled: true, disabledBots: [] };
+  }
+}
+
+export async function updatePushPreferences(
+  patch: Partial<PushPreferences> | { bot: string; enabled: boolean }
+): Promise<PushPreferences> {
+  const res = await fetch("/api/pocket/push/preferences", {
+    method: "PUT",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) {
+    throw new Error("Push-Einstellungen konnten nicht gespeichert werden.");
+  }
+  const data = (await res.json()) as { preferences?: PushPreferences };
+  return {
+    globalEnabled:
+      typeof data.preferences?.globalEnabled === "boolean"
+        ? data.preferences.globalEnabled
+        : true,
+    disabledBots: Array.isArray(data.preferences?.disabledBots)
+      ? data.preferences.disabledBots.filter((x): x is string => typeof x === "string")
+      : [],
   };
 }
 

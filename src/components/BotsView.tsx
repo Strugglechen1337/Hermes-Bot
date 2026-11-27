@@ -4,6 +4,8 @@ import {
   AlertCircle,
   ArrowDown,
   ArrowUp,
+  Bell,
+  BellOff,
   Camera,
   ChevronLeft,
   ChevronRight,
@@ -97,7 +99,7 @@ import {
 } from "../lib/hermesApi";
 import { hermesWs, type WsConnectionState } from "../lib/hermesWs";
 import { cleanSearchSnippet, PRIVATE_CHAT_TITLE } from "../lib/privateVault";
-import { notifyIfBackgrounded } from "../lib/pushClient";
+import { notifyIfBackgrounded, type PushPreferences } from "../lib/pushClient";
 import {
   detectBotSecretForm,
   detectBotVaultRequest,
@@ -145,6 +147,7 @@ interface BotsViewProps {
   recentByProfile?: Record<string, HermesSessionSummary>;
   unreadByBot?: Record<string, BotUnreadInfo>;
   otherUnreadCount?: number;
+  pushPreferences?: PushPreferences;
   hiddenProfiles?: string[];
   privateProfileNames?: string[];
   loading: boolean;
@@ -164,6 +167,7 @@ interface BotsViewProps {
     }
   ) => void;
   onRegisterSession?: (profileName: string, sessionId: string | null) => void;
+  onToggleBotPush?: (profileName: string, enabled: boolean) => Promise<void> | void;
   onRefreshProfiles: () => Promise<void> | void;
   onAvatarChange: (profileName: string, dataUrl: string | null) => void;
   onToggleHideProfile?: (profileName: string) => void;
@@ -188,6 +192,7 @@ function slugifyProfileName(raw: string): string {
 const EMPTY_STRING_LIST: string[] = [];
 const EMPTY_RECENT_MAP: Record<string, HermesSessionSummary> = {};
 const EMPTY_UNREAD_MAP: Record<string, BotUnreadInfo> = {};
+const DEFAULT_PUSH_PREFS: PushPreferences = { globalEnabled: true, disabledBots: [] };
 
 export const BotsView: React.FC<BotsViewProps> = ({
   profiles,
@@ -195,6 +200,7 @@ export const BotsView: React.FC<BotsViewProps> = ({
   recentByProfile = EMPTY_RECENT_MAP,
   unreadByBot = EMPTY_UNREAD_MAP,
   otherUnreadCount = 0,
+  pushPreferences = DEFAULT_PUSH_PREFS,
   hiddenProfiles = EMPTY_STRING_LIST,
   privateProfileNames = EMPTY_STRING_LIST,
   loading,
@@ -206,6 +212,7 @@ export const BotsView: React.FC<BotsViewProps> = ({
   onSelectBot,
   onMarkBotRead,
   onRegisterSession,
+  onToggleBotPush,
   onRefreshProfiles,
   onAvatarChange,
   onToggleHideProfile,
@@ -686,6 +693,20 @@ export const BotsView: React.FC<BotsViewProps> = ({
             isPrivate={privateSet.has(manageProfile.name)}
             isChief={chiefBotName === manageProfile.name}
             isPinned={pinnedBotNames.includes(manageProfile.name)}
+            pushEnabled={
+              !privateSet.has(manageProfile.name) &&
+              pushPreferences.globalEnabled &&
+              !pushPreferences.disabledBots.includes(manageProfile.name)
+            }
+            pushGlobalEnabled={pushPreferences.globalEnabled}
+            onTogglePush={
+              !privateSet.has(manageProfile.name) && onToggleBotPush
+                ? () => {
+                    const currentlyOn = !pushPreferences.disabledBots.includes(manageProfile.name);
+                    void onToggleBotPush(manageProfile.name, !currentlyOn);
+                  }
+                : undefined
+            }
             onToggleChief={
               !privateSet.has(manageProfile.name)
                 ? () => void handleToggleChiefBot(manageProfile)
@@ -1152,6 +1173,20 @@ export const BotsView: React.FC<BotsViewProps> = ({
           isPrivate={privateSet.has(manageProfile.name)}
           isChief={chiefBotName === manageProfile.name}
           isPinned={pinnedBotNames.includes(manageProfile.name)}
+          pushEnabled={
+            !privateSet.has(manageProfile.name) &&
+            pushPreferences.globalEnabled &&
+            !pushPreferences.disabledBots.includes(manageProfile.name)
+          }
+          pushGlobalEnabled={pushPreferences.globalEnabled}
+          onTogglePush={
+            !privateSet.has(manageProfile.name) && onToggleBotPush
+              ? () => {
+                  const currentlyOn = !pushPreferences.disabledBots.includes(manageProfile.name);
+                  void onToggleBotPush(manageProfile.name, !currentlyOn);
+                }
+              : undefined
+          }
           onToggleChief={
             !privateSet.has(manageProfile.name)
               ? () => void handleToggleChiefBot(manageProfile)
@@ -1247,6 +1282,9 @@ interface BotManageSheetProps {
   isPrivate?: boolean;
   isChief?: boolean;
   isPinned?: boolean;
+  pushEnabled?: boolean;
+  pushGlobalEnabled?: boolean;
+  onTogglePush?: () => void;
   onToggleChief?: () => void;
   onTogglePin?: () => void;
   onTogglePrivate?: () => Promise<void> | void;
@@ -1275,6 +1313,9 @@ const BotManageSheet: React.FC<BotManageSheetProps> = ({
   isPrivate = false,
   isChief = false,
   isPinned = false,
+  pushEnabled = true,
+  pushGlobalEnabled = true,
+  onTogglePush,
   onToggleChief,
   onTogglePin,
   onTogglePrivate,
@@ -1346,7 +1387,7 @@ const BotManageSheet: React.FC<BotManageSheetProps> = ({
           {profile.model || "Modell & Anbieter wählen"}
         </button>
 
-        {(onToggleChief || onTogglePin) && (
+        {(onToggleChief || onTogglePin || onTogglePush || isPrivate) && (
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "center" }}>
             {onToggleChief && (
               <button
@@ -1369,6 +1410,31 @@ const BotManageSheet: React.FC<BotManageSheetProps> = ({
                 <Pin size={14} />
                 {isPinned ? "Oben angeheftet" : "Oben anheften"}
               </button>
+            )}
+            {onTogglePush && !isPrivate && (
+              <button
+                type="button"
+                className={`btn sm ${pushEnabled ? "push-active-btn" : ""}`}
+                disabled={saving || !pushGlobalEnabled}
+                title={
+                  !pushGlobalEnabled
+                    ? "Master-Schalter für Push ist aus (unter Konto aktivieren)"
+                    : undefined
+                }
+                onClick={onTogglePush}
+              >
+                {pushEnabled ? <Bell size={14} /> : <BellOff size={14} />}
+                {!pushGlobalEnabled
+                  ? "Push (alle aus)"
+                  : pushEnabled
+                    ? "Push: An"
+                    : "Push: Aus"}
+              </button>
+            )}
+            {isPrivate && (
+              <span className="pill" style={{ fontSize: "0.74rem" }}>
+                <BellOff size={12} /> Push dauerhaft aus (Privat)
+              </span>
             )}
           </div>
         )}
@@ -2155,11 +2221,13 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
               });
             }
           }
-          notifyIfBackgrounded({
-            title: visual.label,
-            body: stripSecretRequestTag(finalText).slice(0, 180),
-            bot: profile.name,
-          });
+          if (!isPrivateBot) {
+            notifyIfBackgrounded({
+              title: visual.label,
+              body: stripSecretRequestTag(finalText).slice(0, 180),
+              bot: profile.name,
+            });
+          }
         }
         if (document.visibilityState === "visible") {
           onMarkBotRead?.(profile.name, {

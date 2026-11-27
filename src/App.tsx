@@ -56,8 +56,11 @@ import {
 import {
   disablePushNotifications,
   enablePushNotifications,
+  fetchPushPreferences,
   fetchPushStatus,
   sendTestPushNotification,
+  updatePushPreferences,
+  type PushPreferences,
   type PushStatusInfo,
 } from "./lib/pushClient";
 import {
@@ -130,6 +133,10 @@ export const App: React.FC = () => {
   const [showCredentialVault, setShowCredentialVault] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const [pushStatus, setPushStatus] = useState<PushStatusInfo | null>(null);
+  const [pushPreferences, setPushPreferences] = useState<PushPreferences>({
+    globalEnabled: true,
+    disabledBots: [],
+  });
   const [pushBusy, setPushBusy] = useState(false);
   const [pushFeedback, setPushFeedback] = useState<string | null>(null);
   const [autoApproveSafe, setAutoApproveSafe] = useState<boolean>(() => loadAutoApproveSafe());
@@ -376,9 +383,43 @@ export const App: React.FC = () => {
   useEffect(() => {
     if (showAccountSheet) {
       setPushFeedback(null);
-      void fetchPushStatus().then(setPushStatus);
+      void fetchPushStatus().then((st) => {
+        setPushStatus(st);
+        setPushPreferences(st.preferences);
+      });
     }
   }, [showAccountSheet]);
+
+  const handleToggleGlobalPush = useCallback(async (nextEnabled: boolean) => {
+    setPushPreferences((prev) => ({ ...prev, globalEnabled: nextEnabled }));
+    try {
+      const updated = await updatePushPreferences({ globalEnabled: nextEnabled });
+      setPushPreferences(updated);
+      setPushFeedback(
+        nextEnabled
+          ? "Push für alle öffentlichen Bots aktiviert."
+          : "Push für alle Bots pausiert."
+      );
+    } catch (err) {
+      setPushFeedback(err instanceof Error ? err.message : "Push-Einstellung fehlgeschlagen.");
+      void fetchPushPreferences().then(setPushPreferences);
+    }
+  }, []);
+
+  const handleToggleBotPush = useCallback(async (botName: string, nextEnabled: boolean) => {
+    setPushPreferences((prev) => ({
+      ...prev,
+      disabledBots: nextEnabled
+        ? prev.disabledBots.filter((b) => b !== botName)
+        : Array.from(new Set([...prev.disabledBots, botName])),
+    }));
+    try {
+      const updated = await updatePushPreferences({ bot: botName, enabled: nextEnabled });
+      setPushPreferences(updated);
+    } catch {
+      void fetchPushPreferences().then(setPushPreferences);
+    }
+  }, []);
 
   async function handleTogglePush() {
     setPushBusy(true);
@@ -574,6 +615,7 @@ export const App: React.FC = () => {
       if (me || !srvStatus.auth_required) {
         hermesWs.connect();
         await loadProfiles();
+        void fetchPushPreferences().then(setPushPreferences);
       } else {
         hermesWs.disconnect();
       }
@@ -1035,6 +1077,7 @@ export const App: React.FC = () => {
             recentByProfile={recentByProfile}
             unreadByBot={unreadByBot}
             otherUnreadCount={otherPublicBotUnreadTotal}
+            pushPreferences={pushPreferences}
             hiddenProfiles={hiddenProfiles}
             privateProfileNames={privateProfileNames}
             loading={profilesLoading}
@@ -1046,6 +1089,7 @@ export const App: React.FC = () => {
             onSelectBot={handleSelectBot}
             onMarkBotRead={markBotRead}
             onRegisterSession={registerBotSession}
+            onToggleBotPush={handleToggleBotPush}
             onRefreshProfiles={() => loadProfiles()}
             onAvatarChange={handleAvatarChange}
             onToggleHideProfile={handleToggleHideProfile}
@@ -1076,6 +1120,7 @@ export const App: React.FC = () => {
               recentByProfile={recentByProfile}
               unreadByBot={unreadByBot}
               otherUnreadCount={otherPublicBotUnreadTotal}
+              pushPreferences={pushPreferences}
               hiddenProfiles={hiddenProfiles}
               privateProfileNames={privateProfileNames}
               loading={profilesLoading}
@@ -1087,6 +1132,7 @@ export const App: React.FC = () => {
               onSelectBot={handleSelectBot}
               onMarkBotRead={markBotRead}
               onRegisterSession={registerBotSession}
+              onToggleBotPush={handleToggleBotPush}
               onRefreshProfiles={() => loadProfiles()}
               onAvatarChange={handleAvatarChange}
               onToggleHideProfile={handleToggleHideProfile}
@@ -1276,6 +1322,57 @@ export const App: React.FC = () => {
               {pushFeedback}
             </div>
           )}
+
+          <div className="push-pref-section">
+            <div className="push-pref-row master">
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontWeight: 700, fontSize: "0.84rem" }}>Alle Bots (Master-Schalter)</div>
+                <div style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
+                  Neue öffentliche Bots sind automatisch an · private Bots pushen niemals
+                </div>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={pushPreferences.globalEnabled}
+                aria-label="Push für alle Bots umschalten"
+                className={`push-toggle-switch ${pushPreferences.globalEnabled ? "on" : ""}`}
+                onClick={() => void handleToggleGlobalPush(!pushPreferences.globalEnabled)}
+              >
+                <span className="push-toggle-knob" />
+              </button>
+            </div>
+
+            {publicProfiles.filter((p) => !hiddenProfiles.includes(p.name)).length > 0 && (
+              <div className={`push-pref-list ${!pushPreferences.globalEnabled ? "dimmed" : ""}`}>
+                {publicProfiles
+                  .filter((p) => !hiddenProfiles.includes(p.name))
+                  .map((p) => {
+                    const vis = getBotVisual(p);
+                    const enabled = !pushPreferences.disabledBots.includes(p.name);
+                    return (
+                      <div key={p.name} className="push-pref-row">
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                          <BotAvatar visual={vis} imageUrl={avatars[p.name]} size="xs" />
+                          <span className="push-pref-name">{vis.label}</span>
+                        </div>
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={enabled && pushPreferences.globalEnabled}
+                          aria-label={`Push für ${vis.label} umschalten`}
+                          disabled={!pushPreferences.globalEnabled}
+                          className={`push-toggle-switch ${enabled && pushPreferences.globalEnabled ? "on" : ""}`}
+                          onClick={() => void handleToggleBotPush(p.name, !enabled)}
+                        >
+                          <span className="push-toggle-knob" />
+                        </button>
+                      </div>
+                    );
+                  })}
+              </div>
+            )}
+          </div>
         </div>
 
         <div className="card" style={{ marginBottom: 12 }}>

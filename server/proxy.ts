@@ -5,7 +5,7 @@ import path from "node:path";
 import type { ServerConfig } from "./config.js";
 import { appendAutonomousGuidance } from "../shared/botAutonomy.js";
 import { handlePocketPagesRoute } from "./pages.js";
-import { handlePocketPushRoute } from "./push.js";
+import { handlePocketPushRoute, setBotPrivateInPushStore } from "./push.js";
 import {
   adaptSetCookieHeader,
   isAllowedHermesPath,
@@ -429,6 +429,7 @@ async function handlePocketPrivacy(
       res.end(text);
       return;
     }
+    setBotPrivateInPushStore(profile, isPrivate);
     sendJson(res, 200, { ok: true, profile, private: isPrivate });
   } catch (err) {
     clearTimeout(timeout);

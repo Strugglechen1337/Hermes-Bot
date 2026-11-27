@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import * as webpushNs from "web-push";
@@ -20,11 +21,18 @@ export interface StoredPushSubscription {
   userAgent?: string;
 }
 
+export interface PushPreferences {
+  globalEnabled: boolean;
+  disabledBots: string[];
+}
+
 interface PushStoreFile {
   vapidPublicKey: string;
   vapidPrivateKey: string;
   botPushToken: string;
   subscriptions: StoredPushSubscription[];
+  preferences: PushPreferences;
+  privateBots: string[];
 }
 
 export function getPushDataDir(): string {
@@ -67,6 +75,26 @@ async function readJsonBody(req: IncomingMessage, maxBytes = 32 * 1024): Promise
 let cachedStore: PushStoreFile | null = null;
 let cachedStorePath: string | null = null;
 
+function normalizeBotList(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  return Array.from(
+    new Set(
+      raw
+        .filter((x): x is string => typeof x === "string")
+        .map((x) => x.trim())
+        .filter((x) => /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(x))
+    )
+  );
+}
+
+function normalizePreferences(raw: unknown): PushPreferences {
+  const obj = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  return {
+    globalEnabled: typeof obj.globalEnabled === "boolean" ? obj.globalEnabled : true,
+    disabledBots: normalizeBotList(obj.disabledBots),
+  };
+}
+
 function ensureStore(): PushStoreFile {
   const storePath = getStorePath();
   if (cachedStore && cachedStorePath === storePath) {
@@ -85,6 +113,8 @@ function ensureStore(): PushStoreFile {
           vapidPrivateKey: parsed.vapidPrivateKey,
           botPushToken: parsed.botPushToken,
           subscriptions: Array.isArray(parsed.subscriptions) ? parsed.subscriptions : [],
+          preferences: normalizePreferences(parsed.preferences),
+          privateBots: normalizeBotList(parsed.privateBots),
         };
         persistBotToken(loaded.botPushToken);
         cachedStore = loaded;
@@ -102,9 +132,78 @@ function ensureStore(): PushStoreFile {
     vapidPrivateKey: keys.privateKey,
     botPushToken: crypto.randomBytes(32).toString("hex"),
     subscriptions: [],
+    preferences: { globalEnabled: true, disabledBots: [] },
+    privateBots: [],
   };
   saveStore(fresh);
   return fresh;
+}
+
+/**
+ * Syncs private-bot isolation state into the push store so private bots can
+ * never send Web Push notifications (even if invoked directly via `send-push`).
+ */
+export function setBotPrivateInPushStore(profileName: string, isPrivate: boolean): void {
+  const clean = profileName.trim();
+  if (!clean || clean === "default") return;
+  const store = ensureStore();
+  const next = isPrivate
+    ? Array.from(new Set([...store.privateBots, clean]))
+    : store.privateBots.filter((b) => b !== clean);
+  store.privateBots = next;
+  saveStore(store);
+}
+
+/**
+ * Checks whether a profile is isolated in the Private Bot Vault either via the
+ * push store mirror or directly on disk in Hermes profile config/metadata.
+ */
+export function isBotPrivateOnServer(botName: string, store?: PushStoreFile): boolean {
+  const clean = botName.trim();
+  if (!clean || clean === "default") return false;
+  const currentStore = store ?? ensureStore();
+  if (currentStore.privateBots.includes(clean)) return true;
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(clean)) return false;
+
+  try {
+    const hermesHome = process.env.HERMES_HOME?.trim() || path.join(os.homedir(), ".hermes");
+    const profileDir = path.join(hermesHome, "profiles", clean);
+    const configPath = path.join(profileDir, "config.yaml");
+    if (fs.existsSync(configPath)) {
+      const cfgText = fs.readFileSync(configPath, "utf8");
+      if (/^\s*bot_mode_protocol\s*:\s*false\b/m.test(cfgText)) {
+        return true;
+      }
+    }
+    const profileYamlPath = path.join(profileDir, "profile.yaml");
+    if (fs.existsSync(profileYamlPath)) {
+      const profText = fs.readFileSync(profileYamlPath, "utf8");
+      if (/hermes-pocket[\s\S]{0,120}\bprivate\s*:\s*true\b/m.test(profText)) {
+        return true;
+      }
+    }
+  } catch {
+    // Non-fatal
+  }
+  return false;
+}
+
+export function getPushBlockReason(
+  botName: string,
+  store?: PushStoreFile
+): "private_bot" | "global_disabled" | "bot_disabled" | null {
+  const currentStore = store ?? ensureStore();
+  const clean = botName.trim();
+  if (clean && isBotPrivateOnServer(clean, currentStore)) {
+    return "private_bot";
+  }
+  if (!currentStore.preferences.globalEnabled) {
+    return "global_disabled";
+  }
+  if (clean && currentStore.preferences.disabledBots.includes(clean)) {
+    return "bot_disabled";
+  }
+  return null;
 }
 
 function persistBotToken(token: string): void {
@@ -284,6 +383,12 @@ export async function handlePocketPushRoute(
       return true;
     }
 
+    const blocked = getPushBlockReason(bot, store);
+    if (blocked) {
+      sendJson(res, 200, { ok: true, sent: 0, failed: 0, total: store.subscriptions.length, blocked });
+      return true;
+    }
+
     const stats = await dispatchPushNotification({ title, body: text, bot, tag });
     sendJson(res, 200, { ok: true, ...stats });
     return true;
@@ -307,7 +412,52 @@ export async function handlePocketPushRoute(
       supported: true,
       vapidPublicKey: store.vapidPublicKey,
       subscribedCount: store.subscriptions.length,
+      preferences: store.preferences,
     });
+    return true;
+  }
+
+  if (pathname === "/api/pocket/push/preferences") {
+    if (method === "GET") {
+      sendJson(res, 200, { ok: true, preferences: store.preferences });
+      return true;
+    }
+    if (method !== "PUT") {
+      sendJson(res, 405, { error: "method_not_allowed" });
+      return true;
+    }
+    let body: Record<string, unknown>;
+    try {
+      body = await readJsonBody(req);
+    } catch {
+      sendJson(res, 400, { error: "bad_request" });
+      return true;
+    }
+
+    const next: PushPreferences = {
+      globalEnabled:
+        typeof body.globalEnabled === "boolean"
+          ? body.globalEnabled
+          : store.preferences.globalEnabled,
+      disabledBots: Array.isArray(body.disabledBots)
+        ? normalizeBotList(body.disabledBots)
+        : [...store.preferences.disabledBots],
+    };
+
+    if (typeof body.bot === "string" && typeof body.enabled === "boolean") {
+      const target = body.bot.trim();
+      if (/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(target)) {
+        if (body.enabled) {
+          next.disabledBots = next.disabledBots.filter((b) => b !== target);
+        } else if (!next.disabledBots.includes(target)) {
+          next.disabledBots.push(target);
+        }
+      }
+    }
+
+    store.preferences = next;
+    saveStore(store);
+    sendJson(res, 200, { ok: true, preferences: store.preferences });
     return true;
   }
 
