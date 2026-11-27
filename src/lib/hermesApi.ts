@@ -61,6 +61,19 @@ async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   return parsed as T;
 }
 
+export interface PocketPageSummary {
+  id: string;
+  title: string;
+  summary: string;
+  bot: string;
+  createdAt: number;
+}
+
+export async function fetchPocketPages(): Promise<PocketPageSummary[]> {
+  const data = await requestJson<{ pages?: PocketPageSummary[] }>("/api/pocket/pages");
+  return Array.isArray(data?.pages) ? data.pages : [];
+}
+
 export async function fetchStatus(): Promise<HermesStatusResponse> {
   return requestJson<HermesStatusResponse>("/api/status");
 }

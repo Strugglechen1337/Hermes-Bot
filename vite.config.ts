@@ -5,6 +5,16 @@ const bffPort = Number(process.env.PORT || 9135);
 
 export default defineConfig({
   plugins: [react()],
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          "react-vendor": ["react", "react-dom"],
+          icons: ["lucide-react"],
+        },
+      },
+    },
+  },
   server: {
     host: "127.0.0.1",
     port: 5178,

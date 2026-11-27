@@ -2590,3 +2590,183 @@ a {
   border-color: rgba(52, 211, 153, 0.38);
   color: var(--status-ok);
 }
+
+/* ── Message Quick Actions (Copy, Share, Forward) ──────────────────────────── */
+
+.msg-actions-row {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 5px;
+  padding-left: 4px;
+}
+
+.msg-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  font-weight: 600;
+  transition: background 0.14s ease, color 0.14s ease, border-color 0.14s ease;
+}
+
+.msg-action-btn:hover,
+.msg-action-btn:active {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.16);
+  color: var(--text-primary);
+}
+
+/* ── Briefings & Pages Archive Sheet ───────────────────────────────────────── */
+
+.archive-page-card {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 10px 10px 12px;
+  border-radius: var(--radius-md);
+  background: var(--bg-surface-elevated);
+  border: 1px solid var(--border-subtle);
+}
+
+.archive-page-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  text-align: left;
+  padding: 0;
+}
+
+.archive-page-title {
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.archive-page-summary {
+  margin-top: 2px;
+  font-size: 0.79rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.archive-page-bot {
+  margin-top: 3px;
+  font-size: 0.71rem;
+  font-weight: 600;
+  color: var(--accent-send);
+}
+
+/* ── Wide Split Layout (iPhone Duo / Foldable Unfolded, iPad & Laptop) ─────── */
+
+.app-shell.wide-split {
+  max-width: 1280px;
+  padding-left: env(safe-area-inset-left, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
+}
+
+.desktop-split {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+}
+
+.desktop-sidebar {
+  width: clamp(290px, 34vw, 370px);
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid var(--border-subtle);
+  background: var(--bg-canvas);
+}
+
+/* Foldable / Dual-Screen hinge alignment (e.g. iPhone Duo / Fold unfolded) */
+@media (horizontal-viewport-segments: 2) {
+  .desktop-sidebar {
+    width: env(viewport-segment-width 0 0, 50%);
+  }
+}
+
+.desktop-sidebar-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 10px 12px 14px;
+}
+
+.desktop-sidebar-dock {
+  flex-shrink: 0;
+  padding: 8px 10px calc(var(--safe-bottom) + 10px);
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.tabbar.inline {
+  position: static;
+  left: auto;
+  right: auto;
+  bottom: auto;
+  max-width: none;
+  margin: 0;
+  box-shadow: none;
+}
+
+.desktop-main {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg-canvas);
+}
+
+.desktop-chat-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 32px;
+  color: var(--text-secondary);
+}
+
+.desktop-chat-empty h3 {
+  margin: 12px 0 6px;
+  color: var(--text-primary);
+  font-size: 1.05rem;
+}
+
+.desktop-chat-empty p {
+  margin: 0;
+  max-width: 320px;
+  font-size: 0.86rem;
+  line-height: 1.45;
+}
+
+.bot-list-item.is-selected {
+  background: rgba(255, 255, 255, 0.07);
+  border-radius: 14px;
+  padding-left: 8px;
+  padding-right: 4px;
+  margin-left: -6px;
+  margin-right: -2px;
+}

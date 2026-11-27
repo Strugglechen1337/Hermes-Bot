@@ -1,10 +1,11 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Bell,
   BellOff,
   Bot,
   CalendarClock,
   CreditCard,
+  FileText,
   Lock,
   LogOut,
   Plug,
@@ -26,13 +27,27 @@ import type {
 } from "../shared/types";
 import { BotAvatar } from "./components/BotAvatar";
 import { BotsView } from "./components/BotsView";
-import { ConnectorsView } from "./components/ConnectorsView";
-import { CredentialVaultSheet } from "./components/CredentialVaultSheet";
-import { GroupsView } from "./components/GroupsView";
 import { LoginView } from "./components/LoginView";
-import { PrivateVaultSheet } from "./components/PrivateVaultSheet";
-import { RoutinesView } from "./components/RoutinesView";
 import { Sheet } from "./components/Sheet";
+
+const ConnectorsView = lazy(() =>
+  import("./components/ConnectorsView").then((m) => ({ default: m.ConnectorsView }))
+);
+const CredentialVaultSheet = lazy(() =>
+  import("./components/CredentialVaultSheet").then((m) => ({ default: m.CredentialVaultSheet }))
+);
+const GroupsView = lazy(() =>
+  import("./components/GroupsView").then((m) => ({ default: m.GroupsView }))
+);
+const PagesArchiveSheet = lazy(() =>
+  import("./components/PagesArchiveSheet").then((m) => ({ default: m.PagesArchiveSheet }))
+);
+const PrivateVaultSheet = lazy(() =>
+  import("./components/PrivateVaultSheet").then((m) => ({ default: m.PrivateVaultSheet }))
+);
+const RoutinesView = lazy(() =>
+  import("./components/RoutinesView").then((m) => ({ default: m.RoutinesView }))
+);
 import { loadAutoApproveSafe, saveAutoApproveSafe } from "./lib/approvalPolicy";
 import { fetchBotAvatar } from "./lib/avatarStore";
 import { getBotVisual } from "./lib/botTheme";
@@ -131,6 +146,26 @@ export const App: React.FC = () => {
 
   const [showAccountSheet, setShowAccountSheet] = useState(false);
   const [showCredentialVault, setShowCredentialVault] = useState(false);
+  const [showPagesArchive, setShowPagesArchive] = useState(false);
+  const [draftPrefill, setDraftPrefill] = useState<{
+    botName: string;
+    text: string;
+    id: number;
+  } | null>(null);
+  const [isWideLayout, setIsWideLayout] = useState<boolean>(() =>
+    typeof window !== "undefined" && typeof window.matchMedia === "function"
+      ? window.matchMedia("(min-width: 740px)").matches
+      : false
+  );
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
+    const mq = window.matchMedia("(min-width: 740px)");
+    const onChange = (ev: MediaQueryListEvent) => setIsWideLayout(ev.matches);
+    setIsWideLayout(mq.matches);
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, []);
   const [loggingOut, setLoggingOut] = useState(false);
   const [pushStatus, setPushStatus] = useState<PushStatusInfo | null>(null);
   const [pushPreferences, setPushPreferences] = useState<PushPreferences>({
@@ -516,6 +551,16 @@ export const App: React.FC = () => {
       if (name) {
         markBotRead(name);
       }
+    },
+    [markBotRead]
+  );
+
+  const handleForwardToBot = useCallback(
+    (targetBotName: string, text: string) => {
+      setTab("bots");
+      setSelectedBotName(targetBotName);
+      markBotRead(targetBotName);
+      setDraftPrefill({ botName: targetBotName, text, id: Date.now() });
     },
     [markBotRead]
   );
@@ -975,12 +1020,135 @@ export const App: React.FC = () => {
     );
   }
 
+  const useSplitBotsLayout = isWideLayout && tab === "bots";
   const inFullscreenChat =
-    (tab === "bots" && Boolean(selectedBotName)) ||
+    (!useSplitBotsLayout && tab === "bots" && Boolean(selectedBotName)) ||
     (tab === "groups" && Boolean(selectedRoomId));
 
+  const renderTopbar = () => (
+    <header className="topbar">
+      <div className="topbar-title-group">
+        <img
+          src="/icon.svg"
+          alt=""
+          width={26}
+          height={26}
+          style={{ borderRadius: 7, flexShrink: 0 }}
+        />
+        <h1 className="topbar-title">{TAB_TITLES[tab]}</h1>
+      </div>
+
+      <div className="topbar-actions">
+        {wsState !== "connected" && (
+          <span className="pill warn" title="Gateway-Verbindung">
+            <WifiOff size={12} />
+            {wsState === "connecting" ? "Verbinde…" : "Offline"}
+          </span>
+        )}
+        <button
+          type="button"
+          className="icon-btn ghost"
+          aria-label="Briefings & Seiten"
+          title="Briefings & Seiten"
+          onClick={() => setShowPagesArchive(true)}
+        >
+          <FileText size={18} />
+        </button>
+        {tab === "bots" && (
+          <button
+            type="button"
+            className="icon-btn primary"
+            aria-label="Neuen Bot erstellen"
+            title="Neuen Bot erstellen"
+            onClick={() => setCreateBotTrigger((n) => n + 1)}
+          >
+            <Plus size={18} />
+          </button>
+        )}
+        <button
+          type="button"
+          className="icon-btn ghost"
+          aria-label="Konto und Info"
+          onClick={() => setShowAccountSheet(true)}
+        >
+          <User size={19} />
+        </button>
+      </div>
+    </header>
+  );
+
+  const renderTabbar = (inline = false) => (
+    <nav className={`tabbar ${inline ? "inline" : ""}`} aria-label="Hauptnavigation">
+      <button
+        type="button"
+        className={`tabbar-item ${tab === "bots" ? "active" : ""}`}
+        aria-label={
+          publicUnreadBotTotal > 0
+            ? `Bots (${publicUnreadBotTotal} ungelesene ${publicUnreadBotTotal === 1 ? "Nachricht" : "Nachrichten"})`
+            : "Bots"
+        }
+        onClick={() => {
+          setTab("bots");
+          if (!isWideLayout) setSelectedBotName(null);
+        }}
+      >
+        <span className="tabbar-icon-wrap">
+          <Bot size={20} />
+          {publicUnreadBotTotal > 0 && (
+            <span className="tabbar-badge" aria-hidden="true">
+              {formatBadgeCount(publicUnreadBotTotal)}
+            </span>
+          )}
+        </span>
+        <span>Bots</span>
+      </button>
+
+      <button
+        type="button"
+        className={`tabbar-item ${tab === "groups" ? "active" : ""}`}
+        aria-label={
+          groupUnreadRoomCount > 0
+            ? `Gruppen (${groupUnreadRoomCount} mit neuen Nachrichten)`
+            : "Gruppen"
+        }
+        onClick={() => {
+          setTab("groups");
+          setSelectedRoomId(null);
+        }}
+      >
+        <span className="tabbar-icon-wrap">
+          <Users size={20} />
+          {groupUnreadRoomCount > 0 && (
+            <span className="tabbar-badge" aria-hidden="true">
+              {formatBadgeCount(groupUnreadRoomCount)}
+            </span>
+          )}
+        </span>
+        <span>Gruppen</span>
+      </button>
+
+      <button
+        type="button"
+        className={`tabbar-item ${tab === "routines" ? "active" : ""}`}
+        onClick={() => setTab("routines")}
+      >
+        <CalendarClock size={20} />
+        <span>Routinen</span>
+      </button>
+
+      <button
+        type="button"
+        className={`tabbar-item ${tab === "connectors" ? "active" : ""}`}
+        onClick={() => setTab("connectors")}
+      >
+        <Plug size={20} />
+        <span>Connectoren</span>
+      </button>
+    </nav>
+  );
+
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${useSplitBotsLayout ? "wide-split" : ""}`}>
       {newMsgToast && (
         <div className="new-msg-toast" role="status" aria-live="polite">
           <button
@@ -1026,94 +1194,42 @@ export const App: React.FC = () => {
         </div>
       )}
 
-      {!inFullscreenChat && (
-        <header className="topbar">
-          <div className="topbar-title-group">
-            <img
-              src="/icon.svg"
-              alt=""
-              width={26}
-              height={26}
-              style={{ borderRadius: 7, flexShrink: 0 }}
-            />
-            <h1 className="topbar-title">{TAB_TITLES[tab]}</h1>
-          </div>
-
-          <div className="topbar-actions">
-            {wsState !== "connected" && (
-              <span className="pill warn" title="Gateway-Verbindung">
-                <WifiOff size={12} />
-                {wsState === "connecting" ? "Verbinde…" : "Offline"}
-              </span>
-            )}
-            {tab === "bots" && (
-              <button
-                type="button"
-                className="icon-btn primary"
-                aria-label="Neuen Bot erstellen"
-                title="Neuen Bot erstellen"
-                onClick={() => setCreateBotTrigger((n) => n + 1)}
-              >
-                <Plus size={18} />
-              </button>
-            )}
-            <button
-              type="button"
-              className="icon-btn ghost"
-              aria-label="Konto und Info"
-              onClick={() => setShowAccountSheet(true)}
-            >
-              <User size={19} />
-            </button>
-          </div>
-        </header>
-      )}
-
-      {inFullscreenChat ? (
-        tab === "bots" ? (
-          <BotsView
-            profiles={profiles}
-            avatars={avatars}
-            recentByProfile={recentByProfile}
-            unreadByBot={unreadByBot}
-            otherUnreadCount={otherPublicBotUnreadTotal}
-            pushPreferences={pushPreferences}
-            hiddenProfiles={hiddenProfiles}
-            privateProfileNames={privateProfileNames}
-            loading={profilesLoading}
-            error={profilesError}
-            wsState={wsState}
-            selectedBotName={selectedBotName}
-            openCreateTrigger={createBotTrigger}
-            createAsPrivate={createPrivateMode}
-            onSelectBot={handleSelectBot}
-            onMarkBotRead={markBotRead}
-            onRegisterSession={registerBotSession}
-            onToggleBotPush={handleToggleBotPush}
-            onRefreshProfiles={() => loadProfiles()}
-            onAvatarChange={handleAvatarChange}
-            onToggleHideProfile={handleToggleHideProfile}
-            onToggleBotPrivate={handleToggleBotPrivate}
-            onOpenPrivateVault={() => setShowVaultSheet(true)}
-            onOpenConnectors={() => {
-              setSelectedBotName(null);
-              setTab("connectors");
-            }}
-          />
-        ) : (
-          <GroupsView
-            profiles={publicProfiles}
-            avatars={avatars}
-            unreadByGroup={unreadByGroup}
-            wsState={wsState}
-            selectedRoomId={selectedRoomId}
-            onSelectRoom={handleSelectRoom}
-            onMarkGroupRead={markGroupRead}
-          />
-        )
-      ) : (
-        <main className="main-scroll">
-          {tab === "bots" && (
+      {useSplitBotsLayout ? (
+        <div className="desktop-split">
+          <aside className="desktop-sidebar">
+            {renderTopbar()}
+            <div className="desktop-sidebar-scroll">
+              <BotsView
+                profiles={profiles}
+                avatars={avatars}
+                recentByProfile={recentByProfile}
+                unreadByBot={unreadByBot}
+                otherUnreadCount={otherPublicBotUnreadTotal}
+                pushPreferences={pushPreferences}
+                hiddenProfiles={hiddenProfiles}
+                privateProfileNames={privateProfileNames}
+                loading={profilesLoading}
+                error={profilesError}
+                wsState={wsState}
+                selectedBotName={selectedBotName}
+                layoutMode="list-only"
+                openCreateTrigger={createBotTrigger}
+                createAsPrivate={createPrivateMode}
+                onSelectBot={handleSelectBot}
+                onMarkBotRead={markBotRead}
+                onRegisterSession={registerBotSession}
+                onToggleBotPush={handleToggleBotPush}
+                onRefreshProfiles={() => loadProfiles()}
+                onAvatarChange={handleAvatarChange}
+                onToggleHideProfile={handleToggleHideProfile}
+                onToggleBotPrivate={handleToggleBotPrivate}
+                onOpenPrivateVault={() => setShowVaultSheet(true)}
+                onOpenConnectors={() => setTab("connectors")}
+              />
+            </div>
+            <div className="desktop-sidebar-dock">{renderTabbar(true)}</div>
+          </aside>
+          <section className="desktop-main">
             <BotsView
               profiles={profiles}
               avatars={avatars}
@@ -1127,8 +1243,10 @@ export const App: React.FC = () => {
               error={profilesError}
               wsState={wsState}
               selectedBotName={selectedBotName}
-              openCreateTrigger={createBotTrigger}
-              createAsPrivate={createPrivateMode}
+              layoutMode="chat-only"
+              draftPrefill={draftPrefill}
+              onConsumeDraftPrefill={() => setDraftPrefill(null)}
+              onForwardToBot={handleForwardToBot}
               onSelectBot={handleSelectBot}
               onMarkBotRead={markBotRead}
               onRegisterSession={registerBotSession}
@@ -1140,101 +1258,128 @@ export const App: React.FC = () => {
               onOpenPrivateVault={() => setShowVaultSheet(true)}
               onOpenConnectors={() => setTab("connectors")}
             />
-          )}
-          {tab === "groups" && (
-            <GroupsView
-              profiles={publicProfiles}
-              avatars={avatars}
-              unreadByGroup={unreadByGroup}
-              wsState={wsState}
-              selectedRoomId={selectedRoomId}
-              onSelectRoom={handleSelectRoom}
-              onMarkGroupRead={markGroupRead}
-            />
-          )}
-          {tab === "routines" && <RoutinesView profiles={publicProfiles} />}
-          {tab === "connectors" && (
-            <ConnectorsView
-              profiles={publicProfiles}
-              avatars={avatars}
-              wsState={wsState}
-              onOpenBotChat={(name) => {
-                setTab("bots");
-                handleSelectBot(name);
-              }}
-            />
-          )}
-        </main>
-      )}
+          </section>
+        </div>
+      ) : (
+        <>
+          {!inFullscreenChat && renderTopbar()}
 
-      {!inFullscreenChat && (
-        <nav className="tabbar" aria-label="Hauptnavigation">
-          <button
-            type="button"
-            className={`tabbar-item ${tab === "bots" ? "active" : ""}`}
-            aria-label={
-              publicUnreadBotTotal > 0
-                ? `Bots (${publicUnreadBotTotal} ungelesene ${publicUnreadBotTotal === 1 ? "Nachricht" : "Nachrichten"})`
-                : "Bots"
-            }
-            onClick={() => {
-              setTab("bots");
-              setSelectedBotName(null);
-            }}
-          >
-            <span className="tabbar-icon-wrap">
-              <Bot size={20} />
-              {publicUnreadBotTotal > 0 && (
-                <span className="tabbar-badge" aria-hidden="true">
-                  {formatBadgeCount(publicUnreadBotTotal)}
-                </span>
+          {inFullscreenChat ? (
+            tab === "bots" ? (
+              <BotsView
+                profiles={profiles}
+                avatars={avatars}
+                recentByProfile={recentByProfile}
+                unreadByBot={unreadByBot}
+                otherUnreadCount={otherPublicBotUnreadTotal}
+                pushPreferences={pushPreferences}
+                hiddenProfiles={hiddenProfiles}
+                privateProfileNames={privateProfileNames}
+                loading={profilesLoading}
+                error={profilesError}
+                wsState={wsState}
+                selectedBotName={selectedBotName}
+                draftPrefill={draftPrefill}
+                onConsumeDraftPrefill={() => setDraftPrefill(null)}
+                onForwardToBot={handleForwardToBot}
+                openCreateTrigger={createBotTrigger}
+                createAsPrivate={createPrivateMode}
+                onSelectBot={handleSelectBot}
+                onMarkBotRead={markBotRead}
+                onRegisterSession={registerBotSession}
+                onToggleBotPush={handleToggleBotPush}
+                onRefreshProfiles={() => loadProfiles()}
+                onAvatarChange={handleAvatarChange}
+                onToggleHideProfile={handleToggleHideProfile}
+                onToggleBotPrivate={handleToggleBotPrivate}
+                onOpenPrivateVault={() => setShowVaultSheet(true)}
+                onOpenConnectors={() => {
+                  setSelectedBotName(null);
+                  setTab("connectors");
+                }}
+              />
+            ) : (
+              <Suspense fallback={<div className="empty-state"><p>Lade Gruppe…</p></div>}>
+                <GroupsView
+                  profiles={publicProfiles}
+                  avatars={avatars}
+                  unreadByGroup={unreadByGroup}
+                  wsState={wsState}
+                  selectedRoomId={selectedRoomId}
+                  onSelectRoom={handleSelectRoom}
+                  onMarkGroupRead={markGroupRead}
+                />
+              </Suspense>
+            )
+          ) : (
+            <main className="main-scroll">
+              {tab === "bots" && (
+                <BotsView
+                  profiles={profiles}
+                  avatars={avatars}
+                  recentByProfile={recentByProfile}
+                  unreadByBot={unreadByBot}
+                  otherUnreadCount={otherPublicBotUnreadTotal}
+                  pushPreferences={pushPreferences}
+                  hiddenProfiles={hiddenProfiles}
+                  privateProfileNames={privateProfileNames}
+                  loading={profilesLoading}
+                  error={profilesError}
+                  wsState={wsState}
+                  selectedBotName={selectedBotName}
+                  draftPrefill={draftPrefill}
+                  onConsumeDraftPrefill={() => setDraftPrefill(null)}
+                  onForwardToBot={handleForwardToBot}
+                  openCreateTrigger={createBotTrigger}
+                  createAsPrivate={createPrivateMode}
+                  onSelectBot={handleSelectBot}
+                  onMarkBotRead={markBotRead}
+                  onRegisterSession={registerBotSession}
+                  onToggleBotPush={handleToggleBotPush}
+                  onRefreshProfiles={() => loadProfiles()}
+                  onAvatarChange={handleAvatarChange}
+                  onToggleHideProfile={handleToggleHideProfile}
+                  onToggleBotPrivate={handleToggleBotPrivate}
+                  onOpenPrivateVault={() => setShowVaultSheet(true)}
+                  onOpenConnectors={() => setTab("connectors")}
+                />
               )}
-            </span>
-            <span>Bots</span>
-          </button>
-
-          <button
-            type="button"
-            className={`tabbar-item ${tab === "groups" ? "active" : ""}`}
-            aria-label={
-              groupUnreadRoomCount > 0
-                ? `Gruppen (${groupUnreadRoomCount} mit neuen Nachrichten)`
-                : "Gruppen"
-            }
-            onClick={() => {
-              setTab("groups");
-              setSelectedRoomId(null);
-            }}
-          >
-            <span className="tabbar-icon-wrap">
-              <Users size={20} />
-              {groupUnreadRoomCount > 0 && (
-                <span className="tabbar-badge" aria-hidden="true">
-                  {formatBadgeCount(groupUnreadRoomCount)}
-                </span>
+              {tab === "groups" && (
+                <Suspense fallback={<div className="empty-state"><p>Lade Gruppen…</p></div>}>
+                  <GroupsView
+                    profiles={publicProfiles}
+                    avatars={avatars}
+                    unreadByGroup={unreadByGroup}
+                    wsState={wsState}
+                    selectedRoomId={selectedRoomId}
+                    onSelectRoom={handleSelectRoom}
+                    onMarkGroupRead={markGroupRead}
+                  />
+                </Suspense>
               )}
-            </span>
-            <span>Gruppen</span>
-          </button>
+              {tab === "routines" && (
+                <Suspense fallback={<div className="empty-state"><p>Lade Routinen…</p></div>}>
+                  <RoutinesView profiles={publicProfiles} />
+                </Suspense>
+              )}
+              {tab === "connectors" && (
+                <Suspense fallback={<div className="empty-state"><p>Lade Connectoren…</p></div>}>
+                  <ConnectorsView
+                    profiles={publicProfiles}
+                    avatars={avatars}
+                    wsState={wsState}
+                    onOpenBotChat={(name) => {
+                      setTab("bots");
+                      handleSelectBot(name);
+                    }}
+                  />
+                </Suspense>
+              )}
+            </main>
+          )}
 
-          <button
-            type="button"
-            className={`tabbar-item ${tab === "routines" ? "active" : ""}`}
-            onClick={() => setTab("routines")}
-          >
-            <CalendarClock size={20} />
-            <span>Routinen</span>
-          </button>
-
-          <button
-            type="button"
-            className={`tabbar-item ${tab === "connectors" ? "active" : ""}`}
-            onClick={() => setTab("connectors")}
-          >
-            <Plug size={20} />
-            <span>Connectoren</span>
-          </button>
-        </nav>
+          {!inFullscreenChat && renderTabbar(false)}
+        </>
       )}
 
       <Sheet open={showAccountSheet} onClose={() => setShowAccountSheet(false)}>
@@ -1461,40 +1606,60 @@ export const App: React.FC = () => {
         </button>
       </Sheet>
 
-      <PrivateVaultSheet
-        open={showVaultSheet}
-        unlocked={vaultUnlocked}
-        privateProfiles={privateProfiles}
-        regularProfiles={publicProfiles.filter((p) => !p.is_default && p.name !== "default")}
-        avatars={avatars}
-        unreadByBot={unreadByBot}
-        onUnlocked={() => setVaultUnlocked(true)}
-        onLock={() => {
-          setVaultUnlocked(false);
-          if (selectedBotName && privateProfileNames.includes(selectedBotName)) {
-            setSelectedBotName(null);
-          }
-        }}
-        onOpenPrivateBot={(name) => {
-          setTab("bots");
-          handleSelectBot(name);
-        }}
-        onToggleBotPrivate={handleToggleBotPrivate}
-        onCreatePrivateBot={() => {
-          setTab("bots");
-          setSelectedBotName(null);
-          setCreatePrivateMode(true);
-          setCreateBotTrigger((n) => n + 1);
-        }}
-        onClose={() => setShowVaultSheet(false)}
-      />
+      {showVaultSheet && (
+        <Suspense fallback={null}>
+          <PrivateVaultSheet
+            open={showVaultSheet}
+            unlocked={vaultUnlocked}
+            privateProfiles={privateProfiles}
+            regularProfiles={publicProfiles.filter((p) => !p.is_default && p.name !== "default")}
+            avatars={avatars}
+            unreadByBot={unreadByBot}
+            onUnlocked={() => setVaultUnlocked(true)}
+            onLock={() => {
+              setVaultUnlocked(false);
+              if (selectedBotName && privateProfileNames.includes(selectedBotName)) {
+                setSelectedBotName(null);
+              }
+            }}
+            onOpenPrivateBot={(name) => {
+              setTab("bots");
+              handleSelectBot(name);
+            }}
+            onToggleBotPrivate={handleToggleBotPrivate}
+            onCreatePrivateBot={() => {
+              setTab("bots");
+              setSelectedBotName(null);
+              setCreatePrivateMode(true);
+              setCreateBotTrigger((n) => n + 1);
+            }}
+            onClose={() => setShowVaultSheet(false)}
+          />
+        </Suspense>
+      )}
 
-      <CredentialVaultSheet
-        open={showCredentialVault}
-        wsState={wsState}
-        publicProfiles={publicProfiles}
-        onClose={() => setShowCredentialVault(false)}
-      />
+      {showCredentialVault && (
+        <Suspense fallback={null}>
+          <CredentialVaultSheet
+            open={showCredentialVault}
+            wsState={wsState}
+            publicProfiles={publicProfiles}
+            onClose={() => setShowCredentialVault(false)}
+          />
+        </Suspense>
+      )}
+
+      {showPagesArchive && (
+        <Suspense fallback={null}>
+          <PagesArchiveSheet
+            open={showPagesArchive}
+            profiles={profiles}
+            privateProfileNames={privateProfileNames}
+            avatars={avatars}
+            onClose={() => setShowPagesArchive(false)}
+          />
+        </Suspense>
+      )}
     </div>
   );
 };

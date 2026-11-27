@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   AlertCircle,
@@ -7,11 +7,14 @@ import {
   Bell,
   BellOff,
   Camera,
+  Check,
   ChevronLeft,
   ChevronRight,
+  Copy,
   Cpu,
   Download,
   FileText,
+  Forward,
   Gauge,
   History,
   Image as ImageIcon,
@@ -27,6 +30,7 @@ import {
   RefreshCw,
   Search,
   Settings2,
+  Share2,
   ShieldCheck,
   Square,
   Star,
@@ -121,7 +125,6 @@ import {
   type ChatUsageState,
 } from "../lib/usageLimits";
 import { BotAvatar } from "./BotAvatar";
-import { BotImportSheet } from "./BotImportSheet";
 import { ConfirmSheet } from "./ConfirmSheet";
 import { InChatConnectionCard } from "./InChatConnectionCard";
 import {
@@ -136,10 +139,18 @@ import {
   UsageLimitCard,
   VaultFormCard,
 } from "./InChatPromptCards";
-import { LimitSheet } from "./LimitSheet";
-import { ModelPickerSheet } from "./ModelPickerSheet";
 import { SafeMarkdown } from "./SafeMarkdown";
 import { Sheet } from "./Sheet";
+
+const BotImportSheet = lazy(() =>
+  import("./BotImportSheet").then((m) => ({ default: m.BotImportSheet }))
+);
+const LimitSheet = lazy(() =>
+  import("./LimitSheet").then((m) => ({ default: m.LimitSheet }))
+);
+const ModelPickerSheet = lazy(() =>
+  import("./ModelPickerSheet").then((m) => ({ default: m.ModelPickerSheet }))
+);
 
 interface BotsViewProps {
   profiles: HermesProfile[];
@@ -154,9 +165,13 @@ interface BotsViewProps {
   error: string | null;
   wsState: WsConnectionState;
   selectedBotName: string | null;
+  layoutMode?: "mobile" | "list-only" | "chat-only";
+  draftPrefill?: { botName: string; text: string; id: number } | null;
   openCreateTrigger?: number;
   createAsPrivate?: boolean;
   onSelectBot: (name: string | null) => void;
+  onForwardToBot?: (targetBotName: string, text: string) => void;
+  onConsumeDraftPrefill?: () => void;
   onMarkBotRead?: (
     profileName: string,
     info?: {
@@ -207,9 +222,13 @@ export const BotsView: React.FC<BotsViewProps> = ({
   error,
   wsState,
   selectedBotName,
+  layoutMode = "mobile",
+  draftPrefill = null,
   openCreateTrigger = 0,
   createAsPrivate = false,
   onSelectBot,
+  onForwardToBot,
+  onConsumeDraftPrefill,
   onMarkBotRead,
   onRegisterSession,
   onToggleBotPush,
@@ -633,18 +652,37 @@ export const BotsView: React.FC<BotsViewProps> = ({
     }
   }
 
-  if (selectedProfile) {
+  if (layoutMode === "chat-only" && !selectedProfile) {
+    return (
+      <div className="desktop-chat-empty">
+        <MessageSquare size={34} style={{ color: "var(--text-muted)" }} />
+        <h3>Wähle links einen Bot aus</h3>
+        <p>
+          Deine Bots, Live-Ungelesen-Indikatoren und der Chef-Bereich bleiben links dauerhaft
+          sichtbar.
+        </p>
+      </div>
+    );
+  }
+
+  if (selectedProfile && layoutMode !== "list-only") {
     const isPrivateSelected = privateSet.has(selectedProfile.name);
     const matchingTargetSession =
       openTargetSession && openTargetSession.botName === selectedProfile.name
         ? openTargetSession
         : null;
+    const matchingDraft =
+      draftPrefill && draftPrefill.botName === selectedProfile.name ? draftPrefill : null;
     return (
       <>
         <DirectChatView
           profile={selectedProfile}
           allProfiles={publicProfiles}
           isPrivateBot={isPrivateSelected}
+          hideBackButton={layoutMode === "chat-only"}
+          draftPrefill={matchingDraft}
+          onConsumeDraftPrefill={onConsumeDraftPrefill}
+          onForwardToBot={onForwardToBot}
           initialSessionId={matchingTargetSession?.sessionId || null}
           initialSessionTitle={matchingTargetSession?.title || null}
           avatarUrl={avatars[selectedProfile.name] || null}
@@ -751,16 +789,18 @@ export const BotsView: React.FC<BotsViewProps> = ({
           onConfirm={() => void handleConfirmDeleteBot()}
         />
         {modelPickerProfile && (
-          <ModelPickerSheet
-            open
-            profileName={modelPickerProfile.name}
-            botLabel={getBotVisual(modelPickerProfile).label}
-            allProfileNames={profiles.map((p) => p.name)}
-            currentProvider={modelPickerProfile.provider}
-            currentModel={modelPickerProfile.model}
-            onSwitched={() => void onRefreshProfiles()}
-            onClose={() => setModelPickerProfile(null)}
-          />
+          <Suspense fallback={null}>
+            <ModelPickerSheet
+              open
+              profileName={modelPickerProfile.name}
+              botLabel={getBotVisual(modelPickerProfile).label}
+              allProfileNames={profiles.map((p) => p.name)}
+              currentProvider={modelPickerProfile.provider}
+              currentModel={modelPickerProfile.model}
+              onSwitched={() => void onRefreshProfiles()}
+              onClose={() => setModelPickerProfile(null)}
+            />
+          </Suspense>
         )}
       </>
     );
@@ -881,7 +921,7 @@ export const BotsView: React.FC<BotsViewProps> = ({
                 return (
                   <div
                     key={profile.name}
-                    className={`bot-list-item ${unread ? "has-unread" : ""}`}
+                    className={`bot-list-item ${unread ? "has-unread" : ""} ${selectedBotName === profile.name ? "is-selected" : ""}`}
                   >
                     <button
                       type="button"
@@ -1219,29 +1259,35 @@ export const BotsView: React.FC<BotsViewProps> = ({
         />
       )}
 
-      <BotImportSheet
-        open={showImportSheet}
-        wsState={wsState}
-        asPrivate={createAsPrivate}
-        onClose={() => setShowImportSheet(false)}
-        onImported={async (name, avatarData) => {
-          if (avatarData) onAvatarChange(name, avatarData);
-          await onRefreshProfiles();
-          onSelectBot(name);
-        }}
-      />
+      {showImportSheet && (
+        <Suspense fallback={null}>
+          <BotImportSheet
+            open={showImportSheet}
+            wsState={wsState}
+            asPrivate={createAsPrivate}
+            onClose={() => setShowImportSheet(false)}
+            onImported={async (name, avatarData) => {
+              if (avatarData) onAvatarChange(name, avatarData);
+              await onRefreshProfiles();
+              onSelectBot(name);
+            }}
+          />
+        </Suspense>
+      )}
 
       {modelPickerProfile && (
-        <ModelPickerSheet
-          open
-          profileName={modelPickerProfile.name}
-          botLabel={getBotVisual(modelPickerProfile).label}
-          allProfileNames={profiles.map((p) => p.name)}
-          currentProvider={modelPickerProfile.provider}
-          currentModel={modelPickerProfile.model}
-          onSwitched={() => void onRefreshProfiles()}
-          onClose={() => setModelPickerProfile(null)}
-        />
+        <Suspense fallback={null}>
+          <ModelPickerSheet
+            open
+            profileName={modelPickerProfile.name}
+            botLabel={getBotVisual(modelPickerProfile).label}
+            allProfileNames={profiles.map((p) => p.name)}
+            currentProvider={modelPickerProfile.provider}
+            currentModel={modelPickerProfile.model}
+            onSwitched={() => void onRefreshProfiles()}
+            onClose={() => setModelPickerProfile(null)}
+          />
+        </Suspense>
       )}
 
       <ConfirmSheet
@@ -1539,6 +1585,10 @@ interface DirectChatViewProps {
   profile: HermesProfile;
   allProfiles: HermesProfile[];
   isPrivateBot?: boolean;
+  hideBackButton?: boolean;
+  draftPrefill?: { botName: string; text: string; id: number } | null;
+  onConsumeDraftPrefill?: () => void;
+  onForwardToBot?: (targetBotName: string, text: string) => void;
   initialSessionId?: string | null;
   initialSessionTitle?: string | null;
   avatarUrl: string | null;
@@ -1571,6 +1621,10 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
   profile,
   allProfiles,
   isPrivateBot = false,
+  hideBackButton = false,
+  draftPrefill = null,
+  onConsumeDraftPrefill,
+  onForwardToBot,
   initialSessionId = null,
   initialSessionTitle = null,
   avatarUrl,
@@ -1641,6 +1695,23 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
   const [deletingSession, setDeletingSession] = useState(false);
   const [hasNewBelow, setHasNewBelow] = useState(false);
   const [openPocketPage, setOpenPocketPage] = useState<DetectedPocketPage | null>(null);
+  const [copiedMsgKey, setCopiedMsgKey] = useState<string | null>(null);
+  const [forwardText, setForwardText] = useState<string | null>(null);
+  const isStreamingRef = useRef<boolean>(false);
+  isStreamingRef.current = isStreaming;
+
+  // Apply forwarded draft prefill when navigating from another bot
+  useEffect(() => {
+    if (!draftPrefill || draftPrefill.botName !== profile.name) return;
+    setInput(draftPrefill.text);
+    onConsumeDraftPrefill?.();
+    requestAnimationFrame(() => {
+      if (textareaRef.current) {
+        textareaRef.current.focus();
+        autoResizeInput(textareaRef.current);
+      }
+    });
+  }, [draftPrefill, onConsumeDraftPrefill, profile.name]);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -1682,6 +1753,42 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
       setHasNewBelow(true);
     }
   }, [scrollToBottom]);
+
+  // Auto-sync missed messages when returning from standby / screen lock or regaining network
+  useEffect(() => {
+    const syncAfterResume = () => {
+      if (document.visibilityState !== "visible") return;
+      if (hermesWs.getState() === "disconnected") {
+        hermesWs.connect();
+      }
+      const sid = activeSessionRef.current;
+      if (!sid || isStreamingRef.current) return;
+      void fetchSessionMessages(sid, profile.name)
+        .then((fresh) => {
+          if (fresh.length === 0) return;
+          setMessages((prev) => {
+            if (
+              prev.length === fresh.length &&
+              prev[prev.length - 1]?.content === fresh[fresh.length - 1]?.content
+            ) {
+              return prev;
+            }
+            return fresh;
+          });
+          onMarkBotRead?.(profile.name, { sessionId: sid, messages: fresh });
+          scrollIfNearBottom();
+        })
+        .catch(() => {
+          // Best-effort background resync
+        });
+    };
+    document.addEventListener("visibilitychange", syncAfterResume);
+    window.addEventListener("online", syncAfterResume);
+    return () => {
+      document.removeEventListener("visibilitychange", syncAfterResume);
+      window.removeEventListener("online", syncAfterResume);
+    };
+  }, [onMarkBotRead, profile.name, scrollIfNearBottom]);
 
   const scrollToBottomWithSettle = useCallback(() => {
     for (const id of scrollTimersRef.current) window.clearTimeout(id);
@@ -2834,23 +2941,27 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
   return (
     <div className="chat-screen">
       <header className="chat-floating-header">
-        <button
-          type="button"
-          className="glass-circle-btn"
-          aria-label={
-            otherUnreadCount > 0
-              ? `Zurück zu Bots (${otherUnreadCount} neue ${otherUnreadCount === 1 ? "Nachricht" : "Nachrichten"})`
-              : "Zurück zu Bots"
-          }
-          onClick={onBack}
-        >
-          <ChevronLeft size={22} />
-          {otherUnreadCount > 0 && (
-            <span className="back-unread-badge" aria-hidden="true">
-              {formatBadgeCount(otherUnreadCount)}
-            </span>
-          )}
-        </button>
+        {!hideBackButton ? (
+          <button
+            type="button"
+            className="glass-circle-btn"
+            aria-label={
+              otherUnreadCount > 0
+                ? `Zurück zu Bots (${otherUnreadCount} neue ${otherUnreadCount === 1 ? "Nachricht" : "Nachrichten"})`
+                : "Zurück zu Bots"
+            }
+            onClick={onBack}
+          >
+            <ChevronLeft size={22} />
+            {otherUnreadCount > 0 && (
+              <span className="back-unread-badge" aria-hidden="true">
+                {formatBadgeCount(otherUnreadCount)}
+              </span>
+            )}
+          </button>
+        ) : (
+          <div style={{ width: 42, height: 42, flexShrink: 0 }} aria-hidden="true" />
+        )}
 
         <div className="glass-title-pill-group">
           <button
@@ -3049,6 +3160,63 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
                       </div>
                     )}
                   </div>
+                  {msg.role === "assistant" && !msg.streaming && msg.content.trim() && (
+                    <div className="msg-actions-row">
+                      <button
+                        type="button"
+                        className="msg-action-btn"
+                        aria-label="Nachricht kopieren"
+                        onClick={() => {
+                          const clean = stripSecretRequestTag(msg.content) || msg.content;
+                          const key = String(msg.id ?? i);
+                          void navigator.clipboard?.writeText(clean).then(() => {
+                            setCopiedMsgKey(key);
+                            window.setTimeout(() => {
+                              setCopiedMsgKey((cur) => (cur === key ? null : cur));
+                            }, 1600);
+                          });
+                        }}
+                      >
+                        {copiedMsgKey === String(msg.id ?? i) ? (
+                          <>
+                            <Check size={12} /> Kopiert
+                          </>
+                        ) : (
+                          <>
+                            <Copy size={12} /> Kopieren
+                          </>
+                        )}
+                      </button>
+                      {typeof navigator !== "undefined" && typeof navigator.share === "function" && (
+                        <button
+                          type="button"
+                          className="msg-action-btn"
+                          aria-label="Nachricht teilen"
+                          onClick={() => {
+                            const clean = stripSecretRequestTag(msg.content) || msg.content;
+                            void navigator
+                              .share({ title: visual.label, text: clean })
+                              .catch(() => undefined);
+                          }}
+                        >
+                          <Share2 size={12} /> Teilen
+                        </button>
+                      )}
+                      {!isPrivateBot && teammates.length > 0 && onForwardToBot && (
+                        <button
+                          type="button"
+                          className="msg-action-btn"
+                          aria-label="An anderen Bot weiterleiten"
+                          onClick={() => {
+                            const clean = msg.content.trim();
+                            setForwardText(`Weitergeleitet von ${visual.label}:\n\n${clean}`);
+                          }}
+                        >
+                          <Forward size={12} /> An Bot
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
               </React.Fragment>
             );
@@ -3583,38 +3751,83 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
         )}
       </Sheet>
 
-      <LimitSheet
-        open={showLimitSheet}
-        botLabel={visual.label}
-        usage={usage}
-        activeProvider={currentActiveProvider}
-        activeModel={currentActiveModel}
-        fallbacks={fallbacks}
-        loading={loadingAccountUsage}
-        onRefresh={() => void refreshAccountUsage(activeSessionId)}
-        onOpenModelPicker={() => setModelPickerState({ open: true, search: "", provider: "" })}
-        onClose={() => setShowLimitSheet(false)}
-      />
+      {showLimitSheet && (
+        <Suspense fallback={null}>
+          <LimitSheet
+            open={showLimitSheet}
+            botLabel={visual.label}
+            usage={usage}
+            activeProvider={currentActiveProvider}
+            activeModel={currentActiveModel}
+            fallbacks={fallbacks}
+            loading={loadingAccountUsage}
+            onRefresh={() => void refreshAccountUsage(activeSessionId)}
+            onOpenModelPicker={() => setModelPickerState({ open: true, search: "", provider: "" })}
+            onClose={() => setShowLimitSheet(false)}
+          />
+        </Suspense>
+      )}
 
-      <ModelPickerSheet
-        open={modelPickerState.open}
-        profileName={profile.name}
-        botLabel={visual.label}
-        allProfileNames={allProfileNames}
-        currentProvider={activeModelOverride?.provider || profile.provider}
-        currentModel={activeModelOverride?.model || profile.model}
-        initialSearch={modelPickerState.search}
-        initialProvider={modelPickerState.provider}
-        onSwitched={(prov, mod) => {
-          setActiveModelOverride({ provider: prov, model: mod });
-          appendSystemNotice(`Modell gewechselt: ${prov} / ${mod}`);
-          void onRefreshProfiles();
-        }}
-        onFallbackChanged={(nextFallbacks) => {
-          setFallbacks(nextFallbacks);
-        }}
-        onClose={() => setModelPickerState((s) => ({ ...s, open: false }))}
-      />
+      {modelPickerState.open && (
+        <Suspense fallback={null}>
+          <ModelPickerSheet
+            open={modelPickerState.open}
+            profileName={profile.name}
+            botLabel={visual.label}
+            allProfileNames={allProfileNames}
+            currentProvider={activeModelOverride?.provider || profile.provider}
+            currentModel={activeModelOverride?.model || profile.model}
+            initialSearch={modelPickerState.search}
+            initialProvider={modelPickerState.provider}
+            onSwitched={(prov, mod) => {
+              setActiveModelOverride({ provider: prov, model: mod });
+              appendSystemNotice(`Modell gewechselt: ${prov} / ${mod}`);
+              void onRefreshProfiles();
+            }}
+            onFallbackChanged={(nextFallbacks) => {
+              setFallbacks(nextFallbacks);
+            }}
+            onClose={() => setModelPickerState((s) => ({ ...s, open: false }))}
+          />
+        </Suspense>
+      )}
+
+      <Sheet open={Boolean(forwardText)} onClose={() => setForwardText(null)}>
+        <div className="sheet-header">
+          <h2 className="sheet-title">An Bot weiterleiten</h2>
+          <button
+            type="button"
+            className="icon-btn ghost"
+            aria-label="Schließen"
+            onClick={() => setForwardText(null)}
+          >
+            <X size={20} />
+          </button>
+        </div>
+        <p style={{ margin: "0 0 12px", fontSize: "0.82rem", color: "var(--text-secondary)" }}>
+          Wähle einen Bot – die Nachricht wird in dessen Eingabefeld übernommen, damit du vor dem
+          Senden noch etwas ergänzen kannst.
+        </p>
+        <div className="card-stack">
+          {teammates.map((tm) => (
+            <button
+              key={tm.name}
+              type="button"
+              className="btn full"
+              style={{ justifyContent: "space-between" }}
+              onClick={() => {
+                if (forwardText && onForwardToBot) {
+                  onForwardToBot(tm.name, forwardText);
+                }
+                setForwardText(null);
+              }}
+            >
+              <span>{tm.label}</span>
+              <Forward size={15} style={{ color: "var(--accent-send)" }} />
+            </button>
+          ))}
+        </div>
+      </Sheet>
 
       <ConfirmSheet
         open={Boolean(sessionToDelete)}
