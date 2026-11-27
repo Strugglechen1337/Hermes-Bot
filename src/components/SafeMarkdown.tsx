@@ -207,11 +207,55 @@ export function extractWebSearchImages(text: string): {
   };
 }
 
-function renderInline(line: string, keyPrefix: string): React.ReactNode[] {
+function formatBareUrlLabel(url: string): string {
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.replace(/^www\./i, "");
+    const cleanPath = parsed.pathname.replace(/\/+$/, "");
+    if (!cleanPath || cleanPath === "/") return host;
+    const shortPath = cleanPath.length > 26 ? `${cleanPath.slice(0, 24)}…` : cleanPath;
+    return `${host}${shortPath}`;
+  } catch {
+    return url;
+  }
+}
+
+const LinkChip: React.FC<{ href: string; children: React.ReactNode }> = ({ href, children }) => {
+  const [iconFailed, setIconFailed] = useState(false);
+  const host = getHostname(href);
+  const faviconUrl = host
+    ? `https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=32`
+    : "";
+
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="md-link-chip"
+    >
+      {faviconUrl && !iconFailed && (
+        <img
+          src={faviconUrl}
+          alt=""
+          aria-hidden="true"
+          className="md-link-favicon"
+          loading="lazy"
+          referrerPolicy="no-referrer"
+          onError={() => setIconFailed(true)}
+        />
+      )}
+      <span className="md-link-label">{children}</span>
+      <ExternalLink size={11} className="md-link-ext" aria-hidden="true" />
+    </a>
+  );
+};
+
+function renderInline(line: string, keyPrefix: string, depth = 0): React.ReactNode[] {
   const nodes: React.ReactNode[] = [];
   // Matches inline code, markdown links [text](https://...), bold, italic, or bare http(s) URLs
   const tokenRe =
-    /(`[^`]+`|\[[^\]]+\]\(https?:\/\/[^\s)]+\)|\*\*[^*]+\*\*|\*[^*]+\*|https?:\/\/[^\s<>()]+)/g;
+    /(`[^`]+`|\[[^\]]+\]\(\s*https?:\/\/[^\s)]+\s*\)|\*\*[^*]+\*\*|\*[^*]+\*|https?:\/\/[^\s<>()]+)/g;
   let lastIndex = 0;
   let match: RegExpExecArray | null;
   let idx = 0;
@@ -224,49 +268,39 @@ function renderInline(line: string, keyPrefix: string): React.ReactNode[] {
     if (token.startsWith("`") && token.endsWith("`")) {
       nodes.push(<code key={`${keyPrefix}-c-${idx++}`}>{token.slice(1, -1)}</code>);
     } else if (token.startsWith("[") && token.includes("](") && token.endsWith(")")) {
-      const linkMatch = token.match(/^\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)$/);
+      const linkMatch = token.match(/^\[([^\]]+)\]\(\s*(https?:\/\/[^\s)]+)\s*\)$/);
       if (linkMatch && isSafeHttpUrl(linkMatch[2])) {
+        const labelNodes =
+          depth < 2 ? renderInline(linkMatch[1], `${keyPrefix}-mlt-${idx}`, depth + 1) : linkMatch[1];
         nodes.push(
-          <a
-            key={`${keyPrefix}-ml-${idx++}`}
-            href={linkMatch[2]}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            {linkMatch[1]}
-          </a>
+          <LinkChip key={`${keyPrefix}-ml-${idx++}`} href={linkMatch[2].trim()}>
+            {labelNodes}
+          </LinkChip>
         );
       } else {
         nodes.push(token);
       }
     } else if (token.startsWith("**") && token.endsWith("**")) {
-      nodes.push(<strong key={`${keyPrefix}-b-${idx++}`}>{token.slice(2, -2)}</strong>);
+      const inner = token.slice(2, -2);
+      nodes.push(
+        <strong key={`${keyPrefix}-b-${idx++}`}>
+          {depth < 3 ? renderInline(inner, `${keyPrefix}-bi-${idx}`, depth + 1) : inner}
+        </strong>
+      );
     } else if (token.startsWith("*") && token.endsWith("*")) {
-      nodes.push(<em key={`${keyPrefix}-i-${idx++}`}>{token.slice(1, -1)}</em>);
+      const inner = token.slice(1, -1);
+      nodes.push(
+        <em key={`${keyPrefix}-i-${idx++}`}>
+          {depth < 3 ? renderInline(inner, `${keyPrefix}-ii-${idx}`, depth + 1) : inner}
+        </em>
+      );
     } else if (token.startsWith("http://") || token.startsWith("https://")) {
       const { url, trailing } = stripTrailingPunctuation(token);
-      if (isSafeHttpUrl(url) && !IMAGE_EXT_RE.test(url)) {
+      if (isSafeHttpUrl(url)) {
         nodes.push(
-          <a
-            key={`${keyPrefix}-a-${idx++}`}
-            href={url}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            {url}
-          </a>
-        );
-        if (trailing) nodes.push(trailing);
-      } else if (isSafeHttpUrl(url)) {
-        nodes.push(
-          <a
-            key={`${keyPrefix}-a-${idx++}`}
-            href={url}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            {url}
-          </a>
+          <LinkChip key={`${keyPrefix}-a-${idx++}`} href={url}>
+            {formatBareUrlLabel(url)}
+          </LinkChip>
         );
         if (trailing) nodes.push(trailing);
       } else {

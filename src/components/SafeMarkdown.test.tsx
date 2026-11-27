@@ -92,4 +92,24 @@ describe("SafeMarkdown", () => {
     expect(screen.getByRole("button", { name: /Kopieren/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Teilen \/ Sichern/i })).toBeInTheDocument();
   });
+
+  it("renders markdown links nested inside bold/italic text as clickable favicon link chips", () => {
+    const text =
+      "- **[Alza](https://www.alza.de/gaming/ps-portal.htm):** 238,89 €\n" +
+      "- **[MediaMarkt](https://www.mediamarkt.de/de/product/ps-portal.html): 244,99 €**";
+
+    const { container } = render(<SafeMarkdown text={text} />);
+
+    const alza = screen.getByRole("link", { name: "Alza" });
+    expect(alza).toHaveAttribute("href", "https://www.alza.de/gaming/ps-portal.htm");
+    expect(alza.className).toContain("md-link-chip");
+
+    const mm = screen.getByRole("link", { name: "MediaMarkt" });
+    expect(mm).toHaveAttribute("href", "https://www.mediamarkt.de/de/product/ps-portal.html");
+
+    const favicons = container.querySelectorAll("img.md-link-favicon");
+    expect(favicons).toHaveLength(2);
+    expect(favicons[0].getAttribute("src")).toContain("alza.de");
+    expect(favicons[1].getAttribute("src")).toContain("mediamarkt.de");
+  });
 });
