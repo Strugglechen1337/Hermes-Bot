@@ -609,27 +609,49 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
     }
   }, [scrollToBottom]);
 
-  // Auto-sync missed messages when returning from standby / screen lock or regaining network
+  // Auto-sync missed messages when returning from standby / screen lock, regaining network,
+  // or while viewing a chat where cron jobs / background deliveries may append messages
   useEffect(() => {
-    const syncAfterResume = () => {
+    const syncLatestMessages = (forceEvenIfStreaming = false) => {
       if (document.visibilityState !== "visible") return;
       if (hermesWs.getState() === "disconnected") {
         hermesWs.connect();
       }
       const sid = activeSessionRef.current;
-      if (!sid || isStreamingRef.current) return;
+      if (!sid) return;
+      if (isStreamingRef.current && !forceEvenIfStreaming) return;
       void fetchSessionMessages(sid, profile.name)
         .then((fresh) => {
           if (fresh.length === 0) return;
           setMessages((prev) => {
             if (
               prev.length === fresh.length &&
-              prev[prev.length - 1]?.content === fresh[fresh.length - 1]?.content
+              prev[prev.length - 1]?.content === fresh[fresh.length - 1]?.content &&
+              !prev[prev.length - 1]?.streaming
             ) {
               return prev;
             }
             return fresh;
           });
+          if (forceEvenIfStreaming && isStreamingRef.current) {
+            // Re-check live running state after standby so a frozen iOS WebSocket
+            // never leaves the chat stuck on "schreibt…" after the bot already finished.
+            if (hermesWs.getState() === "connected") {
+              void hermesWs
+                .call<{ running?: boolean; inflight?: { streaming?: boolean } | null }>(
+                  "session.attach",
+                  { session_id: sid, profile: profile.name }
+                )
+                .then((snap) => {
+                  setIsStreaming(Boolean(snap?.running || snap?.inflight?.streaming));
+                })
+                .catch(() => {
+                  setIsStreaming(false);
+                });
+            } else {
+              setIsStreaming(false);
+            }
+          }
           onMarkBotRead?.(profile.name, { sessionId: sid, messages: fresh });
           scrollIfNearBottom();
         })
@@ -637,11 +659,14 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
           // Best-effort background resync
         });
     };
-    document.addEventListener("visibilitychange", syncAfterResume);
-    window.addEventListener("online", syncAfterResume);
+    const onResume = () => syncLatestMessages(true);
+    document.addEventListener("visibilitychange", onResume);
+    window.addEventListener("online", onResume);
+    const pollTimer = window.setInterval(() => syncLatestMessages(false), 12_000);
     return () => {
-      document.removeEventListener("visibilitychange", syncAfterResume);
-      window.removeEventListener("online", syncAfterResume);
+      document.removeEventListener("visibilitychange", onResume);
+      window.removeEventListener("online", onResume);
+      window.clearInterval(pollTimer);
     };
   }, [onMarkBotRead, profile.name, scrollIfNearBottom]);
 
@@ -913,11 +938,12 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
             await loadSessionHistory(initialSessionId, initialSessionTitle || "Suchtreffer");
             return;
           }
-          // Always pick the genuinely most recently active interactive session
-          // so leaving and re-entering a bot never jumps back to an older history.
+          // Always attach directly to the bot's existing most-recent interactive session
+          // (including canonical "Bot Chat") instead of calling `session.create`, which
+          // could spawn a blank session when the existing session has a different source.
           const preferred = pickPreferredBotSession(list);
-          if (preferred && (preferred.title || "").trim() !== canonicalTitle) {
-            await loadSessionHistory(preferred.id, preferred.title || "Unterhaltung");
+          if (preferred) {
+            await loadSessionHistory(preferred.id, preferred.title || canonicalTitle);
             return;
           }
           if (wsState === "connected") {
@@ -929,15 +955,11 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
             }
             return;
           }
-          if (preferred) {
-            await loadSessionHistory(preferred.id, preferred.title || canonicalTitle);
-          } else {
-            setActiveSessionId(null);
-            setActiveTitle(canonicalTitle);
-            setMessages([]);
-            attachedOnWsRef.current = false;
-            setLoadingChat(false);
-          }
+          setActiveSessionId(null);
+          setActiveTitle(canonicalTitle);
+          setMessages([]);
+          attachedOnWsRef.current = false;
+          setLoadingChat(false);
         }
       } catch (err) {
         if (autoOpenFirst && sessionLoadGenRef.current !== myGen) return;
