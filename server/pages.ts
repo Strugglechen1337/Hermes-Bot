@@ -63,6 +63,7 @@ export const PAGE_CSP = [
   "style-src 'unsafe-inline' https:",
   "font-src https: data:",
   "script-src 'unsafe-inline'",
+  "frame-src https://embed.windy.com https://www.rainviewer.com",
   "connect-src 'none'",
   "form-action 'none'",
   "base-uri 'none'",

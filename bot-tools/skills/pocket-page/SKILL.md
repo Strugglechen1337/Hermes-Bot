@@ -22,6 +22,7 @@ cat > /tmp/briefing.json <<'JSON'
   "title": "Dein Morgen-Briefing",
   "subtitle": "Die wichtigsten Themen des Tages in 3 Minuten",
   "intro": "Kurzer Einstieg in 1–3 Sätzen.",
+  "radar": { "lat": 52.0281, "lon": 8.9022, "zoom": 10, "label": "Regenradar Lemgo (Live)" },
   "highlights": ["Wichtigster Punkt", "Zweiter Punkt", "Dritter Punkt"],
   "sections": [
     {

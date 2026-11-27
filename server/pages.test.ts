@@ -86,6 +86,7 @@ describe("Hermes Pocket Pages BFF route", () => {
     expect(res.headers.get("content-type")).toContain("text/html");
     const csp = res.headers.get("content-security-policy") || "";
     expect(csp).toContain("sandbox allow-scripts");
+    expect(csp).toContain("frame-src https://embed.windy.com https://www.rainviewer.com");
     expect(csp).not.toContain("allow-same-origin");
     expect(res.headers.get("cache-control")).toBe("no-store");
     const html = await res.text();
