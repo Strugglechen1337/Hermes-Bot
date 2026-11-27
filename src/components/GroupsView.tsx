@@ -603,7 +603,7 @@ const GroupRoomView: React.FC<GroupRoomViewProps> = ({
       };
       mediaRecRef.current = rec;
       setVoiceState("recording");
-      rec.start();
+      rec.start(250);
     } catch {
       setError("Mikrofonzugriff wurde nicht erlaubt.");
       setVoiceState("idle");

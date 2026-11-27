@@ -513,7 +513,7 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
       };
       mediaRecRef.current = rec;
       setVoiceActive("recording");
-      rec.start();
+      rec.start(250);
     } catch {
       setChatError("Mikrofonzugriff wurde nicht erlaubt.");
       setVoiceActive("idle");
