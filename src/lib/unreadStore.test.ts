@@ -137,4 +137,18 @@ describe("unreadStore", () => {
     expect(unread?.count).toBe(3);
     expect(unread?.latestSeq).toBe(12);
   });
+
+  it("ignores internal [SILENT] and NO_REPLY assistant acknowledgements", () => {
+    const cursor = {
+      sessionId: "s1",
+      lastActiveMs: 1_700_000_000_000,
+      messageCount: 1,
+      readAtMs: 1_700_000_000_100,
+    };
+    const msgs: HermesChatMessage[] = [
+      { id: 1, role: "user", content: "Message from Lea: [no reply needed]", timestamp: 1_700_000_010_000 },
+      { id: 2, role: "assistant", content: "[SILENT]", timestamp: 1_700_000_011_000 },
+    ];
+    expect(detectUnreadAssistantMessages(msgs, cursor, 1_700_000_011_000, "s1")).toBeNull();
+  });
 });

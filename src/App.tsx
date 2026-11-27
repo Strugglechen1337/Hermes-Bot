@@ -68,6 +68,7 @@ import {
   formatBadgeCount,
   formatUnreadPreview,
   hasSessionNewActivity,
+  isSilentBotAck,
   loadBotReadCursors,
   loadGroupReadCursors,
   pickSessionForUnreadCheck,
@@ -803,7 +804,7 @@ export const App: React.FC = () => {
 
       if (ev.type === "message.complete") {
         const finalText = typeof ev.payload.text === "string" ? ev.payload.text.trim() : "";
-        if (!finalText) return;
+        if (!finalText || isSilentBotAck(finalText)) return;
         const now = Date.now();
         setRecentByProfile((prev) => {
           const cur = prev[resolvedProfile];

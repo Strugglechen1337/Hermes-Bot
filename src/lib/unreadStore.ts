@@ -211,6 +211,10 @@ export function formatUnreadPreview(rawText: string, maxLen = 110): string {
   return `${cleaned.slice(0, maxLen - 1).trimEnd()}…`;
 }
 
+export function isSilentBotAck(text: string | null | undefined): boolean {
+  return /^(?:\[SILENT\]|NO_REPLY)$/i.test((text || "").trim());
+}
+
 /**
  * Inspects normalized messages from a session that had new activity and confirms
  * that the bot (assistant) actually sent a new message (preventing false positives
@@ -226,7 +230,8 @@ export function detectUnreadAssistantMessages(
     (m) =>
       (m.role === "user" || m.role === "assistant") &&
       !m.streaming &&
-      Boolean(m.content?.trim() || m.error)
+      Boolean(m.content?.trim() || m.error) &&
+      !(m.role === "assistant" && !m.error && isSilentBotAck(m.content))
   );
   if (turns.length === 0) return null;
 

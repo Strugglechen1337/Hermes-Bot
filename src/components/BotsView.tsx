@@ -2851,6 +2851,13 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
             const showDivider =
               curMs !== null && (prevMs === null || curMs - prevMs > 10 * 60 * 1000);
 
+            const isSilentAck =
+              msg.role === "assistant" &&
+              !msg.streaming &&
+              !msg.error &&
+              /^(?:\[SILENT\]|NO_REPLY)$/i.test(msg.content.trim());
+            if (isSilentAck) return null;
+
             const isEmptyAssistant =
               msg.role === "assistant" &&
               !msg.streaming &&
@@ -2910,7 +2917,7 @@ const DirectChatView: React.FC<DirectChatViewProps> = ({
                         {stripSecretRequestTag(msg.content) && (
                           <SafeMarkdown text={stripSecretRequestTag(msg.content)} />
                         )}
-                        {msg.role === "assistant" &&
+                        {(msg.role === "assistant" || msg.role === "user") &&
                           extractPocketPages(msg.content).map((page) => (
                             <PocketPageCard
                               key={page.id}
