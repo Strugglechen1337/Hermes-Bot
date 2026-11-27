@@ -406,17 +406,68 @@ export const App: React.FC = () => {
   // Open specific bot when launched or tapped from a Push Notification,
   // or immediately flag unread when Service Worker receives a push for a bot
   useEffect(() => {
+    const clearPendingPushNav = async () => {
+      if (typeof caches === "undefined") return;
+      try {
+        const cache = await caches.open("hp-push-nav");
+        await cache.delete("/__pending_push_nav");
+      } catch {
+        // ignore
+      }
+    };
+
+    const openBotFromPush = (botName: string) => {
+      const clean = botName.trim();
+      if (!clean) return;
+      setShowAccountSheet(false);
+      setShowCredentialVault(false);
+      setShowPagesArchive(false);
+      setShowAiProviders(false);
+      setTab("bots");
+      setSelectedBotName(clean);
+      markBotRead(clean);
+    };
+
+    const consumePendingPushNav = async () => {
+      if (typeof caches === "undefined") return;
+      try {
+        const cache = await caches.open("hp-push-nav");
+        const res = await cache.match("/__pending_push_nav");
+        if (!res) return;
+        await cache.delete("/__pending_push_nav");
+        const payload = (await res.json()) as { bot?: string; ts?: number } | null;
+        if (
+          payload?.bot &&
+          typeof payload.ts === "number" &&
+          Date.now() - payload.ts < 60_000
+        ) {
+          openBotFromPush(payload.bot);
+        }
+      } catch {
+        // ignore
+      }
+    };
+
     const params = new URLSearchParams(window.location.search);
     const botParam = params.get("bot")?.trim();
     if (botParam) {
-      setTab("bots");
-      setSelectedBotName(botParam);
+      openBotFromPush(botParam);
+      void clearPendingPushNav();
       const promptParam = params.get("prompt");
       if (promptParam && promptParam.trim()) {
         setDraftPrefill({ botName: botParam, text: promptParam.trim(), id: Date.now() });
       }
       window.history.replaceState({}, "", window.location.pathname);
+    } else {
+      void consumePendingPushNav();
     }
+
+    const onVisibilityOrFocus = () => {
+      if (document.visibilityState === "visible") {
+        void consumePendingPushNav();
+      }
+    };
+
     const onSwMessage = (ev: MessageEvent) => {
       const data = ev.data as {
         type?: string;
@@ -425,8 +476,8 @@ export const App: React.FC = () => {
         title?: string;
       } | null;
       if (data?.type === "hp:open-bot" && data.bot) {
-        setTab("bots");
-        setSelectedBotName(data.bot);
+        openBotFromPush(data.bot);
+        void clearPendingPushNav();
       } else if (data?.type === "hp:bot-message" && data.bot) {
         markBotUnread(data.bot, {
           preview: data.body || data.title || "Neue Nachricht",
@@ -438,8 +489,14 @@ export const App: React.FC = () => {
       }
     };
     navigator.serviceWorker?.addEventListener("message", onSwMessage);
-    return () => navigator.serviceWorker?.removeEventListener("message", onSwMessage);
-  }, [markBotUnread]);
+    document.addEventListener("visibilitychange", onVisibilityOrFocus);
+    window.addEventListener("focus", onVisibilityOrFocus);
+    return () => {
+      navigator.serviceWorker?.removeEventListener("message", onSwMessage);
+      document.removeEventListener("visibilitychange", onVisibilityOrFocus);
+      window.removeEventListener("focus", onVisibilityOrFocus);
+    };
+  }, [markBotRead, markBotUnread]);
 
   useEffect(() => {
     if (showAccountSheet) {

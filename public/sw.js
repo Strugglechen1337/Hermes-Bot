@@ -65,24 +65,62 @@ self.addEventListener("push", (event) => {
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   const payload = event.notification.data || {};
-  const targetBot = typeof payload.bot === "string" ? payload.bot : "";
-  const targetUrl = typeof payload.url === "string" ? payload.url : "/";
+  const targetBot = typeof payload.bot === "string" ? payload.bot.trim() : "";
+  const targetUrl =
+    typeof payload.url === "string" && payload.url.trim()
+      ? payload.url.trim()
+      : targetBot
+        ? `/?bot=${encodeURIComponent(targetBot)}`
+        : "/";
 
   event.waitUntil(
-    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clients) => {
+    (async () => {
+      // Persist target bot in Cache Storage before focusing/opening so iOS Safari
+      // standalone PWAs never lose the deep-link if postMessage fires while frozen
+      // or if openWindow strips query parameters.
+      if (targetBot && typeof caches !== "undefined") {
+        try {
+          const cache = await caches.open("hp-push-nav");
+          await cache.put(
+            "/__pending_push_nav",
+            new Response(JSON.stringify({ bot: targetBot, ts: Date.now() }), {
+              headers: { "Content-Type": "application/json" },
+            })
+          );
+        } catch {
+          // Non-fatal
+        }
+      }
+
+      const clients = await self.clients.matchAll({
+        type: "window",
+        includeUncontrolled: true,
+      });
+
       for (const client of clients) {
         if ("focus" in client) {
-          client.focus();
+          try {
+            await client.focus();
+          } catch {
+            // ignore focus errors
+          }
           if (targetBot) {
             client.postMessage({ type: "hp:open-bot", bot: targetBot });
+            setTimeout(() => {
+              try {
+                client.postMessage({ type: "hp:open-bot", bot: targetBot });
+              } catch {
+                // ignore
+              }
+            }, 350);
           }
           return;
         }
       }
+
       if (self.clients.openWindow) {
-        return self.clients.openWindow(targetUrl);
+        await self.clients.openWindow(targetUrl);
       }
-      return undefined;
-    })
+    })()
   );
 });
