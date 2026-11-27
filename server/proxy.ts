@@ -820,7 +820,11 @@ export async function handleHermesHttpProxy(
   // cookie_origin_is_allowed contract for trusted local/proxy callers.
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 25_000);
+  const timeoutMs =
+    pathname.startsWith("/api/messaging/platforms/") || pathname.startsWith("/api/mcp/")
+      ? 65_000
+      : 25_000;
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     const upstreamRes = await fetch(upstreamUrl, {
