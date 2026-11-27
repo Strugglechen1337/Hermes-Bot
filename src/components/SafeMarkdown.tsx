@@ -636,6 +636,14 @@ export const SafeMarkdown: React.FC<SafeMarkdownProps> = ({ text }) => {
     let orderedItems: string[] = [];
     let paraLines: string[] = [];
 
+    const isTableSeparator = (line: string): boolean =>
+      /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(line);
+
+    const parseTableRow = (line: string): string[] => {
+      const trimmed = line.trim().replace(/^\|/, "").replace(/\|$/, "");
+      return trimmed.split("|").map((cell) => cell.trim());
+    };
+
     const flushPara = (key: string) => {
       if (paraLines.length === 0) return;
       const content = paraLines.join("\n");
@@ -678,7 +686,56 @@ export const SafeMarkdown: React.FC<SafeMarkdownProps> = ({ text }) => {
       );
     };
 
-    lines.forEach((line, lineIdx) => {
+    for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
+      const line = lines[lineIdx];
+      const nextLine = lineIdx + 1 < lines.length ? lines[lineIdx + 1] : "";
+
+      // Markdown pipe table: header row + |---|---| separator + body rows
+      if (line.includes("|") && isTableSeparator(nextLine)) {
+        flushList(`ul-${segIdx}-${lineIdx}`);
+        flushOrderedList(`ol-${segIdx}-${lineIdx}`);
+        flushPara(`p-${segIdx}-${lineIdx}`);
+        const headers = parseTableRow(line);
+        const bodyRows: string[][] = [];
+        lineIdx += 2;
+        while (
+          lineIdx < lines.length &&
+          lines[lineIdx].trim() !== "" &&
+          lines[lineIdx].includes("|")
+        ) {
+          bodyRows.push(parseTableRow(lines[lineIdx]));
+          lineIdx++;
+        }
+        lineIdx--; // compensate for loop increment
+        blocks.push(
+          <div key={`tbl-${segIdx}-${lineIdx}`} className="md-table-wrap">
+            <table className="md-table">
+              <thead>
+                <tr>
+                  {headers.map((h, hIdx) => (
+                    <th key={hIdx}>{renderInline(h, `th-${segIdx}-${lineIdx}-${hIdx}`)}</th>
+                  ))}
+                </tr>
+              </thead>
+              {bodyRows.length > 0 && (
+                <tbody>
+                  {bodyRows.map((row, rIdx) => (
+                    <tr key={rIdx}>
+                      {headers.map((_h, cIdx) => (
+                        <td key={cIdx}>
+                          {renderInline(row[cIdx] || "", `td-${segIdx}-${lineIdx}-${rIdx}-${cIdx}`)}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              )}
+            </table>
+          </div>
+        );
+        continue;
+      }
+
       const headingMatch = line.match(/^\s*(#{1,4})\s+(.+)$/);
       const bulletMatch = line.match(/^\s*[-*•]\s+(.*)$/);
       const orderedMatch = line.match(/^\s*\d+[.)]\s+(.*)$/);
@@ -710,7 +767,7 @@ export const SafeMarkdown: React.FC<SafeMarkdownProps> = ({ text }) => {
         flushOrderedList(`ol-${segIdx}-${lineIdx}`);
         paraLines.push(line);
       }
-    });
+    }
 
     flushList(`ul-${segIdx}-end`);
     flushOrderedList(`ol-${segIdx}-end`);

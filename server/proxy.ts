@@ -5,6 +5,7 @@ import path from "node:path";
 import type { ServerConfig } from "./config.js";
 import { appendAutonomousGuidance } from "../shared/botAutonomy.js";
 import { handlePocketChecklistsRoute } from "./checklists.js";
+import { handlePocketBookmarksRoute } from "./bookmarks.js";
 import { handlePocketMediaRoute } from "./media.js";
 import { handlePocketPagesRoute } from "./pages.js";
 import { handlePocketPreferencesRoute } from "./preferences.js";
@@ -766,6 +767,10 @@ export async function handleHermesHttpProxy(
 
   if (pathname.startsWith("/api/pocket/reactions/")) {
     return handlePocketReactionsRoute(req, res, config, pathname);
+  }
+
+  if (pathname === "/api/pocket/bookmarks" || pathname.startsWith("/api/pocket/bookmarks/")) {
+    return handlePocketBookmarksRoute(req, res, config, pathname);
   }
 
   const method = (req.method || "GET").toUpperCase();

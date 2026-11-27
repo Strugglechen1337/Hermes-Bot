@@ -25,10 +25,20 @@ export interface WatchedDbMessageRow {
   prev_user_content?: string | null;
 }
 
+export interface WatchedRoomEventRow {
+  rowid: number;
+  room_id: string;
+  room_name?: string | null;
+  kind?: string | null;
+  actor_json?: string | null;
+  payload_json?: string | null;
+}
+
 export interface PushWatcherOptions {
   hermesHome?: string;
   pollIntervalMs?: number;
   queryDb?: (dbPath: string, sql: string) => Promise<WatchedDbMessageRow[]>;
+  queryRoomEvents?: (dbPath: string, sql: string) => Promise<WatchedRoomEventRow[]>;
   dispatch?: typeof dispatchPushNotification;
 }
 
@@ -41,6 +51,7 @@ interface ProfileDbTarget {
 interface WatchedProfileState {
   lastMtimeMs: number;
   lastSeenId: number;
+  lastSeenRoomRowId: number;
   seeded: boolean;
 }
 
@@ -200,6 +211,76 @@ export function formatPushPreview(rawText: string, maxLen = 160): string {
   return `${cleaned.slice(0, maxLen - 1).trimEnd()}…`;
 }
 
+async function defaultQueryRoomSqlite(dbPath: string, sql: string): Promise<WatchedRoomEventRow[]> {
+  try {
+    const { stdout } = await execFileAsync(
+      "sqlite3",
+      ["-readonly", "-json", dbPath, sql],
+      { timeout: 3000, maxBuffer: 512 * 1024 }
+    );
+    const trimmed = (stdout || "").trim();
+    if (!trimmed) return [];
+    const parsed = JSON.parse(trimmed) as unknown;
+    return Array.isArray(parsed) ? (parsed as WatchedRoomEventRow[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function extractGroupEventNotification(
+  row: WatchedRoomEventRow
+): { roomId: string; roomName: string; senderLabel: string; preview: string } | null {
+  if (!row.room_id) return null;
+  if (row.kind && row.kind !== "message" && row.kind !== "chat.message") return null;
+
+  let actor: Record<string, unknown> = {};
+  if (row.actor_json) {
+    try {
+      const parsed = JSON.parse(row.actor_json) as unknown;
+      if (parsed && typeof parsed === "object") actor = parsed as Record<string, unknown>;
+    } catch {
+      // ignore malformed json
+    }
+  }
+  const actorKind = String(actor.kind || actor.type || actor.role || "").toLowerCase();
+  if (actorKind === "user" || actorKind === "human" || actor.is_human === true) {
+    return null;
+  }
+
+  let payload: Record<string, unknown> = {};
+  if (row.payload_json) {
+    try {
+      const parsed = JSON.parse(row.payload_json) as unknown;
+      if (parsed && typeof parsed === "object") payload = parsed as Record<string, unknown>;
+    } catch {
+      // ignore malformed json
+    }
+  }
+  const rawText =
+    (typeof payload.text === "string" && payload.text) ||
+    (typeof payload.body === "string" && payload.body) ||
+    (typeof payload.content === "string" && payload.content) ||
+    "";
+  const trimmed = rawText.trim();
+  if (!trimmed || /^(?:\[SILENT\]|NO_REPLY)$/i.test(trimmed)) return null;
+
+  const senderRaw =
+    (typeof actor.display_name === "string" && actor.display_name) ||
+    (typeof actor.name === "string" && actor.name) ||
+    (typeof actor.profile === "string" && actor.profile) ||
+    "Bot";
+  const senderLabel = senderRaw.trim().split(/[-_]/)[0];
+  const formattedSender = senderLabel.charAt(0).toUpperCase() + senderLabel.slice(1);
+  const roomName = (row.room_name || "").trim() || "Gruppe";
+
+  return {
+    roomId: row.room_id,
+    roomName,
+    senderLabel: formattedSender,
+    preview: formatPushPreview(trimmed, 140),
+  };
+}
+
 /**
  * Watches Hermes profile SQLite databases (read-only, mtime-gated) and dispatches
  * Web Push notifications when a bot finishes a reply while the user's app is
@@ -215,6 +296,7 @@ export function startHermesPushWatcher(options: PushWatcherOptions = {}): {
     path.join(os.homedir(), ".hermes");
   const pollIntervalMs = options.pollIntervalMs ?? 4_000;
   const queryDb = options.queryDb ?? defaultQuerySqlite;
+  const queryRoomEvents = options.queryRoomEvents ?? defaultQueryRoomSqlite;
   const dispatch = options.dispatch ?? dispatchPushNotification;
 
   const states = new Map<string, WatchedProfileState>();
@@ -241,9 +323,18 @@ export function startHermesPushWatcher(options: PushWatcherOptions = {}): {
             "SELECT COALESCE(MAX(id), 0) AS id, 'system' AS role, '' AS content FROM messages;"
           );
           const maxId = Number(rows[0]?.id || 0);
+          let maxRoomRowId = 0;
+          if (target.profileName === "default") {
+            const roomSeed = await queryRoomEvents(
+              target.dbPath,
+              "SELECT COALESCE(MAX(rowid), 0) AS rowid, '' AS room_id FROM hosted_room_events;"
+            );
+            maxRoomRowId = Number(roomSeed[0]?.rowid || 0);
+          }
           states.set(target.profileName, {
             lastMtimeMs: mtimeMs,
             lastSeenId: Number.isFinite(maxId) ? maxId : 0,
+            lastSeenRoomRowId: Number.isFinite(maxRoomRowId) ? maxRoomRowId : 0,
             seeded: true,
           });
           continue;
@@ -260,39 +351,82 @@ export function startHermesPushWatcher(options: PushWatcherOptions = {}): {
           target.dbPath,
           `SELECT m.id, m.session_id, m.role, m.content, m.timestamp, s.source AS session_source, s.title AS session_title, (SELECT u.content FROM messages u WHERE u.session_id = m.session_id AND u.role = 'user' AND u.id < m.id ORDER BY u.id DESC LIMIT 1) AS prev_user_content FROM messages m LEFT JOIN sessions s ON s.id = m.session_id WHERE m.id > ${safeLastId} AND m.role = 'assistant' ORDER BY m.id ASC LIMIT 20;`
         );
-        if (rows.length === 0) continue;
+        if (rows.length > 0) {
+          let maxId = state.lastSeenId;
+          const candidates: WatchedDbMessageRow[] = [];
+          for (const row of rows) {
+            const rowId = Number(row.id || 0);
+            if (rowId > maxId) maxId = rowId;
+            if (!isNonNotifiableAssistantMessage(row)) {
+              candidates.push(row);
+            }
+          }
+          state.lastSeenId = maxId;
 
-        let maxId = state.lastSeenId;
-        const candidates: WatchedDbMessageRow[] = [];
-        for (const row of rows) {
-          const rowId = Number(row.id || 0);
-          if (rowId > maxId) maxId = rowId;
-          if (!isNonNotifiableAssistantMessage(row)) {
-            candidates.push(row);
+          if (
+            candidates.length > 0 &&
+            hasActivePushSubscriptions() &&
+            !isClientCurrentlyForeground() &&
+            getPushBlockReason(target.profileName) === null &&
+            !wasBotPushedRecently(target.profileName, 20_000)
+          ) {
+            const latest = candidates[candidates.length - 1];
+            const preview = formatPushPreview(latest.content || "");
+            const stats = await dispatch({
+              title: target.displayName,
+              body: preview,
+              bot: target.profileName,
+              tag: `hermes-bot-${target.profileName}`,
+            });
+            if (stats.sent > 0) {
+              recordBotPushSent(target.profileName);
+              pushedCount += 1;
+              console.log(
+                `[hermes-pocket] Push watcher dispatched notification for ${target.profileName} (sent=${stats.sent})`
+              );
+            }
           }
         }
-        state.lastSeenId = maxId;
 
-        if (candidates.length === 0) continue;
-        if (!hasActivePushSubscriptions()) continue;
-        if (isClientCurrentlyForeground()) continue;
-        if (getPushBlockReason(target.profileName) !== null) continue;
-        if (wasBotPushedRecently(target.profileName, 20_000)) continue;
-
-        const latest = candidates[candidates.length - 1];
-        const preview = formatPushPreview(latest.content || "");
-        const stats = await dispatch({
-          title: target.displayName,
-          body: preview,
-          bot: target.profileName,
-          tag: `hermes-bot-${target.profileName}`,
-        });
-        if (stats.sent > 0) {
-          recordBotPushSent(target.profileName);
-          pushedCount += 1;
-          console.log(
-            `[hermes-pocket] Push watcher dispatched notification for ${target.profileName} (sent=${stats.sent})`
+        // Also check hosted group room events on the authority DB ("default")
+        if (target.profileName === "default") {
+          const safeRoomRowId = Math.max(0, Math.floor(state.lastSeenRoomRowId));
+          const roomRows = await queryRoomEvents(
+            target.dbPath,
+            `SELECT e.rowid AS rowid, e.room_id AS room_id, r.name AS room_name, e.kind AS kind, e.actor_json AS actor_json, e.payload_json AS payload_json FROM hosted_room_events e LEFT JOIN hosted_rooms r ON r.room_id = e.room_id WHERE e.rowid > ${safeRoomRowId} ORDER BY e.rowid ASC LIMIT 20;`
           );
+          if (roomRows.length > 0) {
+            let maxRoomRow = state.lastSeenRoomRowId;
+            let latestGroupNotif: ReturnType<typeof extractGroupEventNotification> = null;
+            for (const rRow of roomRows) {
+              const rid = Number(rRow.rowid || 0);
+              if (rid > maxRoomRow) maxRoomRow = rid;
+              const extracted = extractGroupEventNotification(rRow);
+              if (extracted) latestGroupNotif = extracted;
+            }
+            state.lastSeenRoomRowId = maxRoomRow;
+
+            if (
+              latestGroupNotif &&
+              hasActivePushSubscriptions() &&
+              !isClientCurrentlyForeground() &&
+              !wasBotPushedRecently(`group:${latestGroupNotif.roomId}`, 10_000)
+            ) {
+              const stats = await dispatch({
+                title: latestGroupNotif.roomName,
+                body: `${latestGroupNotif.senderLabel}: ${latestGroupNotif.preview}`,
+                tag: `hermes-group-${latestGroupNotif.roomId}`,
+                url: `/?tab=groups&room=${encodeURIComponent(latestGroupNotif.roomId)}`,
+              });
+              if (stats.sent > 0) {
+                recordBotPushSent(`group:${latestGroupNotif.roomId}`);
+                pushedCount += 1;
+                console.log(
+                  `[hermes-pocket] Push watcher dispatched group notification for ${latestGroupNotif.roomId} (sent=${stats.sent})`
+                );
+              }
+            }
+          }
         }
       }
     } catch (err) {

@@ -8,6 +8,7 @@ import {
   recordBotPushSent,
 } from "./push.js";
 import {
+  extractGroupEventNotification,
   formatPushPreview,
   isNonNotifiableAssistantMessage,
   startHermesPushWatcher,
@@ -32,6 +33,31 @@ describe("pushWatcher", () => {
     expect(formatPushPreview("[POCKET_PAGE: id=1 | title=Briefing]")).toBe(
       "Neues Briefing erstellt"
     );
+    expect(
+      extractGroupEventNotification({
+        rowid: 1,
+        room_id: "room-team",
+        room_name: "Team",
+        kind: "message",
+        actor_json: JSON.stringify({ kind: "bot", display_name: "Mia" }),
+        payload_json: JSON.stringify({ text: "Deal gefunden!" }),
+      })
+    ).toEqual({
+      roomId: "room-team",
+      roomName: "Team",
+      senderLabel: "Mia",
+      preview: "Deal gefunden!",
+    });
+    expect(
+      extractGroupEventNotification({
+        rowid: 2,
+        room_id: "room-team",
+        room_name: "Team",
+        kind: "message",
+        actor_json: JSON.stringify({ kind: "user", name: "Alex" }),
+        payload_json: JSON.stringify({ text: "Hallo zusammen" }),
+      })
+    ).toBeNull();
   });
 
   it("filters out subagent, silent, reaction-only, and internal gateway messages", () => {

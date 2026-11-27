@@ -112,4 +112,21 @@ describe("SafeMarkdown", () => {
     expect(favicons[0].getAttribute("src")).toContain("alza.de");
     expect(favicons[1].getAttribute("src")).toContain("mediamarkt.de");
   });
+
+  it("renders markdown pipe tables into styled responsive tables with inline links", () => {
+    const text =
+      "### Preisvergleich\n\n" +
+      "| Shop | Preis |\n" +
+      "| --- | --- |\n" +
+      "| **[Alza](https://www.alza.de/p1)** | 238,89 € |\n" +
+      "| MediaMarkt | 244,99 € |";
+
+    const { container } = render(<SafeMarkdown text={text} />);
+    expect(screen.getByText("Preisvergleich").tagName).toBe("H4");
+    const table = container.querySelector("table.md-table");
+    expect(table).not.toBeNull();
+    expect(screen.getByText("Shop").tagName).toBe("TH");
+    expect(screen.getByText("238,89 €").tagName).toBe("TD");
+    expect(screen.getByRole("link", { name: "Alza" })).toHaveAttribute("href", "https://www.alza.de/p1");
+  });
 });

@@ -854,3 +854,36 @@ export async function fetchProfileMediaGallery(
   );
   return Array.isArray(data.items) ? data.items : [];
 }
+
+export interface SavedBookmark {
+  id: string;
+  bot: string;
+  author: string;
+  text: string;
+  sessionId?: string;
+  createdAt: number;
+}
+
+export async function fetchBookmarks(): Promise<SavedBookmark[]> {
+  const data = await requestJson<{ bookmarks?: SavedBookmark[] }>("/api/pocket/bookmarks");
+  return Array.isArray(data.bookmarks) ? data.bookmarks : [];
+}
+
+export async function saveBookmark(payload: {
+  bot: string;
+  author: string;
+  text: string;
+  sessionId?: string;
+}): Promise<SavedBookmark> {
+  const data = await requestJson<{ bookmark: SavedBookmark }>("/api/pocket/bookmarks", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  return data.bookmark;
+}
+
+export async function deleteBookmark(id: string): Promise<void> {
+  await requestJson<{ ok: boolean }>(`/api/pocket/bookmarks/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+}

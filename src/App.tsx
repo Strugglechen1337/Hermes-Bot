@@ -2,6 +2,7 @@ import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useStat
 import {
   Bell,
   BellOff,
+  Bookmark,
   Bot,
   CalendarClock,
   Check,
@@ -46,6 +47,9 @@ const CredentialVaultSheet = lazy(() =>
 );
 const GroupsView = lazy(() =>
   import("./components/GroupsView").then((m) => ({ default: m.GroupsView }))
+);
+const BookmarksSheet = lazy(() =>
+  import("./components/BookmarksSheet").then((m) => ({ default: m.BookmarksSheet }))
 );
 const PagesArchiveSheet = lazy(() =>
   import("./components/PagesArchiveSheet").then((m) => ({ default: m.PagesArchiveSheet }))
@@ -164,6 +168,7 @@ export const App: React.FC = () => {
   const [showAccountSheet, setShowAccountSheet] = useState(false);
   const [showCredentialVault, setShowCredentialVault] = useState(false);
   const [showPagesArchive, setShowPagesArchive] = useState(false);
+  const [showBookmarks, setShowBookmarks] = useState(false);
   const [showAiProviders, setShowAiProviders] = useState(false);
   const [shortcutConfig, setShortcutConfig] = useState<{ token: string; endpoint: string } | null>(null);
   const [shortcutCopied, setShortcutCopied] = useState(false);
@@ -428,6 +433,18 @@ export const App: React.FC = () => {
       markBotRead(clean);
     };
 
+    const openRoomFromPush = (roomId: string) => {
+      const clean = roomId.trim();
+      if (!clean) return;
+      setShowAccountSheet(false);
+      setShowCredentialVault(false);
+      setShowPagesArchive(false);
+      setShowAiProviders(false);
+      setTab("groups");
+      setSelectedRoomId(clean);
+      markGroupRead(clean);
+    };
+
     const consumePendingPushNav = async () => {
       if (typeof caches === "undefined") return;
       try {
@@ -435,13 +452,13 @@ export const App: React.FC = () => {
         const res = await cache.match("/__pending_push_nav");
         if (!res) return;
         await cache.delete("/__pending_push_nav");
-        const payload = (await res.json()) as { bot?: string; ts?: number } | null;
-        if (
-          payload?.bot &&
-          typeof payload.ts === "number" &&
-          Date.now() - payload.ts < 60_000
-        ) {
-          openBotFromPush(payload.bot);
+        const payload = (await res.json()) as { bot?: string; room?: string; ts?: number } | null;
+        if (payload && typeof payload.ts === "number" && Date.now() - payload.ts < 60_000) {
+          if (payload.room) {
+            openRoomFromPush(payload.room);
+          } else if (payload.bot) {
+            openBotFromPush(payload.bot);
+          }
         }
       } catch {
         // ignore
@@ -450,7 +467,12 @@ export const App: React.FC = () => {
 
     const params = new URLSearchParams(window.location.search);
     const botParam = params.get("bot")?.trim();
-    if (botParam) {
+    const roomParam = params.get("room")?.trim();
+    if (roomParam) {
+      openRoomFromPush(roomParam);
+      void clearPendingPushNav();
+      window.history.replaceState({}, "", window.location.pathname);
+    } else if (botParam) {
       openBotFromPush(botParam);
       void clearPendingPushNav();
       const promptParam = params.get("prompt");
@@ -472,10 +494,14 @@ export const App: React.FC = () => {
       const data = ev.data as {
         type?: string;
         bot?: string;
+        room?: string;
         body?: string;
         title?: string;
       } | null;
-      if (data?.type === "hp:open-bot" && data.bot) {
+      if (data?.type === "hp:open-room" && data.room) {
+        openRoomFromPush(data.room);
+        void clearPendingPushNav();
+      } else if (data?.type === "hp:open-bot" && data.bot) {
         openBotFromPush(data.bot);
         void clearPendingPushNav();
       } else if (data?.type === "hp:bot-message" && data.bot) {
@@ -1210,6 +1236,15 @@ export const App: React.FC = () => {
         <button
           type="button"
           className="icon-btn ghost"
+          aria-label="Gemerkte Nachrichten"
+          title="Gemerkte Nachrichten"
+          onClick={() => setShowBookmarks(true)}
+        >
+          <Bookmark size={18} />
+        </button>
+        <button
+          type="button"
+          className="icon-btn ghost"
           aria-label="Briefings & Seiten"
           title="Briefings & Seiten"
           onClick={() => setShowPagesArchive(true)}
@@ -1938,6 +1973,19 @@ export const App: React.FC = () => {
             privateProfileNames={privateProfileNames}
             avatars={avatars}
             onClose={() => setShowPagesArchive(false)}
+          />
+        </Suspense>
+      )}
+      {showBookmarks && (
+        <Suspense fallback={null}>
+          <BookmarksSheet
+            open={showBookmarks}
+            onClose={() => setShowBookmarks(false)}
+            onOpenBot={(botName) => {
+              setTab("bots");
+              setSelectedBotName(botName);
+              markBotRead(botName);
+            }}
           />
         </Suspense>
       )}

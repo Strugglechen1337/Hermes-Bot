@@ -72,20 +72,28 @@ self.addEventListener("notificationclick", (event) => {
       : targetBot
         ? `/?bot=${encodeURIComponent(targetBot)}`
         : "/";
+  let targetRoom = "";
+  try {
+    const parsedUrl = new URL(targetUrl, self.location.origin);
+    targetRoom = (parsedUrl.searchParams.get("room") || "").trim();
+  } catch {
+    // ignore
+  }
 
   event.waitUntil(
     (async () => {
-      // Persist target bot in Cache Storage before focusing/opening so iOS Safari
+      // Persist target bot or group room in Cache Storage before focusing/opening so iOS Safari
       // standalone PWAs never lose the deep-link if postMessage fires while frozen
       // or if openWindow strips query parameters.
-      if (targetBot && typeof caches !== "undefined") {
+      if ((targetBot || targetRoom) && typeof caches !== "undefined") {
         try {
           const cache = await caches.open("hp-push-nav");
           await cache.put(
             "/__pending_push_nav",
-            new Response(JSON.stringify({ bot: targetBot, ts: Date.now() }), {
-              headers: { "Content-Type": "application/json" },
-            })
+            new Response(
+              JSON.stringify({ bot: targetBot, room: targetRoom, ts: Date.now() }),
+              { headers: { "Content-Type": "application/json" } }
+            )
           );
         } catch {
           // Non-fatal
@@ -104,11 +112,16 @@ self.addEventListener("notificationclick", (event) => {
           } catch {
             // ignore focus errors
           }
-          if (targetBot) {
-            client.postMessage({ type: "hp:open-bot", bot: targetBot });
+          const navMsg = targetRoom
+            ? { type: "hp:open-room", room: targetRoom }
+            : targetBot
+              ? { type: "hp:open-bot", bot: targetBot }
+              : null;
+          if (navMsg) {
+            client.postMessage(navMsg);
             setTimeout(() => {
               try {
-                client.postMessage({ type: "hp:open-bot", bot: targetBot });
+                client.postMessage(navMsg);
               } catch {
                 // ignore
               }

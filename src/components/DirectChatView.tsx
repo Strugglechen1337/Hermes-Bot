@@ -4,6 +4,7 @@ import {
   AlertCircle,
   ArrowDown,
   ArrowUp,
+  Bookmark,
   Check,
   ChevronDown,
   ChevronLeft,
@@ -31,6 +32,7 @@ import {
   ShieldCheck,
   Square,
   Trash2,
+  Volume2,
   Wrench,
   X,
 } from "lucide-react";
@@ -72,6 +74,7 @@ import {
   normalizeMessages,
   prepareChatImageDataUrl,
   renameSession,
+  saveBookmark,
   toggleSessionReaction,
   transcribeAudioBlob,
   updateProfileModel,
@@ -82,6 +85,7 @@ import {
 import { hermesWs, type WsConnectionState } from "../lib/hermesWs";
 import { PRIVATE_CHAT_TITLE } from "../lib/privateVault";
 import { notifyIfBackgrounded } from "../lib/pushClient";
+import { isTtsSupported, stopSpeaking, subscribeTtsState, toggleSpeakText } from "../lib/tts";
 import {
   detectBotSecretForm,
   detectBotVaultRequest,
@@ -302,6 +306,16 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
     role: string;
   } | null>(null);
   const [sessionReactions, setSessionReactions] = useState<Record<string, string[]>>({});
+  const [speakingMsgKey, setSpeakingMsgKey] = useState<string | null>(null);
+  const [bookmarkedNotice, setBookmarkedNotice] = useState(false);
+
+  useEffect(() => {
+    const unsub = subscribeTtsState(setSpeakingMsgKey);
+    return () => {
+      unsub();
+      stopSpeaking();
+    };
+  }, []);
 
   useEffect(() => {
     if (!activeSessionId) {
@@ -2091,7 +2105,23 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
                   {msg.role === "assistant" && msg.streaming && (
                     <div className="msg-author">
                       <span className="pulse-dot" />
-                      <span>{visual.label} schreibt…</span>
+                      <span>
+                        {visual.label}{" "}
+                        {activeTool
+                          ? (() => {
+                              const t = activeTool.toLowerCase();
+                              if (t.includes("search") || t.includes("web") || t.includes("fetch")) return "sucht im Web…";
+                              if (t.includes("browser") || t.includes("page")) return "liest Webseite…";
+                              if (t.includes("image") || t.includes("codex") || t.includes("draw")) return "erstellt Bild…";
+                              if (t.includes("mail") || t.includes("gmail") || t.includes("imap")) return "prüft E-Mails…";
+                              if (t.includes("message_agent") || t.includes("dm")) return "fragt Teamkollegen…";
+                              if (t.includes("cron")) return "prüft Routine…";
+                              if (t.includes("write") || t.includes("patch") || t.includes("edit")) return "bearbeitet Datei…";
+                              if (t.includes("terminal") || t.includes("exec") || t.includes("bash")) return "führt Befehl aus…";
+                              return "arbeitet…";
+                            })()
+                          : liveStatus || "schreibt…"}
+                      </span>
                     </div>
                   )}
                   <div
@@ -2480,6 +2510,26 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
       </div>
 
       <div className="composer-wrap">
+        {speakingMsgKey && (
+          <div className="new-msg-scroll-wrap">
+            <button
+              type="button"
+              className="new-msg-scroll-pill"
+              onClick={stopSpeaking}
+            >
+              <Volume2 size={14} />
+              <span>Vorlesen stoppen</span>
+            </button>
+          </div>
+        )}
+        {bookmarkedNotice && (
+          <div className="new-msg-scroll-wrap">
+            <div className="new-msg-scroll-pill">
+              <Bookmark size={14} />
+              <span>Nachricht gemerkt</span>
+            </div>
+          </div>
+        )}
         {hasNewBelow && (
           <div className="new-msg-scroll-wrap">
             <button
@@ -2764,6 +2814,43 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
               >
                 <Copy size={16} /> Kopieren
               </button>
+              {isTtsSupported() && (
+                <button
+                  type="button"
+                  className="btn full"
+                  onClick={() => {
+                    toggleSpeakText(contextMsg.msgKey, contextMsg.text);
+                    setContextMsg(null);
+                  }}
+                >
+                  <Volume2 size={16} />{" "}
+                  {speakingMsgKey === contextMsg.msgKey ? "Vorlesen stoppen" : "Vorlesen"}
+                </button>
+              )}
+              {!isPrivateBot && (
+                <button
+                  type="button"
+                  className="btn full"
+                  onClick={() => {
+                    const txt = contextMsg.text;
+                    const auth = contextMsg.author;
+                    setContextMsg(null);
+                    void saveBookmark({
+                      bot: profile.name,
+                      author: auth,
+                      text: txt,
+                      sessionId: activeSessionRef.current || undefined,
+                    })
+                      .then(() => {
+                        setBookmarkedNotice(true);
+                        window.setTimeout(() => setBookmarkedNotice(false), 2000);
+                      })
+                      .catch(() => {});
+                  }}
+                >
+                  <Bookmark size={16} /> Merken
+                </button>
+              )}
               {typeof navigator !== "undefined" && typeof navigator.share === "function" && (
                 <button
                   type="button"
