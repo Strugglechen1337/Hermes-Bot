@@ -654,6 +654,15 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
     }
   }, [scrollToBottom]);
 
+  // Keep the viewport pinned to the latest message while a bot is streaming or
+  // right after a new reply commits to the DOM (unless the user scrolled up to read history)
+  useEffect(() => {
+    if (loadingChat) return;
+    if (isStreaming || isNearBottomRef.current) {
+      scrollToBottom();
+    }
+  }, [loadingChat, isStreaming, messages, scrollToBottom]);
+
   // Always jump to latest message when mobile keyboard opens
   useEffect(() => {
     const onViewportChange = (ev: Event) => {
@@ -1108,6 +1117,7 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
           }
           return next;
         });
+        scrollToBottom();
       } else if (ev.type === "tool.start" || ev.type === "tool.progress") {
         const toolName =
           (typeof ev.payload.tool_name === "string" && ev.payload.tool_name) ||
@@ -1191,6 +1201,7 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
           }
           return next;
         });
+        scrollToBottomWithSettle();
         // Automatically detect when a bot asks for a Vault entry (card/address/shop login)
         // OR a single/multi-field .env secret form and pop up the protected card in chat.
         if (finalText) {

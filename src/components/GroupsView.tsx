@@ -677,10 +677,10 @@ const GroupRoomView: React.FC<GroupRoomViewProps> = ({
             }
             return merged.sort((a, b) => a.seq - b.seq);
           });
-          scrollToBottom();
+          scrollToBottomWithSettle();
         } else if (!incremental) {
           setEvents(incoming);
-          scrollToBottom();
+          scrollToBottomWithSettle();
         }
         if (typeof logRes?.cursor === "number") {
           cursorRef.current = Math.max(cursorRef.current, logRes.cursor);
@@ -700,7 +700,7 @@ const GroupRoomView: React.FC<GroupRoomViewProps> = ({
         setLoading(false);
       }
     },
-    [onMarkGroupRead, room.room_id, scrollToBottom, wsState]
+    [onMarkGroupRead, room.room_id, scrollToBottomWithSettle, wsState]
   );
 
   useEffect(() => {
