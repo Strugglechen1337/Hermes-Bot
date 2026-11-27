@@ -1020,6 +1020,41 @@ export const App: React.FC = () => {
         const finalText = typeof ev.payload.text === "string" ? ev.payload.text.trim() : "";
         if (!finalText || isSilentBotAck(finalText)) return;
         const now = Date.now();
+        const sid = ev.sessionId;
+        if (sid) {
+          // Verify via session history that this reply is addressed to the human user
+          // and not an internal bot-to-bot DM answer (e.g. Nina replying to Mia).
+          void fetchSessionMessages(sid, resolvedProfile)
+            .then((msgs) => {
+              const detected = detectUnreadAssistantMessages(
+                msgs,
+                botReadCursorsRef.current[resolvedProfile],
+                now,
+                sid
+              );
+              if (!detected) return;
+              setRecentByProfile((prev) => {
+                const cur = prev[resolvedProfile];
+                if (!cur) return prev;
+                return {
+                  ...prev,
+                  [resolvedProfile]: { ...cur, last_active: now },
+                };
+              });
+              markBotUnread(resolvedProfile, {
+                count: detected.count,
+                preview: detected.preview || formatUnreadPreview(finalText),
+                timestampMs: detected.latestTimestampMs || now,
+                sessionId: sid,
+                source: "ws",
+                allowToast: document.visibilityState === "visible",
+              });
+            })
+            .catch(() => {
+              // On transient fetch error, wait for next poll instead of showing false unread
+            });
+          return;
+        }
         setRecentByProfile((prev) => {
           const cur = prev[resolvedProfile];
           if (!cur) return prev;
