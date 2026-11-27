@@ -102,7 +102,7 @@ import { useVisualViewport } from "./lib/useVisualViewport";
 type TabKey = "bots" | "groups" | "routines" | "connectors";
 
 const TAB_TITLES: Record<TabKey, string> = {
-  bots: "Hermes Pocket",
+  bots: "Hermes Bots",
   groups: "Gruppen",
   routines: "Routinen",
   connectors: "Connectoren",
@@ -997,12 +997,12 @@ export const App: React.FC = () => {
         <div style={{ textAlign: "center", color: "var(--text-secondary)" }}>
           <img
             src="/icon.svg"
-            alt="Hermes Pocket"
+            alt="Hermes Bots"
             width={56}
             height={56}
             style={{ borderRadius: 16, marginBottom: 14 }}
           />
-          <div style={{ fontWeight: 700, color: "var(--text-primary)" }}>Hermes Pocket</div>
+          <div style={{ fontWeight: 700, color: "var(--text-primary)" }}>Hermes Bots</div>
           <div style={{ fontSize: "0.84rem", marginTop: 4 }}>Verbinde mit Hermes…</div>
         </div>
       </div>
@@ -1415,7 +1415,7 @@ export const App: React.FC = () => {
           <Smartphone size={18} style={{ flexShrink: 0, marginTop: 2 }} />
           <span>
             <strong>iPhone Home-Bildschirm:</strong> In Safari auf <em>Teilen</em> tippen und{" "}
-            <em>„Zum Home-Bildschirm“</em> wählen – Hermes Pocket startet dann im Vollbildmodus.
+            <em>„Zum Home-Bildschirm“</em> wählen – Hermes Bots startet dann im Vollbildmodus.
           </span>
         </div>
 

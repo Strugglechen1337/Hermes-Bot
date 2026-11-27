@@ -52,14 +52,14 @@ export const LoginView: React.FC<LoginViewProps> = ({
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
           <img
             src="/icon.svg"
-            alt="Hermes Pocket"
+            alt="Hermes Bots"
             width={48}
             height={48}
             style={{ borderRadius: 14, flexShrink: 0 }}
           />
           <div>
             <h1 style={{ margin: 0, fontSize: "1.28rem", fontWeight: 800, letterSpacing: "-0.02em" }}>
-              Hermes Pocket
+              Hermes Bots
             </h1>
             <div style={{ fontSize: "0.82rem", color: "var(--text-secondary)", marginTop: 2 }}>
               Privater mobiler Zugang zu deinem Hermes Agent

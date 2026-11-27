@@ -373,7 +373,7 @@ export async function handlePocketPushRoute(
       return true;
     }
 
-    const title = typeof body.title === "string" && body.title.trim() ? body.title.trim() : "Hermes Pocket";
+    const title = typeof body.title === "string" && body.title.trim() ? body.title.trim() : "Hermes Bots";
     const text = typeof body.body === "string" && body.body.trim() ? body.body.trim() : "";
     const bot = typeof body.bot === "string" ? body.bot.trim() : "";
     const tag = typeof body.tag === "string" ? body.tag.trim() : undefined;
@@ -525,7 +525,7 @@ export async function handlePocketPushRoute(
 
   if (pathname === "/api/pocket/push/test" && method === "POST") {
     const stats = await dispatchPushNotification({
-      title: "Hermes Pocket",
+      title: "Hermes Bots",
       body: "Push-Benachrichtigungen funktionieren! Deine Bots können dich jetzt direkt erreichen.",
       tag: "hermes-pocket-test",
     });

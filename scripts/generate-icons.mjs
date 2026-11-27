@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
- * Generates original PNG app icons (180x180 for iOS apple-touch-icon, 512x512 for PWA manifest)
+ * Generates original Hermes Bots cute robot-head PNG app icons
+ * (180x180 for iOS apple-touch-icon, 512x512 for PWA manifest)
  * with zero external dependencies using Node's built-in zlib.
  */
 import fs from "node:fs";
@@ -41,7 +42,7 @@ function encodePng(width, height, rgba) {
   const stride = width * 4;
   const raw = Buffer.alloc((stride + 1) * height);
   for (let y = 0; y < height; y++) {
-    raw[y * (stride + 1)] = 0; // filter None
+    raw[y * (stride + 1)] = 0;
     rgba.copy(raw, y * (stride + 1) + 1, y * stride, (y + 1) * stride);
   }
   const compressed = zlib.deflateSync(raw, { level: 9 });
@@ -53,7 +54,17 @@ function encodePng(width, height, rgba) {
   ]);
 }
 
-function distToSegment(px, py, ax, ay, bx, by) {
+function sdRoundRect(px, py, cx, cy, hw, hh, r) {
+  const qx = Math.abs(px - cx) - (hw - r);
+  const qy = Math.abs(py - cy) - (hh - r);
+  return Math.hypot(Math.max(qx, 0), Math.max(qy, 0)) + Math.min(Math.max(qx, qy), 0) - r;
+}
+
+function sdCircle(px, py, cx, cy, r) {
+  return Math.hypot(px - cx, py - cy) - r;
+}
+
+function sdSegment(px, py, ax, ay, bx, by) {
   const vx = bx - ax;
   const vy = by - ay;
   const wx = px - ax;
@@ -75,44 +86,114 @@ function blendPixel(rgba, idx, r, g, b, alpha) {
   rgba[idx + 3] = 255;
 }
 
+function coverage(dist, aa) {
+  return Math.max(0, Math.min(1, 0.5 - dist / aa));
+}
+
 function renderIcon(size) {
   const rgba = Buffer.alloc(size * size * 4);
   const s = size / 512;
+  const aa = 2.0 / s;
 
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
       const t = (x + y) / (2 * size);
       const idx = (y * size + x) * 4;
-      // Dark obsidian gradient background
-      rgba[idx] = Math.round(20 * (1 - t) + 9 * t);
-      rgba[idx + 1] = Math.round(25 * (1 - t) + 11 * t);
-      rgba[idx + 2] = Math.round(38 * (1 - t) + 16 * t);
+
+      // Dark obsidian-navy gradient backdrop
+      rgba[idx] = Math.round(23 * (1 - t) + 9 * t);
+      rgba[idx + 1] = Math.round(28 * (1 - t) + 11 * t);
+      rgba[idx + 2] = Math.round(43 * (1 - t) + 16 * t);
       rgba[idx + 3] = 255;
 
-      const gx = x / s;
-      const gy = y / s;
+      const gx = (x + 0.5) / s;
+      const gy = (y + 0.5) / s;
 
-      // Subtle gradient color for the H pillars
-      const gt = Math.max(0, Math.min(1, (gx + gy - 200) / 520));
-      const ar = Math.round(245 * (1 - gt) + 129 * gt);
-      const ag = Math.round(158 * (1 - gt) + 140 * gt);
-      const ab = Math.round(11 * (1 - gt) + 248 * gt);
+      // Warm subtle amber radial glow behind antenna/head
+      const glowDist = Math.hypot(gx - 256, gy - 148) / 220;
+      if (glowDist < 1) {
+        const gAlpha = 0.25 * (1 - glowDist) * (1 - glowDist);
+        blendPixel(rgba, idx, 245, 158, 11, gAlpha);
+      }
 
-      // Left vertical bar
-      const dLeft = distToSegment(gx, gy, 158, 136, 158, 376);
-      if (dLeft < 21) blendPixel(rgba, idx, ar, ag, ab, Math.min(1, (21 - dLeft) / 2.2));
+      // Antenna stem
+      const dStem = sdSegment(gx, gy, 256, 164, 256, 118) - 9;
+      if (dStem < aa) blendPixel(rgba, idx, 203, 213, 225, coverage(dStem, aa));
 
-      // Right vertical bar
-      const dRight = distToSegment(gx, gy, 354, 136, 354, 376);
-      if (dRight < 21) blendPixel(rgba, idx, ar, ag, ab, Math.min(1, (21 - dRight) / 2.2));
+      // Antenna amber orb + specular highlight
+      const dOrb = sdCircle(gx, gy, 256, 102, 26);
+      if (dOrb < aa) {
+        const gt = Math.max(0, Math.min(1, (gy - 76) / 52));
+        blendPixel(
+          rgba,
+          idx,
+          Math.round(252 * (1 - gt) + 245 * gt),
+          Math.round(211 * (1 - gt) + 158 * gt),
+          Math.round(77 * (1 - gt) + 11 * gt),
+          coverage(dOrb, aa)
+        );
+      }
+      const dOrbHi = sdCircle(gx, gy, 248, 94, 7);
+      if (dOrbHi < aa) blendPixel(rgba, idx, 255, 251, 235, 0.85 * coverage(dOrbHi, aa));
 
-      // Center horizontal crossbar
-      const dMid = distToSegment(gx, gy, 158, 256, 354, 256);
-      if (dMid < 18) blendPixel(rgba, idx, 248, 250, 252, Math.min(1, (18 - dMid) / 2.2));
+      // Side ear pods + amber accents
+      const dEarL = sdRoundRect(gx, gy, 103, 280, 21, 42, 21);
+      const dEarR = sdRoundRect(gx, gy, 409, 280, 21, 42, 21);
+      const dEar = Math.min(dEarL, dEarR);
+      if (dEar < aa) blendPixel(rgba, idx, 203, 213, 225, coverage(dEar, aa));
 
-      // Top-right warm amber signal dot
-      const dDot = Math.hypot(gx - 354, gy - 136);
-      if (dDot < 26) blendPixel(rgba, idx, 245, 158, 11, Math.min(1, (26 - dDot) / 2.2));
+      const dEarAccentL = sdRoundRect(gx, gy, 99, 280, 6, 20, 6);
+      const dEarAccentR = sdRoundRect(gx, gy, 413, 280, 6, 20, 6);
+      const dEarAccent = Math.min(dEarAccentL, dEarAccentR);
+      if (dEarAccent < aa) blendPixel(rgba, idx, 245, 158, 11, coverage(dEarAccent, aa));
+
+      // Rounded cute robot head shell (white -> soft cool silver gradient)
+      const dHead = sdRoundRect(gx, gy, 256, 278, 142, 118, 86);
+      if (dHead < aa) {
+        const ht = Math.max(0, Math.min(1, (gy - 160) / 236));
+        blendPixel(
+          rgba,
+          idx,
+          Math.round(255 * (1 - ht) + 219 * ht),
+          Math.round(255 * (1 - ht) + 226 * ht),
+          Math.round(255 * (1 - ht) + 240 * ht),
+          coverage(dHead, aa)
+        );
+      }
+
+      // Dark expressive visor screen
+      const dVisor = sdRoundRect(gx, gy, 256, 277, 108, 71, 52);
+      if (dVisor < aa) {
+        const vt = Math.max(0, Math.min(1, (gy - 206) / 142));
+        blendPixel(
+          rgba,
+          idx,
+          Math.round(20 * (1 - vt) + 9 * vt),
+          Math.round(25 * (1 - vt) + 11 * vt),
+          Math.round(38 * (1 - vt) + 16 * vt),
+          coverage(dVisor, aa)
+        );
+      }
+
+      // Friendly glowing amber eyes + bright catchlights
+      const dEyeL = sdCircle(gx, gy, 208, 268, 24);
+      const dEyeR = sdCircle(gx, gy, 304, 268, 24);
+      const dEye = Math.min(dEyeL, dEyeR);
+      if (dEye < aa) blendPixel(rgba, idx, 251, 191, 36, coverage(dEye, aa));
+
+      const dHiL = sdCircle(gx, gy, 200, 260, 7);
+      const dHiR = sdCircle(gx, gy, 296, 260, 7);
+      const dHi = Math.min(dHiL, dHiR);
+      if (dHi < aa) blendPixel(rgba, idx, 255, 255, 255, coverage(dHi, aa));
+
+      // Cute curved smile (circular arc centered at (256, 286), radius 36, lower arc)
+      if (gy > 304 && gx >= 224 && gx <= 288) {
+        const dArc = Math.abs(Math.hypot(gx - 256, gy - 285) - 36) - 5.5;
+        const dCapL = sdCircle(gx, gy, 228, 310, 5.5);
+        const dCapR = sdCircle(gx, gy, 284, 310, 5.5);
+        const dSmile = Math.min(dArc, dCapL, dCapR);
+        if (dSmile < aa) blendPixel(rgba, idx, 251, 191, 36, coverage(dSmile, aa));
+      }
     }
   }
   return encodePng(size, size, rgba);
@@ -122,4 +203,4 @@ const outDir = path.resolve(process.cwd(), "public");
 fs.mkdirSync(outDir, { recursive: true });
 fs.writeFileSync(path.join(outDir, "icon-180.png"), renderIcon(180));
 fs.writeFileSync(path.join(outDir, "icon-512.png"), renderIcon(512));
-console.log("Generated public/icon-180.png and public/icon-512.png");
+console.log("Generated cute robot-head public/icon-180.png and public/icon-512.png");

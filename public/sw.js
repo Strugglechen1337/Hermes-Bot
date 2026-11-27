@@ -10,7 +10,7 @@ self.addEventListener("activate", (event) => {
 
 self.addEventListener("push", (event) => {
   let data = {
-    title: "Hermes Pocket",
+    title: "Hermes Bots",
     body: "Neue Nachricht von deinem Bot.",
     bot: "",
     tag: "hermes-pocket",
