@@ -30,6 +30,7 @@ import { buildGroupMembersPayload } from "../lib/botCollaboration";
 import { getBotVisual, getProfileAvatarByName } from "../lib/botTheme";
 import { formatRelativeTime, formatShortTime, randomClientId, toTimestampMs } from "../lib/format";
 import { hermesWs, type WsConnectionState } from "../lib/hermesWs";
+import { isSpeechDictationSupported, speechDictation } from "../lib/speechDictation";
 import {
   extractPocketPages,
   stripSecretRequestTag,
@@ -487,32 +488,11 @@ const GroupRoomView: React.FC<GroupRoomViewProps> = ({
   const cursorRef = useRef<number>(0);
   const scrollTimersRef = useRef<number[]>([]);
   const swipeStartRef = useRef<{ x: number; y: number } | null>(null);
-  const speechRecRef = useRef<{
-    onresult: unknown;
-    onerror: unknown;
-    onend: unknown;
-    stop: () => void;
-    abort?: () => void;
-  } | null>(null);
-  const speechGenRef = useRef<number>(0);
   const longPressTimerRef = useRef<number | null>(null);
   const longPressStartRef = useRef<{ x: number; y: number } | null>(null);
 
   const stopDictation = useCallback(() => {
-    speechGenRef.current += 1;
-    const rec = speechRecRef.current;
-    speechRecRef.current = null;
-    if (rec) {
-      try {
-        rec.onresult = null;
-        rec.onerror = null;
-        rec.onend = null;
-        // Always use stop() instead of abort() so iOS Safari SFSpeechRecognizer stays healthy
-        rec.stop();
-      } catch {
-        // ignore
-      }
-    }
+    speechDictation.stop();
     setDictating(false);
   }, []);
 
@@ -561,67 +541,16 @@ const GroupRoomView: React.FC<GroupRoomViewProps> = ({
       stopDictation();
       return;
     }
-    const win = window as unknown as {
-      SpeechRecognition?: new () => {
-        lang: string;
-        interimResults: boolean;
-        continuous: boolean;
-        onresult: ((ev: { results: ArrayLike<{ 0: { transcript: string } }> }) => void) | null;
-        onerror: (() => void) | null;
-        onend: (() => void) | null;
-        start: () => void;
-        stop: () => void;
-        abort?: () => void;
-      };
-      webkitSpeechRecognition?: new () => {
-        lang: string;
-        interimResults: boolean;
-        continuous: boolean;
-        onresult: ((ev: { results: ArrayLike<{ 0: { transcript: string } }> }) => void) | null;
-        onerror: (() => void) | null;
-        onend: (() => void) | null;
-        start: () => void;
-        stop: () => void;
-        abort?: () => void;
-      };
-    };
-    const SpeechRec = win.SpeechRecognition || win.webkitSpeechRecognition;
-    if (!SpeechRec) {
+    if (!isSpeechDictationSupported()) {
       setError("Spracheingabe wird in diesem Browser leider nicht unterstützt.");
       return;
     }
-    try {
-      const rec = new SpeechRec();
-      rec.lang = "de-DE";
-      rec.interimResults = true;
-      rec.continuous = false;
-      const gen = ++speechGenRef.current;
-      const base = input.trim();
-      rec.onresult = (ev) => {
-        if (speechGenRef.current !== gen) return;
-        let transcript = "";
-        for (let k = 0; k < ev.results.length; k++) {
-          transcript += ev.results[k][0]?.transcript || "";
-        }
-        setInput(base ? `${base} ${transcript.trim()}` : transcript.trim());
-      };
-      rec.onerror = () => {
-        if (speechGenRef.current !== gen) return;
-        speechRecRef.current = null;
-        setDictating(false);
-      };
-      rec.onend = () => {
-        if (speechGenRef.current !== gen) return;
-        speechRecRef.current = null;
-        setDictating(false);
-      };
-      speechRecRef.current = rec;
-      setDictating(true);
-      rec.start();
-    } catch {
-      speechRecRef.current = null;
-      setDictating(false);
-    }
+    speechDictation.start({
+      baseText: input,
+      onTranscript: (fullText) => setInput(fullText),
+      onStateChange: (active) => setDictating(active),
+      onError: (msg) => setError(msg),
+    });
   }, [dictating, input, stopDictation]);
 
   const scrollToBottom = useCallback(() => {

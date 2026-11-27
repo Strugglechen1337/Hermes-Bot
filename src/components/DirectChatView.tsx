@@ -54,6 +54,7 @@ import {
 } from "../lib/botCollaboration";
 import { getBotVisual } from "../lib/botTheme";
 import { loadBotDraft, saveBotDraft } from "../lib/draftStore";
+import { isSpeechDictationSupported, speechDictation } from "../lib/speechDictation";
 import { formatBadgeCount } from "../lib/unreadStore";
 import {
   formatChatDividerTime,
@@ -280,14 +281,6 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
   const execGenerationRef = useRef<number>(0);
   const scrollTimersRef = useRef<number[]>([]);
   const isNearBottomRef = useRef<boolean>(true);
-  const speechRecRef = useRef<{
-    onresult: unknown;
-    onerror: unknown;
-    onend: unknown;
-    stop: () => void;
-    abort?: () => void;
-  } | null>(null);
-  const speechGenRef = useRef<number>(0);
   const longPressTimerRef = useRef<number | null>(null);
   const longPressStartRef = useRef<{ x: number; y: number } | null>(null);
   const mediaRecRef = useRef<MediaRecorder | null>(null);
@@ -302,21 +295,7 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
   } | null>(null);
 
   const stopActiveDictation = useCallback(() => {
-    speechGenRef.current += 1;
-    const rec = speechRecRef.current;
-    speechRecRef.current = null;
-    if (rec) {
-      try {
-        rec.onresult = null;
-        rec.onerror = null;
-        rec.onend = null;
-        // Always use stop() instead of abort(): iOS Safari WebKit can wedge
-        // SFSpeechRecognizer on the next start() after abort().
-        rec.stop();
-      } catch {
-        // ignore
-      }
-    }
+    speechDictation.stop();
     setVoiceActive((cur) => (cur === "dictating" ? "idle" : cur));
   }, []);
 
@@ -448,11 +427,7 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
 
   useEffect(() => {
     return () => {
-      try {
-        speechRecRef.current?.stop();
-      } catch {
-        // ignore
-      }
+      speechDictation.stop();
       try {
         if (mediaRecRef.current && mediaRecRef.current.state !== "inactive") {
           mediaRecRef.current.stop();
@@ -479,71 +454,21 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
       return;
     }
 
-    // Prefer native Web Speech API (iOS Safari / Chrome) for instant German dictation
-    const win = window as unknown as {
-      SpeechRecognition?: new () => {
-        lang: string;
-        interimResults: boolean;
-        continuous: boolean;
-        onresult: ((ev: { results: ArrayLike<{ isFinal: boolean; 0: { transcript: string } }> }) => void) | null;
-        onerror: (() => void) | null;
-        onend: (() => void) | null;
-        start: () => void;
-        stop: () => void;
-        abort?: () => void;
-      };
-      webkitSpeechRecognition?: new () => {
-        lang: string;
-        interimResults: boolean;
-        continuous: boolean;
-        onresult: ((ev: { results: ArrayLike<{ isFinal: boolean; 0: { transcript: string } }> }) => void) | null;
-        onerror: (() => void) | null;
-        onend: (() => void) | null;
-        start: () => void;
-        stop: () => void;
-        abort?: () => void;
-      };
-    };
-    const SpeechRec = win.SpeechRecognition || win.webkitSpeechRecognition;
-
-    if (SpeechRec) {
-      try {
-        const rec = new SpeechRec();
-        rec.lang = "de-DE";
-        rec.interimResults = true;
-        rec.continuous = false;
-        const gen = ++speechGenRef.current;
-        const baseInput = input.trim();
-        rec.onresult = (ev) => {
-          if (speechGenRef.current !== gen) return;
-          let transcript = "";
-          for (let k = 0; k < ev.results.length; k++) {
-            transcript += ev.results[k][0]?.transcript || "";
-          }
-          const next = baseInput ? `${baseInput} ${transcript.trim()}` : transcript.trim();
-          setInput(next);
+    if (isSpeechDictationSupported()) {
+      speechDictation.start({
+        baseText: input,
+        onTranscript: (fullText) => {
+          setInput(fullText);
           requestAnimationFrame(() => {
             if (textareaRef.current) autoResizeInput(textareaRef.current);
           });
-        };
-        rec.onerror = () => {
-          if (speechGenRef.current !== gen) return;
-          speechRecRef.current = null;
-          setVoiceActive("idle");
-        };
-        rec.onend = () => {
-          if (speechGenRef.current !== gen) return;
-          speechRecRef.current = null;
-          setVoiceActive("idle");
-        };
-        speechRecRef.current = rec;
-        setVoiceActive("dictating");
-        rec.start();
-        return;
-      } catch {
-        speechRecRef.current = null;
-        setVoiceActive("idle");
-      }
+        },
+        onStateChange: (active) => {
+          setVoiceActive((cur) => (active ? "dictating" : cur === "dictating" ? "idle" : cur));
+        },
+        onError: (msg) => setChatError(msg),
+      });
+      return;
     }
 
     // Fallback: record audio voice memo via MediaRecorder and attach it
