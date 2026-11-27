@@ -71,6 +71,12 @@ Bei geplanten Aufgaben (z. B. jeden Morgen ein Briefing) zusätzlich `--notify` 
 damit eine iPhone-Push-Benachrichtigung kommt. Die `[POCKET_PAGE: …]`-Zeile trotzdem in
 die Antwort schreiben.
 
+## Weiterleiten an andere Bots (z. B. an Nova)
+
+Wenn du eine Seite für einen anderen Bot (z. B. Nova) erstellst und per `message_agent` übergibst:
+- Veröffentliche die Seite direkt selbst mit `~/hermes-pocket/bin/publish-page` und schicke die ausgegebene Zeile `[POCKET_PAGE: id | Titel | Kurzbeschreibung]` unverändert mit.
+- Der empfangende Bot übernimmt diese `[POCKET_PAGE: ...]`-Zeile 1:1 ans Ende seiner Chat-Antwort – so erscheint die antippbare Karte direkt im Chat beim Nutzer.
+
 ## Regeln
 
 - Niemals Passwörter, Tokens, Kartendaten oder andere Geheimnisse in Seiten schreiben.

@@ -25,9 +25,15 @@ import { buildGroupMembersPayload } from "../lib/botCollaboration";
 import { getBotVisual, getProfileAvatarByName } from "../lib/botTheme";
 import { formatRelativeTime, formatShortTime, randomClientId, toTimestampMs } from "../lib/format";
 import { hermesWs, type WsConnectionState } from "../lib/hermesWs";
+import {
+  extractPocketPages,
+  stripSecretRequestTag,
+  type DetectedPocketPage,
+} from "../lib/secretDetection";
 import type { GroupUnreadInfo } from "../lib/unreadStore";
 import { BotAvatar } from "./BotAvatar";
 import { ConfirmSheet } from "./ConfirmSheet";
+import { PocketPageCard, PocketPageViewer } from "./InChatPromptCards";
 import { SafeMarkdown } from "./SafeMarkdown";
 import { Sheet } from "./Sheet";
 
@@ -465,6 +471,7 @@ const GroupRoomView: React.FC<GroupRoomViewProps> = ({
   const [savingContext, setSavingContext] = useState(false);
   const [confirmDisband, setConfirmDisband] = useState(false);
   const [disbanding, setDisbanding] = useState(false);
+  const [openPocketPage, setOpenPocketPage] = useState<DetectedPocketPage | null>(null);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const cursorRef = useRef<number>(0);
@@ -759,6 +766,8 @@ const GroupRoomView: React.FC<GroupRoomViewProps> = ({
             if (ev.kind === "message.member") {
               const botName = ev.actor.profile || ev.actor.display_name || ev.actor.id;
               const vis = getProfileAvatarByName(botName, profiles);
+              const cleanText = stripSecretRequestTag(payloadText);
+              const pocketPages = extractPocketPages(payloadText);
               return (
                 <div key={ev.event_id} className="msg-row assistant">
                   <div className="msg-author">
@@ -770,7 +779,14 @@ const GroupRoomView: React.FC<GroupRoomViewProps> = ({
                     <span>{ev.actor.display_name || vis.label}</span>
                   </div>
                   <div className="msg-bubble">
-                    <SafeMarkdown text={payloadText} />
+                    {cleanText && <SafeMarkdown text={cleanText} />}
+                    {pocketPages.map((page) => (
+                      <PocketPageCard
+                        key={page.id}
+                        page={page}
+                        onOpen={setOpenPocketPage}
+                      />
+                    ))}
                   </div>
                   <div className="msg-time">{formatShortTime(ev.created_at)}</div>
                 </div>
@@ -926,6 +942,11 @@ const GroupRoomView: React.FC<GroupRoomViewProps> = ({
         busy={disbanding}
         onCancel={() => setConfirmDisband(false)}
         onConfirm={() => void handleDisbandRoom()}
+      />
+
+      <PocketPageViewer
+        page={openPocketPage}
+        onClose={() => setOpenPocketPage(null)}
       />
     </div>
   );

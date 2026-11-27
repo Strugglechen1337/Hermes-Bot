@@ -39,6 +39,8 @@ const EXPLICIT_DEAL_GLOBAL_RE =
   /\[DEAL_CARD:\s*([^|\]]+)\|\s*([^|\]]+)\|\s*([^|\]]+)(?:\|\s*([^|\]]*))?(?:\|\s*([^|\]]*))?(?:\|\s*([^\]]+))?\]/gi;
 const POCKET_PAGE_GLOBAL_RE =
   /\[POCKET_PAGE:\s*([a-z0-9][a-z0-9-]{2,79})\s*(?:\|\s*([^|\]]*))?(?:\|\s*([^\]]*))?\]/gi;
+const POCKET_PAGE_URL_GLOBAL_RE =
+  /(?:https?:\/\/[^\s<>()]+)?\/api\/pocket\/pages\/([a-z0-9][a-z0-9-]{2,79})(?![a-z0-9-])/gi;
 
 export interface DetectedPocketPage {
   id: string;
@@ -47,8 +49,8 @@ export interface DetectedPocketPage {
 }
 
 /**
- * Extracts `[POCKET_PAGE: id | Titel | Kurzbeschreibung]` references that bots emit
- * after publishing a page via `bin/publish-page`.
+ * Extracts `[POCKET_PAGE: id | Titel | Kurzbeschreibung]` references (as well as
+ * fallback `/api/pocket/pages/<id>` URLs) emitted after `bin/publish-page`.
  */
 export function extractPocketPages(text: string): DetectedPocketPage[] {
   const pages: DetectedPocketPage[] = [];
@@ -61,6 +63,20 @@ export function extractPocketPages(text: string): DetectedPocketPage[] {
       id,
       title: (m[2] || "").trim() || "Seite",
       summary: (m[3] || "").trim(),
+    });
+  }
+  for (const m of text.matchAll(POCKET_PAGE_URL_GLOBAL_RE)) {
+    const id = m[1].trim();
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const niceTitle = id
+      .replace(/-\d{8}-[a-f0-9]{6}$/i, "")
+      .replace(/-/g, " ")
+      .replace(/^\w/, (c) => c.toUpperCase());
+    pages.push({
+      id,
+      title: niceTitle || "Briefing & Seite",
+      summary: "",
     });
   }
   return pages;

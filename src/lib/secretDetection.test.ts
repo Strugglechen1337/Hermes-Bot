@@ -119,6 +119,12 @@ describe("secretDetection", () => {
       },
     ]);
     expect(stripSecretRequestTag(raw)).toBe("Dein Tagesbriefing ist fertig!");
+
+    const fromUrl = extractPocketPages(
+      "Hier ist dein Board: https://hermes.example/api/pocket/pages/morning-board-20261127-abc123"
+    );
+    expect(fromUrl).toHaveLength(1);
+    expect(fromUrl[0].id).toBe("morning-board-20261127-abc123");
   });
 
   it("detects natural German bot requests and extracts explicit or inferred env var names", () => {
