@@ -753,6 +753,36 @@ export async function savePocketSecret(
   });
 }
 
+export async function transcribeAudioBlob(
+  blob: Blob,
+  profile?: string
+): Promise<{ transcript: string; provider?: string }> {
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error("Audio konnte nicht gelesen werden."));
+    reader.readAsDataURL(blob);
+  });
+  const params = new URLSearchParams();
+  if (profile) params.set("profile", profile);
+  const query = params.toString() ? `?${params.toString()}` : "";
+  const res = await requestJson<{ ok?: boolean; transcript?: string; provider?: string }>(
+    `/api/pocket/transcribe${query}`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        data_url: dataUrl,
+        mime_type: blob.type || "audio/mp4",
+        language: "de",
+      }),
+    }
+  );
+  return {
+    transcript: typeof res.transcript === "string" ? res.transcript.trim() : "",
+    provider: res.provider,
+  };
+}
+
 export interface ProfileMediaGalleryItem {
   path: string;
   filename: string;

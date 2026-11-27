@@ -29,8 +29,8 @@ import type {
 import { buildGroupMembersPayload } from "../lib/botCollaboration";
 import { getBotVisual, getProfileAvatarByName } from "../lib/botTheme";
 import { formatRelativeTime, formatShortTime, randomClientId, toTimestampMs } from "../lib/format";
+import { transcribeAudioBlob } from "../lib/hermesApi";
 import { hermesWs, type WsConnectionState } from "../lib/hermesWs";
-import { isSpeechDictationSupported, speechDictation } from "../lib/speechDictation";
 import {
   extractPocketPages,
   stripSecretRequestTag,
@@ -481,7 +481,7 @@ const GroupRoomView: React.FC<GroupRoomViewProps> = ({
   const [replyTo, setReplyTo] = useState<{ author: string; excerpt: string } | null>(null);
   const [contextMsg, setContextMsg] = useState<{ author: string; text: string } | null>(null);
   const [copiedEventId, setCopiedEventId] = useState<string | null>(null);
-  const [dictating, setDictating] = useState(false);
+  const [voiceState, setVoiceState] = useState<"idle" | "recording" | "transcribing">("idle");
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -490,10 +490,21 @@ const GroupRoomView: React.FC<GroupRoomViewProps> = ({
   const swipeStartRef = useRef<{ x: number; y: number } | null>(null);
   const longPressTimerRef = useRef<number | null>(null);
   const longPressStartRef = useRef<{ x: number; y: number } | null>(null);
+  const mediaRecRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
 
   const stopDictation = useCallback(() => {
-    speechDictation.stop();
-    setDictating(false);
+    try {
+      if (mediaRecRef.current && mediaRecRef.current.state !== "inactive") {
+        mediaRecRef.current.onstop = null;
+        mediaRecRef.current.stop();
+        mediaRecRef.current.stream.getTracks().forEach((t) => t.stop());
+      }
+    } catch {
+      // ignore
+    }
+    mediaRecRef.current = null;
+    setVoiceState("idle");
   }, []);
 
   const cancelLongPress = useCallback(() => {
@@ -536,22 +547,66 @@ const GroupRoomView: React.FC<GroupRoomViewProps> = ({
     [cancelLongPress]
   );
 
-  const handleToggleDictation = useCallback(() => {
-    if (dictating) {
-      stopDictation();
+  const handleToggleDictation = useCallback(async () => {
+    if (voiceState === "transcribing") return;
+    if (voiceState === "recording") {
+      try {
+        mediaRecRef.current?.stop();
+      } catch {
+        setVoiceState("idle");
+      }
       return;
     }
-    if (!isSpeechDictationSupported()) {
-      setError("Spracheingabe wird in diesem Browser leider nicht unterstützt.");
+    if (
+      typeof navigator === "undefined" ||
+      !navigator.mediaDevices?.getUserMedia ||
+      typeof MediaRecorder === "undefined"
+    ) {
+      setError("Audio-Aufnahme wird in diesem Browser leider nicht unterstützt.");
       return;
     }
-    speechDictation.start({
-      baseText: input,
-      onTranscript: (fullText) => setInput(fullText),
-      onStateChange: (active) => setDictating(active),
-      onError: (msg) => setError(msg),
-    });
-  }, [dictating, input, stopDictation]);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mimeType = MediaRecorder.isTypeSupported("audio/mp4")
+        ? "audio/mp4"
+        : MediaRecorder.isTypeSupported("audio/webm")
+          ? "audio/webm"
+          : "";
+      const rec = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+      audioChunksRef.current = [];
+      rec.ondataavailable = (ev) => {
+        if (ev.data && ev.data.size > 0) audioChunksRef.current.push(ev.data);
+      };
+      rec.onstop = () => {
+        stream.getTracks().forEach((t) => t.stop());
+        mediaRecRef.current = null;
+        const blob = new Blob(audioChunksRef.current, { type: rec.mimeType || "audio/mp4" });
+        if (blob.size < 200) {
+          setVoiceState("idle");
+          return;
+        }
+        setVoiceState("transcribing");
+        void transcribeAudioBlob(blob)
+          .then(({ transcript }) => {
+            if (transcript) {
+              setInput((prev) => (prev.trim() ? `${prev.trim()} ${transcript}` : transcript));
+            }
+          })
+          .catch((err) => {
+            setError(
+              err instanceof Error ? err.message : "Spracherkennung fehlgeschlagen."
+            );
+          })
+          .finally(() => setVoiceState("idle"));
+      };
+      mediaRecRef.current = rec;
+      setVoiceState("recording");
+      rec.start();
+    } catch {
+      setError("Mikrofonzugriff wurde nicht erlaubt.");
+      setVoiceState("idle");
+    }
+  }, [voiceState]);
 
   const scrollToBottom = useCallback(() => {
     requestAnimationFrame(() => {
@@ -1034,14 +1089,21 @@ const GroupRoomView: React.FC<GroupRoomViewProps> = ({
                 if (!sending) void handleSend();
               }
             }}
-            placeholder={dictating ? "Höre zu… sprich jetzt" : `An ${room.name} schreiben…`}
+            placeholder={
+              voiceState === "recording"
+                ? "Sprich jetzt… (Mikrofon zum Beenden tippen)"
+                : voiceState === "transcribing"
+                  ? "Transkribiere…"
+                  : `An ${room.name} schreiben…`
+            }
           />
           {!anyBotBusy && (
             <button
               type="button"
-              className={`composer-mic-btn${dictating ? " recording" : ""}`}
-              aria-label={dictating ? "Spracheingabe stoppen" : "Spracheingabe starten"}
-              onClick={handleToggleDictation}
+              className={`composer-mic-btn${voiceState === "recording" ? " recording" : ""}`}
+              disabled={voiceState === "transcribing"}
+              aria-label={voiceState === "recording" ? "Aufnahme beenden" : "Spracheingabe starten"}
+              onClick={() => void handleToggleDictation()}
             >
               <Mic size={17} />
             </button>

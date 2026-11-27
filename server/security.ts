@@ -26,6 +26,7 @@ const ALLOWED_HTTP_RULES: Array<{ methods: Set<string>; pattern: RegExp }> = [
   { methods: new Set(["GET"]), pattern: /^\/api\/sessions\/[^/]+\/messages$/ },
   { methods: new Set(["GET"]), pattern: /^\/api\/sessions\/[^/]+\/timeline$/ },
   { methods: new Set(["POST"]), pattern: /^\/api\/chat\/file-upload$/ },
+  { methods: new Set(["POST"]), pattern: /^\/api\/audio\/transcribe$/ },
 
   // Models & AI providers
   { methods: new Set(["GET"]), pattern: /^\/api\/model\/(info|options|recommended-default)$/ },

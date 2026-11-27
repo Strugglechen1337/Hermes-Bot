@@ -9,6 +9,7 @@ import { handlePocketMediaRoute } from "./media.js";
 import { handlePocketPagesRoute } from "./pages.js";
 import { handlePocketPreferencesRoute } from "./preferences.js";
 import { handlePocketShortcutRoute } from "./shortcuts.js";
+import { handlePocketTranscribeRoute } from "./transcribe.js";
 import { handlePocketUpdateRoute } from "./updater.js";
 import {
   handlePocketPushRoute,
@@ -758,6 +759,10 @@ export async function handleHermesHttpProxy(
     return handlePocketUpdateRoute(req, res, config, parsedUrl);
   }
 
+  if (pathname === "/api/pocket/transcribe") {
+    return handlePocketTranscribeRoute(req, res, config, parsedUrl);
+  }
+
   const method = (req.method || "GET").toUpperCase();
   if (!isAllowedHermesPath(method, pathname)) {
     sendJson(res, 404, { error: "not_found", detail: "Endpunkt nicht freigegeben." });
@@ -770,7 +775,10 @@ export async function handleHermesHttpProxy(
   }
 
   let body: Buffer | undefined;
-  const maxBytes = pathname === "/api/chat/file-upload" ? MAX_UPLOAD_BODY_BYTES : MAX_BODY_BYTES;
+  const maxBytes =
+    pathname === "/api/chat/file-upload" || pathname === "/api/audio/transcribe"
+      ? MAX_UPLOAD_BODY_BYTES
+      : MAX_BODY_BYTES;
   try {
     body = await readBody(req, maxBytes);
   } catch (err) {

@@ -54,7 +54,6 @@ import {
 } from "../lib/botCollaboration";
 import { getBotVisual } from "../lib/botTheme";
 import { loadBotDraft, saveBotDraft } from "../lib/draftStore";
-import { isSpeechDictationSupported, speechDictation } from "../lib/speechDictation";
 import { formatBadgeCount } from "../lib/unreadStore";
 import {
   formatChatDividerTime,
@@ -72,6 +71,7 @@ import {
   normalizeMessages,
   prepareChatImageDataUrl,
   renameSession,
+  transcribeAudioBlob,
   updateProfileModel,
   updateServerUiPreferences,
   uploadChatFile,
@@ -295,8 +295,17 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
   } | null>(null);
 
   const stopActiveDictation = useCallback(() => {
-    speechDictation.stop();
-    setVoiceActive((cur) => (cur === "dictating" ? "idle" : cur));
+    try {
+      if (mediaRecRef.current && mediaRecRef.current.state !== "inactive") {
+        mediaRecRef.current.onstop = null;
+        mediaRecRef.current.stop();
+        mediaRecRef.current.stream.getTracks().forEach((t) => t.stop());
+      }
+    } catch {
+      // ignore
+    }
+    mediaRecRef.current = null;
+    setVoiceActive("idle");
   }, []);
 
   const cancelLongPress = useCallback(() => {
@@ -342,7 +351,7 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
   const [inChatSearchOpen, setInChatSearchOpen] = useState(false);
   const [inChatSearchQuery, setInChatSearchQuery] = useState("");
   const [activeMatchPos, setActiveMatchPos] = useState(0);
-  const [voiceActive, setVoiceActive] = useState<"idle" | "dictating" | "recording">("idle");
+  const [voiceActive, setVoiceActive] = useState<"idle" | "recording" | "transcribing">("idle");
   const [allQuickPrompts, setAllQuickPrompts] = useState<Record<string, QuickPromptItem[]>>({});
   const [showQuickPromptEditor, setShowQuickPromptEditor] = useState(false);
   const [newQuickLabel, setNewQuickLabel] = useState("");
@@ -427,88 +436,87 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
 
   useEffect(() => {
     return () => {
-      speechDictation.stop();
       try {
         if (mediaRecRef.current && mediaRecRef.current.state !== "inactive") {
+          mediaRecRef.current.onstop = null;
           mediaRecRef.current.stop();
+          mediaRecRef.current.stream.getTracks().forEach((t) => t.stop());
         }
       } catch {
         // ignore
       }
+      mediaRecRef.current = null;
     };
   }, [profile.name]);
 
   const handleToggleVoice = useCallback(async () => {
-    if (voiceActive === "dictating") {
-      stopActiveDictation();
-      return;
-    }
+    if (voiceActive === "transcribing") return;
 
     if (voiceActive === "recording") {
       try {
         mediaRecRef.current?.stop();
       } catch {
-        // ignore
-      }
-      setVoiceActive("idle");
-      return;
-    }
-
-    if (isSpeechDictationSupported()) {
-      speechDictation.start({
-        baseText: input,
-        onTranscript: (fullText) => {
-          setInput(fullText);
-          requestAnimationFrame(() => {
-            if (textareaRef.current) autoResizeInput(textareaRef.current);
-          });
-        },
-        onStateChange: (active) => {
-          setVoiceActive((cur) => (active ? "dictating" : cur === "dictating" ? "idle" : cur));
-        },
-        onError: (msg) => setChatError(msg),
-      });
-      return;
-    }
-
-    // Fallback: record audio voice memo via MediaRecorder and attach it
-    if (typeof navigator !== "undefined" && navigator.mediaDevices?.getUserMedia && typeof MediaRecorder !== "undefined") {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        const mimeType = MediaRecorder.isTypeSupported("audio/mp4")
-          ? "audio/mp4"
-          : MediaRecorder.isTypeSupported("audio/webm")
-            ? "audio/webm"
-            : "";
-        const rec = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
-        audioChunksRef.current = [];
-        rec.ondataavailable = (ev) => {
-          if (ev.data && ev.data.size > 0) audioChunksRef.current.push(ev.data);
-        };
-        rec.onstop = () => {
-          stream.getTracks().forEach((t) => t.stop());
-          const blob = new Blob(audioChunksRef.current, { type: rec.mimeType || "audio/webm" });
-          const ext = (rec.mimeType || "").includes("mp4") ? "m4a" : "webm";
-          const file = new File([blob], `sprachnachricht-${Date.now()}.${ext}`, {
-            type: blob.type,
-          });
-          setAttachments((prev) => [
-            ...prev,
-            { id: randomClientId("att"), file, isImage: false },
-          ]);
-          setVoiceActive("idle");
-        };
-        mediaRecRef.current = rec;
-        setVoiceActive("recording");
-        rec.start();
-      } catch {
-        setChatError("Mikrofonzugriff wurde nicht erlaubt.");
         setVoiceActive("idle");
       }
-    } else {
-      setChatError("Spracheingabe wird in diesem Browser leider nicht unterstützt.");
+      return;
     }
-  }, [input, voiceActive]);
+
+    if (
+      typeof navigator === "undefined" ||
+      !navigator.mediaDevices?.getUserMedia ||
+      typeof MediaRecorder === "undefined"
+    ) {
+      setChatError("Audio-Aufnahme wird in diesem Browser leider nicht unterstützt.");
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mimeType = MediaRecorder.isTypeSupported("audio/mp4")
+        ? "audio/mp4"
+        : MediaRecorder.isTypeSupported("audio/webm")
+          ? "audio/webm"
+          : "";
+      const rec = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+      audioChunksRef.current = [];
+      rec.ondataavailable = (ev) => {
+        if (ev.data && ev.data.size > 0) audioChunksRef.current.push(ev.data);
+      };
+      rec.onstop = () => {
+        stream.getTracks().forEach((t) => t.stop());
+        mediaRecRef.current = null;
+        const blob = new Blob(audioChunksRef.current, { type: rec.mimeType || "audio/mp4" });
+        if (blob.size < 200) {
+          setVoiceActive("idle");
+          return;
+        }
+        setVoiceActive("transcribing");
+        void transcribeAudioBlob(blob, profile.name)
+          .then(({ transcript }) => {
+            if (transcript) {
+              setInput((prev) => (prev.trim() ? `${prev.trim()} ${transcript}` : transcript));
+              requestAnimationFrame(() => {
+                if (textareaRef.current) autoResizeInput(textareaRef.current);
+              });
+            }
+          })
+          .catch((err) => {
+            setChatError(
+              err instanceof Error
+                ? err.message
+                : "Spracherkennung fehlgeschlagen."
+            );
+          })
+          .finally(() => setVoiceActive("idle"));
+      };
+      mediaRecRef.current = rec;
+      setVoiceActive("recording");
+      rec.start();
+    } catch {
+      setChatError("Mikrofonzugriff wurde nicht erlaubt.");
+      setVoiceActive("idle");
+    }
+  }, [profile.name, voiceActive]);
 
   activeSessionRef.current = activeSessionId;
 
@@ -2472,10 +2480,10 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
               }
             }}
             placeholder={
-              voiceActive === "dictating"
-                ? "Höre zu… sprich jetzt"
-                : voiceActive === "recording"
-                  ? "Sprachaufnahme läuft…"
+              voiceActive === "recording"
+                ? "Sprich jetzt… (Mikrofon zum Beenden tippen)"
+                : voiceActive === "transcribing"
+                  ? "Transkribiere…"
                   : uploadingAttachments
                     ? "Lade Anhang hoch…"
                     : `${visual.label} fragen`
@@ -2484,8 +2492,9 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
           {!isStreaming && (
             <button
               type="button"
-              className={`composer-mic-btn${voiceActive !== "idle" ? " recording" : ""}`}
-              aria-label={voiceActive !== "idle" ? "Spracheingabe stoppen" : "Spracheingabe starten"}
+              className={`composer-mic-btn${voiceActive === "recording" ? " recording" : ""}`}
+              disabled={voiceActive === "transcribing"}
+              aria-label={voiceActive === "recording" ? "Aufnahme beenden" : "Spracheingabe starten"}
               onClick={() => void handleToggleVoice()}
             >
               <Mic size={17} />
