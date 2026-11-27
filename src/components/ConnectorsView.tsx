@@ -153,9 +153,19 @@ export const ConnectorsView: React.FC<ConnectorsViewProps> = ({
   }, [selectedProfile]);
 
   useEffect(() => {
-    if (subTab === "connectors") void loadHostedConnectors();
-    if (subTab === "mcp") void loadMcp();
-  }, [subTab, loadHostedConnectors, loadMcp]);
+    void loadHostedConnectors();
+    void loadMcp();
+  }, [loadHostedConnectors, loadMcp]);
+
+  const [quickSetupInfo, setQuickSetupInfo] = useState<{
+    label: string;
+    envKey?: string;
+    placeholder?: string;
+    isEmail?: boolean;
+    hint: string;
+  } | null>(null);
+  const [quickTokenVal, setQuickTokenVal] = useState("");
+  const [savingQuickToken, setSavingQuickToken] = useState(false);
 
   async function handleConnectHosted(slug: string, reconnect = false) {
     setConnectingSlug(slug);
@@ -372,52 +382,105 @@ export const ConnectorsView: React.FC<ConnectorsViewProps> = ({
   }, [mcpCatalog, mcpServers, search]);
 
   const TOP_OAUTH_SERVICES = [
-    { label: "Gmail", aliases: ["gmail", "google-mail", "google_workspace", "google"] },
-    { label: "Google Kalender", aliases: ["google_calendar", "google-calendar", "calendar", "gcal"] },
-    { label: "Google Drive", aliases: ["google_drive", "google-drive", "drive"] },
-    { label: "Outlook / M365", aliases: ["outlook", "microsoft", "office365"] },
-    { label: "GitHub", aliases: ["github"] },
-    { label: "Notion", aliases: ["notion"] },
-    { label: "Spotify", aliases: ["spotify"] },
-    { label: "Slack", aliases: ["slack"] },
+    {
+      label: "Gmail",
+      aliases: ["gmail", "google-mail", "google_workspace", "google"],
+      isEmail: true,
+      hint: "Auf selbstgehostetem Hermes kannst du Gmail direkt über den E-Mail-Tab (Google App-Passwort) oder über den Bot-Chat (Google OAuth / gog-Skill) verbinden.",
+    },
+    {
+      label: "Google Kalender",
+      aliases: ["google_calendar", "google-calendar", "calendar", "gcal"],
+      hint: "Starte die Google-Kalender-OAuth-Einrichtung direkt über deinen Bot im Chat oder füge einen passenden MCP-Server im Tab „MCP“ hinzu.",
+    },
+    {
+      label: "Google Drive",
+      aliases: ["google_drive", "google-drive", "drive"],
+      hint: "Verbinde Google Drive über einen MCP-Server im Tab „MCP“ oder direkt mit deinem Bot im Chat.",
+    },
+    {
+      label: "Outlook / M365",
+      aliases: ["outlook", "microsoft", "office365"],
+      isEmail: true,
+      hint: "Verbinde Outlook direkt über den E-Mail-Tab (IMAP/SMTP) oder über einen MCP-Server.",
+    },
+    {
+      label: "GitHub",
+      aliases: ["github"],
+      envKey: "GITHUB_TOKEN",
+      placeholder: "ghp_… oder github_pat_…",
+      hint: "Hinterlege direkt ein GitHub Personal Access Token (GITHUB_TOKEN) Write-Only in der Server-.env.",
+    },
+    {
+      label: "Notion",
+      aliases: ["notion"],
+      envKey: "NOTION_API_KEY",
+      placeholder: "ntn_… oder secret_…",
+      hint: "Hinterlege deinen Notion Integration Token (NOTION_API_KEY) Write-Only in der Server-.env.",
+    },
+    {
+      label: "Spotify",
+      aliases: ["spotify"],
+      hint: "Verbinde Spotify über einen MCP-Server im Tab „MCP“ oder über deinen Bot im Chat.",
+    },
+    {
+      label: "Slack",
+      aliases: ["slack"],
+      envKey: "SLACK_BOT_TOKEN",
+      placeholder: "xoxb-…",
+      hint: "Hinterlege dein Slack Bot Token (SLACK_BOT_TOKEN) Write-Only in der Server-.env.",
+    },
   ];
 
-  async function handleQuickOAuthService(svc: { label: string; aliases: string[] }) {
+  async function handleQuickOAuthService(svc: (typeof TOP_OAUTH_SERVICES)[number]) {
     setHostedError(null);
-    // 1. Prefer matching Hermes Hosted Connector
-    const hostedMatch = mergedConnectors.find((c) => {
-      const hay = `${c.slug} ${c.name}`.toLowerCase();
-      return svc.aliases.some((a) => hay.includes(a));
-    });
-    if (hostedMatch) {
-      await handleConnectHosted(hostedMatch.slug, hostedMatch.connected);
-      return;
-    }
+    setQuickSetupInfo(null);
+    setQuickTokenVal("");
+    setConnectingSlug(svc.label);
+    try {
+      // 1. Prefer matching Hermes Hosted Connector (if available on this instance)
+      const hostedMatch = mergedConnectors.find((c) => {
+        const hay = `${c.slug} ${c.name}`.toLowerCase();
+        return svc.aliases.some((a) => hay.includes(a));
+      });
+      if (hostedMatch) {
+        await handleConnectHosted(hostedMatch.slug, hostedMatch.connected);
+        return;
+      }
 
-    // 2. Fallback: matching installed MCP server (starts OAuth flow)
-    const mcpInstalled = mcpServers.find((s) =>
-      svc.aliases.some((a) => s.name.toLowerCase().includes(a))
-    );
-    if (mcpInstalled) {
-      setSubTab("mcp");
-      await handleAuthMcp(mcpInstalled.name);
-      return;
-    }
+      // 2. Fallback: matching installed MCP server (starts OAuth flow)
+      const mcpInstalled = mcpServers.find((s) =>
+        svc.aliases.some((a) => s.name.toLowerCase().includes(a))
+      );
+      if (mcpInstalled) {
+        setSubTab("mcp");
+        await handleAuthMcp(mcpInstalled.name);
+        return;
+      }
 
-    // 3. Fallback: matching MCP catalog entry -> install & start OAuth
-    const mcpCat = mcpCatalog.find((e) => {
-      const hay = `${e.name} ${e.display_name || ""}`.toLowerCase();
-      return svc.aliases.some((a) => hay.includes(a));
-    });
-    if (mcpCat) {
-      setSubTab("mcp");
-      await handleInstallCatalogMcp(mcpCat);
-      await handleAuthMcp(mcpCat.name);
-      return;
-    }
+      // 3. Fallback: matching MCP catalog entry -> install & start OAuth
+      const mcpCat = mcpCatalog.find((e) => {
+        const hay = `${e.name} ${e.display_name || ""}`.toLowerCase();
+        return svc.aliases.some((a) => hay.includes(a));
+      });
+      if (mcpCat) {
+        setSubTab("mcp");
+        await handleInstallCatalogMcp(mcpCat);
+        await handleAuthMcp(mcpCat.name);
+        return;
+      }
 
-    // 4. Otherwise try direct connectors.connect with primary slug
-    await handleConnectHosted(svc.aliases[0], false);
+      // 4. Honest, actionable inline setup card (never silently do nothing)
+      setQuickSetupInfo({
+        label: svc.label,
+        envKey: svc.envKey,
+        placeholder: svc.placeholder,
+        isEmail: svc.isEmail,
+        hint: svc.hint,
+      });
+    } finally {
+      setConnectingSlug(null);
+    }
   }
 
   async function handleSaveHass(e: React.FormEvent) {
@@ -565,14 +628,120 @@ export const ConnectorsView: React.FC<ConnectorsViewProps> = ({
                       <button
                         key={svc.label}
                         type="button"
-                        className="chip"
+                        className={`chip ${quickSetupInfo?.label === svc.label ? "selected" : ""}`}
                         disabled={Boolean(connectingSlug || busyMcp)}
                         onClick={() => void handleQuickOAuthService(svc)}
                       >
-                        <Link2 size={12} /> {svc.label}
+                        <Link2 size={12} />
+                        {connectingSlug === svc.label ? `${svc.label}…` : svc.label}
                       </button>
                     ))}
                   </div>
+
+                  {quickSetupInfo && (
+                    <div
+                      style={{
+                        marginTop: 12,
+                        paddingTop: 12,
+                        borderTop: "1px solid var(--border-subtle)",
+                      }}
+                    >
+                      <div style={{ fontWeight: 700, fontSize: "0.86rem", marginBottom: 4 }}>
+                        {quickSetupInfo.label} verbinden
+                      </div>
+                      <p style={{ margin: "0 0 10px", fontSize: "0.8rem", color: "var(--text-secondary)", lineHeight: 1.45 }}>
+                        {quickSetupInfo.hint}
+                      </p>
+
+                      {quickSetupInfo.envKey && (
+                        <form
+                          onSubmit={async (e) => {
+                            e.preventDefault();
+                            if (!quickTokenVal.trim() || !quickSetupInfo.envKey) return;
+                            setSavingQuickToken(true);
+                            try {
+                              await savePocketSecret(
+                                quickSetupInfo.envKey,
+                                quickTokenVal.trim(),
+                                selectedProfile
+                              );
+                              setQuickTokenVal("");
+                              setHassFeedback({
+                                ok: true,
+                                text: `${quickSetupInfo.envKey} sicher für ${selectedProfile} gespeichert.`,
+                              });
+                              setQuickSetupInfo(null);
+                            } catch (err) {
+                              setHostedError(
+                                err instanceof Error ? err.message : "Token konnte nicht gespeichert werden."
+                              );
+                            } finally {
+                              setSavingQuickToken(false);
+                            }
+                          }}
+                          style={{ marginBottom: 10 }}
+                        >
+                          <div className="field">
+                            <label htmlFor="quick-svc-token">
+                              <code>{quickSetupInfo.envKey}</code>
+                            </label>
+                            <input
+                              id="quick-svc-token"
+                              type="password"
+                              className="input"
+                              autoComplete="off"
+                              value={quickTokenVal}
+                              onChange={(e) => setQuickTokenVal(e.target.value)}
+                              placeholder={quickSetupInfo.placeholder || "Token eingeben…"}
+                            />
+                          </div>
+                          <button
+                            type="submit"
+                            className="btn primary sm full"
+                            disabled={savingQuickToken || !quickTokenVal.trim()}
+                          >
+                            <ShieldCheck size={14} />{" "}
+                            {savingQuickToken ? "Speichere…" : `${quickSetupInfo.envKey} sicher speichern`}
+                          </button>
+                        </form>
+                      )}
+
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        {quickSetupInfo.isEmail && (
+                          <button
+                            type="button"
+                            className="btn sm primary"
+                            onClick={() => {
+                              setQuickSetupInfo(null);
+                              setSubTab("email");
+                            }}
+                          >
+                            <Mail size={13} /> Im E-Mail-Tab verbinden
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          className="btn sm"
+                          onClick={() => {
+                            setQuickSetupInfo(null);
+                            setSubTab("mcp");
+                          }}
+                        >
+                          <Server size={13} /> MCP-Server ansehen
+                        </button>
+                        <button
+                          type="button"
+                          className="btn sm"
+                          onClick={() => {
+                            setQuickSetupInfo(null);
+                            onOpenBotChat(selectedProfile);
+                          }}
+                        >
+                          Im Bot-Chat einrichten
+                        </button>
+                      </div>
+                    </div>
+                  )}
 
                   {showHassForm && (
                     <form

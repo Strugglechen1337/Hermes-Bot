@@ -8,6 +8,7 @@ import { handlePocketChecklistsRoute } from "./checklists.js";
 import { handlePocketMediaRoute } from "./media.js";
 import { handlePocketPagesRoute } from "./pages.js";
 import { handlePocketPreferencesRoute } from "./preferences.js";
+import { handlePocketReactionsRoute } from "./reactions.js";
 import { handlePocketShortcutRoute } from "./shortcuts.js";
 import { handlePocketTranscribeRoute } from "./transcribe.js";
 import { handlePocketUpdateRoute } from "./updater.js";
@@ -761,6 +762,10 @@ export async function handleHermesHttpProxy(
 
   if (pathname === "/api/pocket/transcribe") {
     return handlePocketTranscribeRoute(req, res, config, parsedUrl);
+  }
+
+  if (pathname.startsWith("/api/pocket/reactions/")) {
+    return handlePocketReactionsRoute(req, res, config, pathname);
   }
 
   const method = (req.method || "GET").toUpperCase();

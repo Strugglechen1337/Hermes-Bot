@@ -67,10 +67,12 @@ import {
   fetchProfileFallback,
   fetchServerUiPreferences,
   fetchSessionMessages,
+  fetchSessionReactions,
   fetchSessions,
   normalizeMessages,
   prepareChatImageDataUrl,
   renameSession,
+  toggleSessionReaction,
   transcribeAudioBlob,
   updateProfileModel,
   updateServerUiPreferences,
@@ -83,6 +85,7 @@ import { notifyIfBackgrounded } from "../lib/pushClient";
 import {
   detectBotSecretForm,
   detectBotVaultRequest,
+  extractBotReactions,
   extractChecklists,
   extractPackageCards,
   extractPocketPages,
@@ -293,10 +296,63 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
 
   const [replyTo, setReplyTo] = useState<{ author: string; excerpt: string } | null>(null);
   const [contextMsg, setContextMsg] = useState<{
+    msgKey: string;
     author: string;
     text: string;
     role: string;
   } | null>(null);
+  const [sessionReactions, setSessionReactions] = useState<Record<string, string[]>>({});
+
+  useEffect(() => {
+    if (!activeSessionId) {
+      setSessionReactions({});
+      return;
+    }
+    let cancelled = false;
+    void fetchSessionReactions(activeSessionId).then((map) => {
+      if (!cancelled) setSessionReactions(map);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeSessionId]);
+
+  const handleToggleReaction = useCallback(
+    (msgKey: string, emoji: string) => {
+      const sid = activeSessionRef.current;
+      setSessionReactions((prev) => {
+        const cur = prev[msgKey] || [];
+        const next = cur.includes(emoji) ? cur.filter((e) => e !== emoji) : [...cur, emoji];
+        const copy = { ...prev };
+        if (next.length > 0) copy[msgKey] = next;
+        else delete copy[msgKey];
+        return copy;
+      });
+      if (sid) {
+        void toggleSessionReaction(sid, msgKey, emoji)
+          .then((updated) => setSessionReactions(updated))
+          .catch(() => null);
+      }
+    },
+    []
+  );
+
+  // Map bot `[REACT: 👍]` directives onto the immediately preceding user message index
+  const botReactionsByMsgIdx = useMemo(() => {
+    const map: Record<number, string[]> = {};
+    let lastUserIdx = -1;
+    messages.forEach((m, idx) => {
+      if (m.role === "user" && !isInternalBotNoiseMessage(m)) {
+        lastUserIdx = idx;
+      } else if (m.role === "assistant" && lastUserIdx >= 0 && m.content) {
+        const emojis = extractBotReactions(m.content);
+        if (emojis.length > 0) {
+          map[lastUserIdx] = Array.from(new Set([...(map[lastUserIdx] || []), ...emojis]));
+        }
+      }
+    });
+    return map;
+  }, [messages]);
 
   const stopActiveDictation = useCallback(() => {
     try {
@@ -321,7 +377,7 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
   }, []);
 
   const startLongPress = useCallback(
-    (e: React.TouchEvent, author: string, text: string, role: string) => {
+    (e: React.TouchEvent, msgKey: string, author: string, text: string, role: string) => {
       if (e.touches.length !== 1 || !text.trim()) return;
       cancelLongPress();
       const t = e.touches[0];
@@ -334,7 +390,7 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
         } catch {
           // ignore
         }
-        setContextMsg({ author, text, role });
+        setContextMsg({ msgKey, author, text, role });
       }, 420);
     },
     [cancelLongPress]
@@ -1972,6 +2028,21 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
               (!msg.attachments || msg.attachments.length === 0);
             if (isEmptyAssistant) return null;
 
+            const isReactionOnlyAssistant =
+              msg.role === "assistant" &&
+              !msg.streaming &&
+              !msg.error &&
+              extractBotReactions(msg.content).length > 0 &&
+              !stripSecretRequestTag(msg.content).trim() &&
+              extractPocketPages(msg.content).length === 0 &&
+              extractPackageCards(msg.content).length === 0;
+            if (isReactionOnlyAssistant) return null;
+
+            const msgKey = String(msg.id ?? `idx-${i}`);
+            const myEmojis = sessionReactions[msgKey] || [];
+            const botEmojis = botReactionsByMsgIdx[i] || [];
+            const allEmojis = Array.from(new Set([...myEmojis, ...botEmojis]));
+
             return (
               <React.Fragment key={String(msg.id ?? i)}>
                 {showDivider && (
@@ -1996,6 +2067,7 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
                       const clean = stripSecretRequestTag(msg.content) || msg.content;
                       startLongPress(
                         e,
+                        msgKey,
                         msg.role === "user" ? "Du" : visual.label,
                         clean,
                         msg.role
@@ -2009,6 +2081,7 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
                       e.preventDefault();
                       const clean = stripSecretRequestTag(msg.content) || msg.content;
                       setContextMsg({
+                        msgKey,
                         author: msg.role === "user" ? "Du" : visual.label,
                         text: clean,
                         role: msg.role,
@@ -2131,8 +2204,30 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
                       </div>
                     )}
                   </div>
+                  {allEmojis.length > 0 && (
+                    <div className="msg-reactions-row" aria-label="Reaktionen">
+                      {allEmojis.map((emoji) => (
+                        <button
+                          key={emoji}
+                          type="button"
+                          className={`msg-reaction-pill${myEmojis.includes(emoji) ? " mine" : ""}`}
+                          onClick={() => handleToggleReaction(msgKey, emoji)}
+                        >
+                          <span>{emoji}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
                   {msg.role === "assistant" && !msg.streaming && msg.content.trim() && (
                     <div className="msg-actions-row">
+                      <button
+                        type="button"
+                        className="msg-action-btn"
+                        aria-label="Daumen hoch"
+                        onClick={() => handleToggleReaction(msgKey, "👍")}
+                      >
+                        👍
+                      </button>
                       <button
                         type="button"
                         className="msg-action-btn"
@@ -2602,6 +2697,25 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
             >
               {contextMsg.text.slice(0, 220)}
               {contextMsg.text.length > 220 ? "…" : ""}
+            </div>
+            <div className="reaction-picker-bar" aria-label="Mit Emoji reagieren">
+              {["👍", "❤️", "😂", "🔥", "✅"].map((emoji) => {
+                const active = (sessionReactions[contextMsg.msgKey] || []).includes(emoji);
+                return (
+                  <button
+                    key={emoji}
+                    type="button"
+                    className={`reaction-pick-btn${active ? " active" : ""}`}
+                    aria-label={`Mit ${emoji} reagieren`}
+                    onClick={() => {
+                      handleToggleReaction(contextMsg.msgKey, emoji);
+                      setContextMsg(null);
+                    }}
+                  >
+                    {emoji}
+                  </button>
+                );
+              })}
             </div>
             <div className="card-stack">
               <button

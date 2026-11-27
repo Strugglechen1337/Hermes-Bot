@@ -343,6 +343,21 @@ export interface DetectedPackageCard {
 
 const CHECKLIST_TAG_GLOBAL_RE = /\[CHECKLIST:\s*([^\]]+)\]/gi;
 const PACKAGE_CARD_GLOBAL_RE = /\[PACKAGE_CARD:\s*([^\]]+)\]/gi;
+const REACT_TAG_GLOBAL_RE = /\[REACT:\s*([^\]]+)\]/gi;
+
+/**
+ * Extracts emoji reactions emitted by a bot as `[REACT: 👍]` (to attach
+ * directly onto the user's preceding message bubble).
+ */
+export function extractBotReactions(text: string): string[] {
+  if (!text) return [];
+  const out: string[] = [];
+  for (const m of text.matchAll(REACT_TAG_GLOBAL_RE)) {
+    const emoji = m[1].trim().slice(0, 8);
+    if (emoji && !out.includes(emoji)) out.push(emoji);
+  }
+  return out;
+}
 
 export function buildCarrierTrackingUrl(carrier: string, trackingNumber?: string): string | undefined {
   const num = (trackingNumber || "").trim();
@@ -469,6 +484,7 @@ export function stripSecretRequestTag(text: string): string {
     .replace(EXPLICIT_VAULT_GLOBAL_RE, "")
     .replace(CHECKLIST_TAG_GLOBAL_RE, "")
     .replace(PACKAGE_CARD_GLOBAL_RE, "")
+    .replace(REACT_TAG_GLOBAL_RE, "")
     .replace(EXPLICIT_DEAL_GLOBAL_RE, "")
     .replace(POCKET_PAGE_GLOBAL_RE, "")
     .replace(/\n{3,}/g, "\n\n")

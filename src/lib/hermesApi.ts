@@ -783,6 +783,34 @@ export async function transcribeAudioBlob(
   };
 }
 
+export async function fetchSessionReactions(
+  sessionId: string
+): Promise<Record<string, string[]>> {
+  try {
+    const res = await requestJson<{ reactions?: Record<string, string[]> }>(
+      `/api/pocket/reactions/${encodeURIComponent(sessionId)}`
+    );
+    return res.reactions || {};
+  } catch {
+    return {};
+  }
+}
+
+export async function toggleSessionReaction(
+  sessionId: string,
+  msgKey: string,
+  emoji: string
+): Promise<Record<string, string[]>> {
+  const res = await requestJson<{ reactions?: Record<string, string[]> }>(
+    `/api/pocket/reactions/${encodeURIComponent(sessionId)}`,
+    {
+      method: "PUT",
+      body: JSON.stringify({ msgKey, emoji }),
+    }
+  );
+  return res.reactions || {};
+}
+
 export interface ProfileMediaGalleryItem {
   path: string;
   filename: string;
