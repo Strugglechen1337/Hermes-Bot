@@ -10,7 +10,7 @@ import { verifyHermesSession } from "./push.js";
  * Cached in-memory for 30 minutes to avoid unnecessary network calls.
  */
 
-const GITHUB_REPO = process.env.HERMES_BOTS_REPO?.trim() || "Strugglechen1337/Hermes-Pocket-";
+const GITHUB_REPO = process.env.HERMES_BOTS_REPO?.trim() || "Strugglechen1337/Hermes-Bot";
 const CACHE_TTL_MS = 30 * 60 * 1000;
 
 export interface UpdateCheckResult {

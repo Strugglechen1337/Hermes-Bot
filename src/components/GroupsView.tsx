@@ -478,6 +478,7 @@ const GroupRoomView: React.FC<GroupRoomViewProps> = ({
   const [disbanding, setDisbanding] = useState(false);
   const [openPocketPage, setOpenPocketPage] = useState<DetectedPocketPage | null>(null);
   const [replyTo, setReplyTo] = useState<{ author: string; excerpt: string } | null>(null);
+  const [contextMsg, setContextMsg] = useState<{ author: string; text: string } | null>(null);
   const [copiedEventId, setCopiedEventId] = useState<string | null>(null);
   const [dictating, setDictating] = useState(false);
 
@@ -486,17 +487,78 @@ const GroupRoomView: React.FC<GroupRoomViewProps> = ({
   const cursorRef = useRef<number>(0);
   const scrollTimersRef = useRef<number[]>([]);
   const swipeStartRef = useRef<{ x: number; y: number } | null>(null);
-  const speechRecRef = useRef<{ stop: () => void } | null>(null);
+  const speechRecRef = useRef<{
+    onresult: unknown;
+    onerror: unknown;
+    onend: unknown;
+    stop: () => void;
+    abort?: () => void;
+  } | null>(null);
+  const speechGenRef = useRef<number>(0);
+  const longPressTimerRef = useRef<number | null>(null);
+  const longPressStartRef = useRef<{ x: number; y: number } | null>(null);
 
-  const handleToggleDictation = useCallback(() => {
-    if (dictating) {
+  const stopDictation = useCallback(() => {
+    speechGenRef.current += 1;
+    const rec = speechRecRef.current;
+    speechRecRef.current = null;
+    if (rec) {
       try {
-        speechRecRef.current?.stop();
+        rec.onresult = null;
+        rec.onerror = null;
+        rec.onend = null;
+        if (typeof rec.abort === "function") rec.abort();
+        else rec.stop();
       } catch {
         // ignore
       }
-      speechRecRef.current = null;
-      setDictating(false);
+    }
+    setDictating(false);
+  }, []);
+
+  const cancelLongPress = useCallback(() => {
+    if (longPressTimerRef.current !== null) {
+      window.clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+    longPressStartRef.current = null;
+  }, []);
+
+  const startLongPress = useCallback(
+    (e: React.TouchEvent, author: string, text: string) => {
+      if (e.touches.length !== 1 || !text.trim()) return;
+      cancelLongPress();
+      const t = e.touches[0];
+      longPressStartRef.current = { x: t.clientX, y: t.clientY };
+      longPressTimerRef.current = window.setTimeout(() => {
+        longPressTimerRef.current = null;
+        longPressStartRef.current = null;
+        try {
+          navigator.vibrate?.(12);
+        } catch {
+          // ignore
+        }
+        setContextMsg({ author, text });
+      }, 420);
+    },
+    [cancelLongPress]
+  );
+
+  const moveLongPress = useCallback(
+    (e: React.TouchEvent) => {
+      const start = longPressStartRef.current;
+      if (!start || e.touches.length !== 1) return;
+      const t = e.touches[0];
+      if (Math.abs(t.clientX - start.x) > 10 || Math.abs(t.clientY - start.y) > 10) {
+        cancelLongPress();
+      }
+    },
+    [cancelLongPress]
+  );
+
+  const handleToggleDictation = useCallback(() => {
+    if (dictating) {
+      stopDictation();
       return;
     }
     const win = window as unknown as {
@@ -509,6 +571,7 @@ const GroupRoomView: React.FC<GroupRoomViewProps> = ({
         onend: (() => void) | null;
         start: () => void;
         stop: () => void;
+        abort?: () => void;
       };
       webkitSpeechRecognition?: new () => {
         lang: string;
@@ -519,6 +582,7 @@ const GroupRoomView: React.FC<GroupRoomViewProps> = ({
         onend: (() => void) | null;
         start: () => void;
         stop: () => void;
+        abort?: () => void;
       };
     };
     const SpeechRec = win.SpeechRecognition || win.webkitSpeechRecognition;
@@ -531,8 +595,10 @@ const GroupRoomView: React.FC<GroupRoomViewProps> = ({
       rec.lang = "de-DE";
       rec.interimResults = true;
       rec.continuous = false;
+      const gen = ++speechGenRef.current;
       const base = input.trim();
       rec.onresult = (ev) => {
+        if (speechGenRef.current !== gen) return;
         let transcript = "";
         for (let k = 0; k < ev.results.length; k++) {
           transcript += ev.results[k][0]?.transcript || "";
@@ -540,10 +606,12 @@ const GroupRoomView: React.FC<GroupRoomViewProps> = ({
         setInput(base ? `${base} ${transcript.trim()}` : transcript.trim());
       };
       rec.onerror = () => {
+        if (speechGenRef.current !== gen) return;
         speechRecRef.current = null;
         setDictating(false);
       };
       rec.onend = () => {
+        if (speechGenRef.current !== gen) return;
         speechRecRef.current = null;
         setDictating(false);
       };
@@ -554,7 +622,7 @@ const GroupRoomView: React.FC<GroupRoomViewProps> = ({
       speechRecRef.current = null;
       setDictating(false);
     }
-  }, [dictating, input]);
+  }, [dictating, input, stopDictation]);
 
   const scrollToBottom = useCallback(() => {
     requestAnimationFrame(() => {
@@ -686,13 +754,20 @@ const GroupRoomView: React.FC<GroupRoomViewProps> = ({
   }, [anyBotBusy, syncRoom, wsState]);
 
   async function handleSend() {
-    const rawText = input.trim();
+    stopDictation();
+    const rawText = (textareaRef.current?.value ?? input).trim();
     if (!rawText || wsState !== "connected") return;
     const text = replyTo ? `> ${replyTo.author}: ${replyTo.excerpt}\n\n${rawText}` : rawText;
     setSending(true);
     setError(null);
     setInput("");
     setReplyTo(null);
+    if (textareaRef.current) {
+      textareaRef.current.value = "";
+    }
+    window.setTimeout(() => {
+      setInput((cur) => (cur.trim() === rawText ? "" : cur));
+    }, 90);
     try {
       await hermesWs.call("groups.send", {
         room_id: room.room_id,
@@ -854,7 +929,18 @@ const GroupRoomView: React.FC<GroupRoomViewProps> = ({
             if (ev.kind === "message.user") {
               return (
                 <div key={ev.event_id} className="msg-row user">
-                  <div className="msg-bubble">
+                  <div
+                    className="msg-bubble"
+                    onTouchStart={(e) => startLongPress(e, "Du", payloadText)}
+                    onTouchMove={moveLongPress}
+                    onTouchEnd={cancelLongPress}
+                    onTouchCancel={cancelLongPress}
+                    onContextMenu={(e) => {
+                      if (!payloadText.trim()) return;
+                      e.preventDefault();
+                      setContextMsg({ author: "Du", text: payloadText });
+                    }}
+                  >
                     <SafeMarkdown text={payloadText} />
                   </div>
                   <div className="msg-time">{formatShortTime(ev.created_at)}</div>
@@ -867,6 +953,7 @@ const GroupRoomView: React.FC<GroupRoomViewProps> = ({
               const vis = getProfileAvatarByName(botName, profiles);
               const cleanText = stripSecretRequestTag(payloadText);
               const pocketPages = extractPocketPages(payloadText);
+              const memberLabel = ev.actor.display_name || vis.label;
               return (
                 <div key={ev.event_id} className="msg-row assistant">
                   <div className="msg-author">
@@ -875,9 +962,20 @@ const GroupRoomView: React.FC<GroupRoomViewProps> = ({
                       imageUrl={ev.actor.profile ? avatars[ev.actor.profile] : null}
                       size="xs"
                     />
-                    <span>{ev.actor.display_name || vis.label}</span>
+                    <span>{memberLabel}</span>
                   </div>
-                  <div className="msg-bubble">
+                  <div
+                    className="msg-bubble"
+                    onTouchStart={(e) => startLongPress(e, memberLabel, cleanText)}
+                    onTouchMove={moveLongPress}
+                    onTouchEnd={cancelLongPress}
+                    onTouchCancel={cancelLongPress}
+                    onContextMenu={(e) => {
+                      if (!cleanText.trim()) return;
+                      e.preventDefault();
+                      setContextMsg({ author: memberLabel, text: cleanText });
+                    }}
+                  >
                     {cleanText && <SafeMarkdown text={cleanText} />}
                     {pocketPages.map((page) => (
                       <PocketPageCard
@@ -1131,6 +1229,78 @@ const GroupRoomView: React.FC<GroupRoomViewProps> = ({
         page={openPocketPage}
         onClose={() => setOpenPocketPage(null)}
       />
+
+      <Sheet open={Boolean(contextMsg)} onClose={() => setContextMsg(null)}>
+        {contextMsg && (
+          <>
+            <div className="sheet-header">
+              <h2 className="sheet-title">{contextMsg.author}</h2>
+              <button
+                type="button"
+                className="icon-btn ghost"
+                aria-label="Schließen"
+                onClick={() => setContextMsg(null)}
+              >
+                <X size={20} />
+              </button>
+            </div>
+            <div
+              className="card"
+              style={{
+                marginBottom: 12,
+                fontSize: "0.84rem",
+                color: "var(--text-secondary)",
+                maxHeight: 96,
+                overflow: "hidden",
+              }}
+            >
+              {contextMsg.text.slice(0, 220)}
+              {contextMsg.text.length > 220 ? "…" : ""}
+            </div>
+            <div className="card-stack">
+              <button
+                type="button"
+                className="btn primary full"
+                onClick={() => {
+                  const flat = contextMsg.text.replace(/\s+/g, " ").trim();
+                  setReplyTo({
+                    author: contextMsg.author,
+                    excerpt: flat.length > 140 ? `${flat.slice(0, 140)}…` : flat,
+                  });
+                  setContextMsg(null);
+                  requestAnimationFrame(() => textareaRef.current?.focus());
+                }}
+              >
+                <Reply size={16} /> Antworten
+              </button>
+              <button
+                type="button"
+                className="btn full"
+                onClick={() => {
+                  void navigator.clipboard?.writeText(contextMsg.text);
+                  setContextMsg(null);
+                }}
+              >
+                <Copy size={16} /> Kopieren
+              </button>
+              {typeof navigator !== "undefined" && typeof navigator.share === "function" && (
+                <button
+                  type="button"
+                  className="btn full"
+                  onClick={() => {
+                    const txt = contextMsg.text;
+                    const auth = contextMsg.author;
+                    setContextMsg(null);
+                    void navigator.share({ title: auth, text: txt }).catch(() => undefined);
+                  }}
+                >
+                  <Share2 size={16} /> Teilen
+                </button>
+              )}
+            </div>
+          </>
+        )}
+      </Sheet>
     </div>
   );
 };

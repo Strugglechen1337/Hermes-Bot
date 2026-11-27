@@ -3,12 +3,12 @@ set -euo pipefail
 
 # ==============================================================================
 # Hermes Bots — 1-Line Installer (Linux / macOS)
-# Official Repo: https://github.com/Strugglechen1337/Hermes-Pocket-
+# Official Repo: https://github.com/Strugglechen1337/Hermes-Bot
 #
 # Recommended Network Setup: Tailscale Serve (tailnet-only HTTPS, zero open ports)
 # ==============================================================================
 
-REPO_URL="${HERMES_BOTS_REPO_URL:-https://github.com/Strugglechen1337/Hermes-Pocket-.git}"
+REPO_URL="${HERMES_BOTS_REPO_URL:-https://github.com/Strugglechen1337/Hermes-Bot.git}"
 INSTALL_DIR="${HERMES_BOTS_DIR:-$HOME/hermes-bots}"
 PORT="${PORT:-9135}"
 HERMES_BASE_URL="${HERMES_BASE_URL:-http://127.0.0.1:9130}"

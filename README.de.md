@@ -49,7 +49,7 @@
 Installiere Hermes Bots auf deinem Linux-/macOS-Server (auf dem Hermes Agent läuft) mit einem einzigen Befehl:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Strugglechen1337/Hermes-Pocket-/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Strugglechen1337/Hermes-Bot/main/scripts/install.sh | bash
 ```
 
 Was der Installer automatisch erledigt:

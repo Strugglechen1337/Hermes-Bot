@@ -280,12 +280,84 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
   const execGenerationRef = useRef<number>(0);
   const scrollTimersRef = useRef<number[]>([]);
   const isNearBottomRef = useRef<boolean>(true);
-  const speechRecRef = useRef<{ stop: () => void } | null>(null);
+  const speechRecRef = useRef<{
+    onresult: unknown;
+    onerror: unknown;
+    onend: unknown;
+    stop: () => void;
+    abort?: () => void;
+  } | null>(null);
+  const speechGenRef = useRef<number>(0);
+  const longPressTimerRef = useRef<number | null>(null);
+  const longPressStartRef = useRef<{ x: number; y: number } | null>(null);
   const mediaRecRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
 
   const [replyTo, setReplyTo] = useState<{ author: string; excerpt: string } | null>(null);
+  const [contextMsg, setContextMsg] = useState<{
+    author: string;
+    text: string;
+    role: string;
+  } | null>(null);
+
+  const stopActiveDictation = useCallback(() => {
+    speechGenRef.current += 1;
+    const rec = speechRecRef.current;
+    speechRecRef.current = null;
+    if (rec) {
+      try {
+        rec.onresult = null;
+        rec.onerror = null;
+        rec.onend = null;
+        if (typeof rec.abort === "function") rec.abort();
+        else rec.stop();
+      } catch {
+        // ignore
+      }
+    }
+    setVoiceActive((cur) => (cur === "dictating" ? "idle" : cur));
+  }, []);
+
+  const cancelLongPress = useCallback(() => {
+    if (longPressTimerRef.current !== null) {
+      window.clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+    longPressStartRef.current = null;
+  }, []);
+
+  const startLongPress = useCallback(
+    (e: React.TouchEvent, author: string, text: string, role: string) => {
+      if (e.touches.length !== 1 || !text.trim()) return;
+      cancelLongPress();
+      const t = e.touches[0];
+      longPressStartRef.current = { x: t.clientX, y: t.clientY };
+      longPressTimerRef.current = window.setTimeout(() => {
+        longPressTimerRef.current = null;
+        longPressStartRef.current = null;
+        try {
+          navigator.vibrate?.(12);
+        } catch {
+          // ignore
+        }
+        setContextMsg({ author, text, role });
+      }, 420);
+    },
+    [cancelLongPress]
+  );
+
+  const moveLongPress = useCallback(
+    (e: React.TouchEvent) => {
+      const start = longPressStartRef.current;
+      if (!start || e.touches.length !== 1) return;
+      const t = e.touches[0];
+      if (Math.abs(t.clientX - start.x) > 10 || Math.abs(t.clientY - start.y) > 10) {
+        cancelLongPress();
+      }
+    },
+    [cancelLongPress]
+  );
   const [showMediaGallery, setShowMediaGallery] = useState(false);
   const [inChatSearchOpen, setInChatSearchOpen] = useState(false);
   const [inChatSearchQuery, setInChatSearchQuery] = useState("");
@@ -392,13 +464,7 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
 
   const handleToggleVoice = useCallback(async () => {
     if (voiceActive === "dictating") {
-      try {
-        speechRecRef.current?.stop();
-      } catch {
-        // ignore
-      }
-      speechRecRef.current = null;
-      setVoiceActive("idle");
+      stopActiveDictation();
       return;
     }
 
@@ -423,6 +489,7 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
         onend: (() => void) | null;
         start: () => void;
         stop: () => void;
+        abort?: () => void;
       };
       webkitSpeechRecognition?: new () => {
         lang: string;
@@ -433,6 +500,7 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
         onend: (() => void) | null;
         start: () => void;
         stop: () => void;
+        abort?: () => void;
       };
     };
     const SpeechRec = win.SpeechRecognition || win.webkitSpeechRecognition;
@@ -443,8 +511,10 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
         rec.lang = "de-DE";
         rec.interimResults = true;
         rec.continuous = false;
+        const gen = ++speechGenRef.current;
         const baseInput = input.trim();
         rec.onresult = (ev) => {
+          if (speechGenRef.current !== gen) return;
           let transcript = "";
           for (let k = 0; k < ev.results.length; k++) {
             transcript += ev.results[k][0]?.transcript || "";
@@ -456,10 +526,12 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
           });
         };
         rec.onerror = () => {
+          if (speechGenRef.current !== gen) return;
           speechRecRef.current = null;
           setVoiceActive("idle");
         };
         rec.onend = () => {
+          if (speechGenRef.current !== gen) return;
           speechRecRef.current = null;
           setVoiceActive("idle");
         };
@@ -1432,7 +1504,8 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
   }
 
   async function handleSend() {
-    const rawText = input.trim();
+    stopActiveDictation();
+    const rawText = (textareaRef.current?.value ?? input).trim();
     const pendingFiles = [...attachments];
     if (!rawText && pendingFiles.length === 0) return;
 
@@ -1444,7 +1517,11 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
     // Handle /model, /provider, /new, /help directly in chat
     if (pendingFiles.length === 0 && !replyTo && rawText.startsWith("/")) {
       setInput("");
-      if (textareaRef.current) textareaRef.current.style.height = "auto";
+      saveBotDraft(profile.name, "");
+      if (textareaRef.current) {
+        textareaRef.current.value = "";
+        textareaRef.current.style.height = "auto";
+      }
       const handled = await tryHandleSlashCommand(rawText);
       if (handled) return;
       // Unknown slash command falls through as normal text
@@ -1457,11 +1534,21 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
 
     setChatError(null);
     setInput("");
+    saveBotDraft(profile.name, "");
     setReplyTo(null);
     setAttachments([]);
     if (textareaRef.current) {
+      textareaRef.current.value = "";
       textareaRef.current.style.height = "auto";
     }
+    // Guard against late iOS keyboard dictation commits arriving right after send
+    window.setTimeout(() => {
+      setInput((cur) => (cur.trim() === rawText ? "" : cur));
+      if (textareaRef.current && textareaRef.current.value.trim() === rawText) {
+        textareaRef.current.value = "";
+        textareaRef.current.style.height = "auto";
+      }
+    }, 90);
 
     let sid = activeSessionId;
     const optimisticId = `u-${Date.now()}`;
@@ -1930,7 +2017,32 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
                       <span>{visual.label} schreibt…</span>
                     </div>
                   )}
-                  <div className="msg-bubble">
+                  <div
+                    className="msg-bubble"
+                    onTouchStart={(e) => {
+                      if (msg.streaming || !msg.content.trim()) return;
+                      const clean = stripSecretRequestTag(msg.content) || msg.content;
+                      startLongPress(
+                        e,
+                        msg.role === "user" ? "Du" : visual.label,
+                        clean,
+                        msg.role
+                      );
+                    }}
+                    onTouchMove={moveLongPress}
+                    onTouchEnd={cancelLongPress}
+                    onTouchCancel={cancelLongPress}
+                    onContextMenu={(e) => {
+                      if (msg.streaming || !msg.content.trim()) return;
+                      e.preventDefault();
+                      const clean = stripSecretRequestTag(msg.content) || msg.content;
+                      setContextMsg({
+                        author: msg.role === "user" ? "Du" : visual.label,
+                        text: clean,
+                        role: msg.role,
+                      });
+                    }}
+                  >
                     {msg.attachments && msg.attachments.length > 0 && (
                       <div className="msg-attachments">
                         {msg.attachments.map((att, attIdx) =>
@@ -2491,6 +2603,92 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
         botLabel={visual.label}
         onClose={() => setShowMediaGallery(false)}
       />
+
+      <Sheet open={Boolean(contextMsg)} onClose={() => setContextMsg(null)}>
+        {contextMsg && (
+          <>
+            <div className="sheet-header">
+              <h2 className="sheet-title">{contextMsg.author}</h2>
+              <button
+                type="button"
+                className="icon-btn ghost"
+                aria-label="Schließen"
+                onClick={() => setContextMsg(null)}
+              >
+                <X size={20} />
+              </button>
+            </div>
+            <div
+              className="card"
+              style={{
+                marginBottom: 12,
+                fontSize: "0.84rem",
+                color: "var(--text-secondary)",
+                maxHeight: 96,
+                overflow: "hidden",
+              }}
+            >
+              {contextMsg.text.slice(0, 220)}
+              {contextMsg.text.length > 220 ? "…" : ""}
+            </div>
+            <div className="card-stack">
+              <button
+                type="button"
+                className="btn primary full"
+                onClick={() => {
+                  const flat = contextMsg.text.replace(/\s+/g, " ").trim();
+                  setReplyTo({
+                    author: contextMsg.author,
+                    excerpt: flat.length > 140 ? `${flat.slice(0, 140)}…` : flat,
+                  });
+                  setContextMsg(null);
+                  requestAnimationFrame(() => textareaRef.current?.focus());
+                }}
+              >
+                <Reply size={16} /> Antworten
+              </button>
+              <button
+                type="button"
+                className="btn full"
+                onClick={() => {
+                  void navigator.clipboard?.writeText(contextMsg.text);
+                  setContextMsg(null);
+                }}
+              >
+                <Copy size={16} /> Kopieren
+              </button>
+              {typeof navigator !== "undefined" && typeof navigator.share === "function" && (
+                <button
+                  type="button"
+                  className="btn full"
+                  onClick={() => {
+                    const txt = contextMsg.text;
+                    const auth = contextMsg.author;
+                    setContextMsg(null);
+                    void navigator.share({ title: auth, text: txt }).catch(() => undefined);
+                  }}
+                >
+                  <Share2 size={16} /> Teilen
+                </button>
+              )}
+              {!isPrivateBot && teammates.length > 0 && onForwardToBot && (
+                <button
+                  type="button"
+                  className="btn full"
+                  onClick={() => {
+                    const txt = contextMsg.text;
+                    const auth = contextMsg.author;
+                    setContextMsg(null);
+                    setForwardText(`Weitergeleitet von ${auth}:\n\n${txt}`);
+                  }}
+                >
+                  <Forward size={16} /> An anderen Bot weiterleiten
+                </button>
+              )}
+            </div>
+          </>
+        )}
+      </Sheet>
 
       <Sheet open={showQuickPromptEditor} onClose={() => setShowQuickPromptEditor(false)}>
         <div className="sheet-header">
