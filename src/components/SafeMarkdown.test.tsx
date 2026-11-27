@@ -70,4 +70,28 @@ describe("SafeMarkdown", () => {
     );
     expect(images).toHaveLength(0);
   });
+
+  it("renders native Hermes MEDIA:/path attachments directly inline instead of raw paths", () => {
+    const text =
+      "Klar, hier ist dein Bild:\n\n" +
+      "MEDIA:/home/user/.hermes/profiles/anna-coding/cache/scratch/anime-charakter.png";
+
+    render(<SafeMarkdown text={text} />);
+
+    expect(screen.getByText(/Klar, hier ist dein Bild/i)).toBeInTheDocument();
+    expect(screen.queryByText(/MEDIA:/i)).toBeNull();
+
+    const img = screen.getByRole("img", { name: "anime-charakter.png" });
+    expect(img).toHaveAttribute(
+      "src",
+      "/api/pocket/media?path=%2Fhome%2Fuser%2F.hermes%2Fprofiles%2Fanna-coding%2Fcache%2Fscratch%2Fanime-charakter.png"
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Bild vergrößern: anime-charakter\.png/i }));
+    expect(screen.getByRole("dialog", { name: "anime-charakter.png" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Speichern/i })).toHaveAttribute(
+      "href",
+      "/api/pocket/media?path=%2Fhome%2Fuser%2F.hermes%2Fprofiles%2Fanna-coding%2Fcache%2Fscratch%2Fanime-charakter.png&download=1"
+    );
+  });
 });

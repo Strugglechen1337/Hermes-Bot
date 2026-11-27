@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import { ExternalLink, Image as ImageIcon, X } from "lucide-react";
+import { Download, ExternalLink, FileText, Image as ImageIcon, Volume2, X } from "lucide-react";
 
 interface SafeMarkdownProps {
   text: string;
@@ -11,9 +11,101 @@ export interface ExtractedWebImage {
   alt: string;
   href?: string;
   host: string;
+  isLocalMedia?: boolean;
+  downloadUrl?: string;
+}
+
+export interface ExtractedLocalMedia {
+  path: string;
+  src: string;
+  downloadUrl: string;
+  filename: string;
+  alt: string;
+  kind: "image" | "audio" | "video" | "file";
 }
 
 const IMAGE_EXT_RE = /\.(?:jpe?g|png|webp|gif|avif)(?:[?#][^\s<>()]*)?$/i;
+const AUDIO_EXT_RE = /\.(?:mp3|wav|ogg|opus|m4a|aac)$/i;
+const VIDEO_EXT_RE = /\.(?:mp4|webm|mov)$/i;
+
+function classifyMediaKind(filePath: string): ExtractedLocalMedia["kind"] {
+  if (IMAGE_EXT_RE.test(filePath)) return "image";
+  if (AUDIO_EXT_RE.test(filePath)) return "audio";
+  if (VIDEO_EXT_RE.test(filePath)) return "video";
+  return "file";
+}
+
+function getBasename(filePath: string): string {
+  const parts = filePath.split(/[\\/]/).filter(Boolean);
+  return parts[parts.length - 1] || "Datei";
+}
+
+/**
+ * Extracts Hermes native `MEDIA:/abs/path/to/file.ext` attachments (and local
+ * markdown images pointing to `MEDIA:/...` or `/.hermes/...`) so generated
+ * images, audio, video and files render directly inline inside the chat bubble
+ * instead of showing raw server file paths.
+ */
+export function extractLocalMediaAttachments(text: string): {
+  cleanedText: string;
+  media: ExtractedLocalMedia[];
+} {
+  if (!text) return { cleanedText: "", media: [] };
+
+  const media: ExtractedLocalMedia[] = [];
+  const seen = new Set<string>();
+
+  const pushMedia = (rawPath: string, altRaw?: string) => {
+    const cleaned = rawPath.trim().replace(/[),.;:!?]+$/, "");
+    if (!cleaned.startsWith("/") || cleaned.includes("..")) return;
+    if (seen.has(cleaned) || media.length >= 12) return;
+    seen.add(cleaned);
+    const filename = getBasename(cleaned);
+    const encoded = encodeURIComponent(cleaned);
+    media.push({
+      path: cleaned,
+      src: `/api/pocket/media?path=${encoded}`,
+      downloadUrl: `/api/pocket/media?path=${encoded}&download=1`,
+      filename,
+      alt: altRaw?.trim() || filename,
+      kind: classifyMediaKind(cleaned),
+    });
+  };
+
+  const segments = text.split(/(```[\s\S]*?```)/g);
+  const cleanedSegments = segments.map((seg) => {
+    if (seg.startsWith("```") && seg.endsWith("```")) return seg;
+
+    // 1. Markdown image referencing MEDIA:/... or local /.hermes/... path
+    let out = seg.replace(
+      /!\[([^\]]*)\]\((?:MEDIA:\s*)?(\/[^\s)]+)\)/gi,
+      (_m, alt: string, filePath: string) => {
+        pushMedia(filePath, alt);
+        return "";
+      }
+    );
+
+    // 2. Native Hermes MEDIA:/path/to/file.ext (optionally backtick-wrapped)
+    out = out.replace(
+      /`?MEDIA:\s*(\/[^\s`<>()[\]"']+)`?/gi,
+      (_m, filePath: string) => {
+        pushMedia(filePath);
+        return "";
+      }
+    );
+
+    out = out
+      .replace(/^\s*[-*•]\s*$/gm, "")
+      .replace(/\n{3,}/g, "\n\n");
+
+    return out;
+  });
+
+  return {
+    cleanedText: cleanedSegments.join("").trim(),
+    media,
+  };
+}
 
 function isSafeHttpUrl(url: string): boolean {
   try {
@@ -258,10 +350,105 @@ const WebImageCard: React.FC<{
   );
 };
 
+const LocalMediaBlock: React.FC<{
+  item: ExtractedLocalMedia;
+  onZoom: (img: ExtractedWebImage) => void;
+}> = ({ item, onZoom }) => {
+  const [failed, setFailed] = useState(false);
+
+  if (item.kind === "image") {
+    if (failed) {
+      return (
+        <a href={item.downloadUrl} download={item.filename} className="md-media-file-card">
+          <ImageIcon size={18} />
+          <div className="md-media-file-info">
+            <span className="md-media-file-name">{item.filename}</span>
+            <span className="md-media-file-sub">Bild konnte nicht geladen werden · Herunterladen</span>
+          </div>
+          <Download size={16} />
+        </a>
+      );
+    }
+    return (
+      <div className="md-media-image-wrap">
+        <button
+          type="button"
+          className="md-media-image-btn"
+          aria-label={`Bild vergrößern: ${item.alt}`}
+          onClick={() =>
+            onZoom({
+              src: item.src,
+              alt: item.alt,
+              host: "",
+              isLocalMedia: true,
+              downloadUrl: item.downloadUrl,
+            })
+          }
+        >
+          <img
+            src={item.src}
+            alt={item.alt}
+            className="md-media-image"
+            loading="lazy"
+            onError={() => setFailed(true)}
+          />
+        </button>
+      </div>
+    );
+  }
+
+  if (item.kind === "audio") {
+    return (
+      <div className="md-media-audio-card">
+        <div className="md-media-audio-head">
+          <Volume2 size={15} />
+          <span className="md-media-file-name">{item.filename}</span>
+          <a
+            href={item.downloadUrl}
+            download={item.filename}
+            className="md-media-dl-link"
+            aria-label={`${item.filename} herunterladen`}
+          >
+            <Download size={14} />
+          </a>
+        </div>
+        <audio controls preload="metadata" src={item.src} className="md-media-audio" />
+      </div>
+    );
+  }
+
+  if (item.kind === "video") {
+    return (
+      <div className="md-media-video-wrap">
+        <video controls playsInline preload="metadata" src={item.src} className="md-media-video" />
+      </div>
+    );
+  }
+
+  return (
+    <a href={item.downloadUrl} download={item.filename} className="md-media-file-card">
+      <FileText size={18} />
+      <div className="md-media-file-info">
+        <span className="md-media-file-name">{item.filename}</span>
+        <span className="md-media-file-sub">Datei herunterladen</span>
+      </div>
+      <Download size={16} />
+    </a>
+  );
+};
+
 export const SafeMarkdown: React.FC<SafeMarkdownProps> = ({ text }) => {
   const [lightboxImg, setLightboxImg] = useState<ExtractedWebImage | null>(null);
 
-  const { cleanedText, images } = useMemo(() => extractWebSearchImages(text), [text]);
+  const { cleanedText, images, localMedia } = useMemo(() => {
+    const local = extractLocalMediaAttachments(text);
+    const web = extractWebSearchImages(local.cleanedText);
+    return {
+      cleanedText: web.cleanedText,
+      images: web.images,
+      localMedia: local.media,
+    };
+  }, [text]);
 
   if (!text) return null;
 
@@ -337,6 +524,14 @@ export const SafeMarkdown: React.FC<SafeMarkdownProps> = ({ text }) => {
     <div className="md-body">
       {blocks}
 
+      {localMedia.length > 0 && (
+        <div className="md-local-media-list" aria-label="Erstellte Medien">
+          {localMedia.map((item) => (
+            <LocalMediaBlock key={item.path} item={item} onZoom={setLightboxImg} />
+          ))}
+        </div>
+      )}
+
       {images.length > 0 && (
         <div
           className={`md-image-carousel ${images.length === 1 ? "single" : ""}`}
@@ -375,14 +570,24 @@ export const SafeMarkdown: React.FC<SafeMarkdownProps> = ({ text }) => {
               />
               <div className="image-lightbox-footer">
                 <span className="image-lightbox-caption">{lightboxImg.alt}</span>
-                <a
-                  href={lightboxImg.href || lightboxImg.src}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="btn sm primary"
-                >
-                  <ExternalLink size={14} /> Quelle öffnen
-                </a>
+                {lightboxImg.isLocalMedia ? (
+                  <a
+                    href={lightboxImg.downloadUrl || lightboxImg.src}
+                    download={lightboxImg.alt}
+                    className="btn sm primary"
+                  >
+                    <Download size={14} /> Speichern
+                  </a>
+                ) : (
+                  <a
+                    href={lightboxImg.href || lightboxImg.src}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="btn sm primary"
+                  >
+                    <ExternalLink size={14} /> Quelle öffnen
+                  </a>
+                )}
               </div>
             </div>
           </div>,

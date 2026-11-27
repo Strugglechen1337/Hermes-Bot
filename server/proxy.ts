@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import type { ServerConfig } from "./config.js";
 import { appendAutonomousGuidance } from "../shared/botAutonomy.js";
+import { handlePocketMediaRoute } from "./media.js";
 import { handlePocketPagesRoute } from "./pages.js";
 import {
   handlePocketPushRoute,
@@ -727,6 +728,10 @@ export async function handleHermesHttpProxy(
 
   if (pathname === "/api/pocket/pages" || pathname.startsWith("/api/pocket/pages/")) {
     return handlePocketPagesRoute(req, res, config, pathname);
+  }
+
+  if (pathname === "/api/pocket/media") {
+    return handlePocketMediaRoute(req, res, config, parsedUrl);
   }
 
   const method = (req.method || "GET").toUpperCase();
