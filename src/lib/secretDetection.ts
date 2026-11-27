@@ -229,6 +229,29 @@ export function extractProductDeals(text: string): DetectedDealCard[] {
   return deals;
 }
 
+function normalizeKnownServiceKey(rawKey: string, contextText: string): string {
+  const upper = rawKey.trim().toUpperCase();
+  const lowerCtx = contextText.toLowerCase();
+  const mentionsHass = /home\s*assist(?:ant|ent)|\bhass\b|\bha[-_\s]token\b/.test(lowerCtx);
+  if (
+    mentionsHass &&
+    (upper === "SERVICE_TOKEN" ||
+      upper === "SERVICE_API_TOKEN" ||
+      upper === "HOME_ASSISTANT_TOKEN" ||
+      upper === "HA_TOKEN" ||
+      upper === "HASS_API_TOKEN")
+  ) {
+    return "HASS_TOKEN";
+  }
+  if (
+    mentionsHass &&
+    (upper === "SERVICE_URL" || upper === "HOME_ASSISTANT_URL" || upper === "HA_URL")
+  ) {
+    return "HASS_URL";
+  }
+  return upper;
+}
+
 /**
  * Inspects a completed bot message and extracts either a single secure field or a
  * complete multi-field secure form (`[SECRET_FORM: ...]` + multiple `[SECRET_REQUEST: ...]`).
@@ -247,12 +270,13 @@ export function detectBotSecretForm(text: string): DetectedSecretForm | null {
     const seen = new Set<string>();
     const fields: DetectedSecretRequest[] = [];
     for (const m of explicitMatches) {
-      const keyName = m[1].toUpperCase();
+      const promptText = (m[2] || "").trim();
+      const keyName = normalizeKnownServiceKey(m[1], `${trimmed} ${promptText}`);
       if (seen.has(keyName)) continue;
       seen.add(keyName);
       fields.push({
         keyName,
-        prompt: (m[2] || `Bitte gib den Wert für ${keyName} sicher ein.`).trim(),
+        prompt: promptText || `Bitte gib den Wert für ${keyName} sicher ein.`,
         explicit: true,
       });
     }

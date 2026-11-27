@@ -54,7 +54,7 @@ import {
 } from "../lib/botCollaboration";
 import { getBotVisual } from "../lib/botTheme";
 import { loadBotDraft, saveBotDraft } from "../lib/draftStore";
-import { formatBadgeCount } from "../lib/unreadStore";
+import { formatBadgeCount, isInternalBotNoiseMessage } from "../lib/unreadStore";
 import {
   formatChatDividerTime,
   formatRelativeTime,
@@ -281,6 +281,8 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
   const activeSessionRef = useRef<string | null>(null);
   const attachedOnWsRef = useRef<boolean>(false);
   const execGenerationRef = useRef<number>(0);
+  const sessionLoadGenRef = useRef<number>(0);
+  const loadingChatRef = useRef<boolean>(true);
   const scrollTimersRef = useRef<number[]>([]);
   const isNearBottomRef = useRef<boolean>(true);
   const longPressTimerRef = useRef<number | null>(null);
@@ -836,21 +838,32 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
 
   const refreshSessionsList = useCallback(
     async (autoOpenFirst = false) => {
+      const myGen = autoOpenFirst ? ++sessionLoadGenRef.current : sessionLoadGenRef.current;
       try {
         const list = await fetchSessions(profile.name, 30);
+        if (autoOpenFirst && sessionLoadGenRef.current !== myGen) return;
         setSessions(list);
         if (autoOpenFirst) {
           if (initialSessionId) {
             await loadSessionHistory(initialSessionId, initialSessionTitle || "Suchtreffer");
             return;
           }
-          if (wsState === "connected") {
-            await openCanonicalBotChat(list, false);
-            const refreshed = await fetchSessions(profile.name, 30).catch(() => list);
-            setSessions(refreshed);
+          // Always pick the genuinely most recently active interactive session
+          // so leaving and re-entering a bot never jumps back to an older history.
+          const preferred = pickPreferredBotSession(list);
+          if (preferred && (preferred.title || "").trim() !== canonicalTitle) {
+            await loadSessionHistory(preferred.id, preferred.title || "Unterhaltung");
             return;
           }
-          const preferred = pickPreferredBotSession(list);
+          if (wsState === "connected") {
+            await openCanonicalBotChat(list, false);
+            if (sessionLoadGenRef.current !== myGen) return;
+            const refreshed = await fetchSessions(profile.name, 30).catch(() => list);
+            if (sessionLoadGenRef.current === myGen) {
+              setSessions(refreshed);
+            }
+            return;
+          }
           if (preferred) {
             await loadSessionHistory(preferred.id, preferred.title || canonicalTitle);
           } else {
@@ -862,6 +875,7 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
           }
         }
       } catch (err) {
+        if (autoOpenFirst && sessionLoadGenRef.current !== myGen) return;
         setChatError(err instanceof Error ? err.message : "Sessions konnten nicht geladen werden.");
         setLoadingChat(false);
       }
@@ -877,7 +891,20 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
     ]
   );
 
+  loadingChatRef.current = loadingChat;
+
+  // Guarantee every chat opens scrolled all the way to the newest message
+  // AFTER `loadingChat` turns false and the real message DOM is mounted.
   useEffect(() => {
+    if (!loadingChat && messages.length > 0) {
+      scrollToBottomWithSettle();
+    }
+  }, [loadingChat, activeSessionId, profile.name]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    setMessages([]);
+    setLoadingChat(true);
+    attachedOnWsRef.current = false;
     void refreshSessionsList(true);
   }, [profile.name, initialSessionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -887,6 +914,7 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
       attachedOnWsRef.current = false;
       return;
     }
+    if (loadingChatRef.current) return;
     if (!attachedOnWsRef.current) {
       if (activeSessionId && activeTitle !== canonicalTitle) {
         void loadSessionHistory(activeSessionId, activeTitle);
@@ -1926,6 +1954,14 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
               !msg.error &&
               /^(?:\[SILENT\]|NO_REPLY)$/i.test(msg.content.trim());
             if (isSilentAck) return null;
+
+            const isInternalNoise =
+              !msg.streaming &&
+              !msg.error &&
+              isInternalBotNoiseMessage(msg) &&
+              extractPocketPages(msg.content).length === 0 &&
+              extractPackageCards(msg.content).length === 0;
+            if (isInternalNoise) return null;
 
             const isEmptyAssistant =
               msg.role === "assistant" &&

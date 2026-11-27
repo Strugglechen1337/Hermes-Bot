@@ -1,14 +1,18 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   AlertCircle,
+  Check,
   CheckCircle2,
+  Copy,
   ExternalLink,
+  Home,
   Link2,
   Mail,
   Plug,
   RefreshCw,
   Search,
   Server,
+  ShieldCheck,
   Trash2,
   Zap,
 } from "lucide-react";
@@ -26,6 +30,7 @@ import {
   fetchMcpCatalog,
   fetchMcpServers,
   installMcpCatalogEntry,
+  savePocketSecret,
   startMcpServerAuth,
   testMcpServer,
   toggleMcpServer,
@@ -67,6 +72,14 @@ export const ConnectorsView: React.FC<ConnectorsViewProps> = ({
   const [hostedError, setHostedError] = useState<string | null>(null);
   const [connectingSlug, setConnectingSlug] = useState<string | null>(null);
   const [pendingLink, setPendingLink] = useState<{ slug: string; url: string; note?: string } | null>(null);
+  const [copiedAuthUrl, setCopiedAuthUrl] = useState(false);
+
+  // Quick Home Assistant (HASS_URL + HASS_TOKEN) inline setup
+  const [showHassForm, setShowHassForm] = useState(false);
+  const [hassUrl, setHassUrl] = useState("");
+  const [hassToken, setHassToken] = useState("");
+  const [savingHass, setSavingHass] = useState(false);
+  const [hassFeedback, setHassFeedback] = useState<{ ok: boolean; text: string } | null>(null);
 
   // MCP Servers (REST)
   const [mcpServers, setMcpServers] = useState<HermesMcpServer[]>([]);
@@ -239,10 +252,15 @@ export const ConnectorsView: React.FC<ConnectorsViewProps> = ({
       const res = await startMcpServerAuth(name, selectedProfile);
       const authUrl = res?.auth_url || res?.authorize_url || res?.url;
       if (authUrl) {
+        setPendingLink({
+          slug: name,
+          url: authUrl,
+          note: res?.message || "Falls sich Safari nicht automatisch öffnet, tippe unten auf den Button.",
+        });
         window.open(authUrl, "_blank", "noopener,noreferrer");
         setMcpNotice({
           ok: true,
-          text: `OAuth-Anmeldung für ${name} im Browser geöffnet.`,
+          text: `OAuth-Anmeldung für ${name} bereit.`,
         });
       } else {
         setMcpNotice({
@@ -353,6 +371,80 @@ export const ConnectorsView: React.FC<ConnectorsViewProps> = ({
     );
   }, [mcpCatalog, mcpServers, search]);
 
+  const TOP_OAUTH_SERVICES = [
+    { label: "Gmail", aliases: ["gmail", "google-mail", "google_workspace", "google"] },
+    { label: "Google Kalender", aliases: ["google_calendar", "google-calendar", "calendar", "gcal"] },
+    { label: "Google Drive", aliases: ["google_drive", "google-drive", "drive"] },
+    { label: "Outlook / M365", aliases: ["outlook", "microsoft", "office365"] },
+    { label: "GitHub", aliases: ["github"] },
+    { label: "Notion", aliases: ["notion"] },
+    { label: "Spotify", aliases: ["spotify"] },
+    { label: "Slack", aliases: ["slack"] },
+  ];
+
+  async function handleQuickOAuthService(svc: { label: string; aliases: string[] }) {
+    setHostedError(null);
+    // 1. Prefer matching Hermes Hosted Connector
+    const hostedMatch = mergedConnectors.find((c) => {
+      const hay = `${c.slug} ${c.name}`.toLowerCase();
+      return svc.aliases.some((a) => hay.includes(a));
+    });
+    if (hostedMatch) {
+      await handleConnectHosted(hostedMatch.slug, hostedMatch.connected);
+      return;
+    }
+
+    // 2. Fallback: matching installed MCP server (starts OAuth flow)
+    const mcpInstalled = mcpServers.find((s) =>
+      svc.aliases.some((a) => s.name.toLowerCase().includes(a))
+    );
+    if (mcpInstalled) {
+      setSubTab("mcp");
+      await handleAuthMcp(mcpInstalled.name);
+      return;
+    }
+
+    // 3. Fallback: matching MCP catalog entry -> install & start OAuth
+    const mcpCat = mcpCatalog.find((e) => {
+      const hay = `${e.name} ${e.display_name || ""}`.toLowerCase();
+      return svc.aliases.some((a) => hay.includes(a));
+    });
+    if (mcpCat) {
+      setSubTab("mcp");
+      await handleInstallCatalogMcp(mcpCat);
+      await handleAuthMcp(mcpCat.name);
+      return;
+    }
+
+    // 4. Otherwise try direct connectors.connect with primary slug
+    await handleConnectHosted(svc.aliases[0], false);
+  }
+
+  async function handleSaveHass(e: React.FormEvent) {
+    e.preventDefault();
+    if (!hassToken.trim()) return;
+    setSavingHass(true);
+    setHassFeedback(null);
+    try {
+      if (hassUrl.trim()) {
+        await savePocketSecret("HASS_URL", hassUrl.trim(), selectedProfile);
+      }
+      await savePocketSecret("HASS_TOKEN", hassToken.trim(), selectedProfile);
+      setHassToken("");
+      setHassFeedback({
+        ok: true,
+        text: `Gespeichert als HASS_TOKEN${hassUrl.trim() ? " & HASS_URL" : ""} für ${selectedProfile}.`,
+      });
+    } catch (err) {
+      setHassFeedback({
+        ok: false,
+        text: err instanceof Error ? err.message : "Konnte Home Assistant nicht speichern.",
+      });
+    } finally {
+      setSavingHass(false);
+    }
+  }
+
   return (
     <div>
       {/* Clean segmented sub-navigation */}
@@ -408,7 +500,8 @@ export const ConnectorsView: React.FC<ConnectorsViewProps> = ({
           <div className="chip-row" style={{ marginBottom: 12 }}>
             {profiles.map((p) => {
               const vis = getBotVisual(p);
-              return (
+            
+  return (
                 <button
                   key={p.name}
                   type="button"
@@ -450,23 +543,121 @@ export const ConnectorsView: React.FC<ConnectorsViewProps> = ({
 
           {subTab === "connectors" && (
             <>
+              {!search.trim() && (
+                <div className="card" style={{ marginBottom: 14 }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 8 }}>
+                    <div style={{ fontWeight: 700, fontSize: "0.9rem" }}>
+                      Top-Dienste schnell verbinden (OAuth)
+                    </div>
+                    <button
+                      type="button"
+                      className="btn sm"
+                      onClick={() => {
+                        setShowHassForm((v) => !v);
+                        setHassFeedback(null);
+                      }}
+                    >
+                      <Home size={13} /> Home Assistant
+                    </button>
+                  </div>
+                  <div className="chip-row">
+                    {TOP_OAUTH_SERVICES.map((svc) => (
+                      <button
+                        key={svc.label}
+                        type="button"
+                        className="chip"
+                        disabled={Boolean(connectingSlug || busyMcp)}
+                        onClick={() => void handleQuickOAuthService(svc)}
+                      >
+                        <Link2 size={12} /> {svc.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {showHassForm && (
+                    <form
+                      onSubmit={handleSaveHass}
+                      style={{
+                        marginTop: 12,
+                        paddingTop: 12,
+                        borderTop: "1px solid var(--border-subtle)",
+                      }}
+                    >
+                      <div style={{ fontSize: "0.8rem", color: "var(--text-secondary)", marginBottom: 8 }}>
+                        Speichert direkt als <code>HASS_URL</code> &amp; <code>HASS_TOKEN</code> (Write-Only in der geschützten Server-<code>.env</code>).
+                      </div>
+                      <div className="field">
+                        <label htmlFor="hass-url-input">Home Assistant URL (<code>HASS_URL</code>)</label>
+                        <input
+                          id="hass-url-input"
+                          type="url"
+                          className="input"
+                          value={hassUrl}
+                          onChange={(e) => setHassUrl(e.target.value)}
+                          placeholder="http://homeassistant.local:8123"
+                        />
+                      </div>
+                      <div className="field">
+                        <label htmlFor="hass-token-input">Long-Lived Access Token (<code>HASS_TOKEN</code>)</label>
+                        <input
+                          id="hass-token-input"
+                          type="password"
+                          className="input"
+                          autoComplete="off"
+                          value={hassToken}
+                          onChange={(e) => setHassToken(e.target.value)}
+                          placeholder="eyJhbGciOiJIUzI1NiIs…"
+                        />
+                      </div>
+                      {hassFeedback && (
+                        <div className={`notice ${hassFeedback.ok ? "ok" : "err"}`} style={{ marginBottom: 8 }}>
+                          <span>{hassFeedback.text}</span>
+                        </div>
+                      )}
+                      <button
+                        type="submit"
+                        className="btn primary sm full"
+                        disabled={savingHass || !hassToken.trim()}
+                      >
+                        <ShieldCheck size={14} /> {savingHass ? "Speichere…" : "HASS_TOKEN sicher speichern"}
+                      </button>
+                    </form>
+                  )}
+                </div>
+              )}
+
               {pendingLink && (
                 <div className="notice ok" style={{ marginBottom: 12 }}>
                   <ExternalLink size={17} style={{ flexShrink: 0, marginTop: 2 }} />
                   <div style={{ flex: 1 }}>
                     <div>
-                      <strong>Autorisierung für {pendingLink.slug} bereit</strong>
+                      <strong>OAuth-Anmeldung für {pendingLink.slug} bereit</strong>
                       {pendingLink.note ? ` – ${pendingLink.note}` : ""}
                     </div>
-                    <a
-                      href={pendingLink.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="btn sm primary"
-                      style={{ marginTop: 8, textDecoration: "none" }}
-                    >
-                      Anmeldelink öffnen <ExternalLink size={13} />
-                    </a>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+                      <a
+                        href={pendingLink.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="btn sm primary"
+                        style={{ textDecoration: "none" }}
+                      >
+                        In Safari anmelden <ExternalLink size={13} />
+                      </a>
+                      <button
+                        type="button"
+                        className="btn sm"
+                        onClick={() => {
+                          void navigator.clipboard?.writeText(pendingLink.url).then(() => {
+                            setCopiedAuthUrl(true);
+                            window.setTimeout(() => setCopiedAuthUrl(false), 1800);
+                          });
+                        }}
+                      >
+                        {copiedAuthUrl ? <Check size={13} /> : <Copy size={13} />}
+                        {copiedAuthUrl ? "Link kopiert" : "Link kopieren"}
+                      </button>
+                    </div>
                   </div>
                 </div>
               )}
@@ -623,7 +814,8 @@ export const ConnectorsView: React.FC<ConnectorsViewProps> = ({
                   {filteredMcpServers.map((srv) => {
                     const isEnabled = srv.enabled !== false;
                     const busy = busyMcp === srv.name;
-                    return (
+                  
+  return (
                       <div key={srv.name} className="card">
                         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
                           <div style={{ minWidth: 0, flex: 1 }}>

@@ -12,6 +12,7 @@ export const AUTONOMOUS_BOT_GUIDANCE = `${AUTONOMOUS_GUIDANCE_HEADING}
 - **Erst selbst prüfen:** Schaue vor jeder Rückfrage zuerst selbst nach: eigene Dateien, Profil-\`.env\` (nur Schlüsselnamen prüfen, **niemals** Klartextwerte ausgeben), den verschlüsselten Browser-Tresor (\`browser_vault\` mit \`action="list"\`), verfügbare Tools/Skills sowie bei Bedarf Team-Bots per \`message_agent\`.
 - **Geschützte Eingabeformulare & Tresor statt Handarbeit:** Lass den Nutzer Zugangsdaten, API-Keys, Passwörter, Adressen oder Zahlungskarten niemals als Klartext schreiben oder manuell als \`chmod 600\`-Datei anlegen. Fordere fehlende Daten direkt am Ende deiner Antwort über die nativen Formulare von Hermes Pocket an:
   - API-Key / Einzelwert in \`.env\`: \`[SECRET_REQUEST: SCHLUESSELNAME | Kurze Beschreibung]\`
+  - **Home Assistant:** Prüfe und nutze für Home Assistant **immer** \`HASS_TOKEN\` und \`HASS_URL\` (niemals \`SERVICE_TOKEN\` oder \`HOME_ASSISTANT_TOKEN\`).
   - Mehrere Felder als Formular: \`[SECRET_FORM: Titel]\` gefolgt von je einer \`[SECRET_REQUEST: KEY | Feldname]\`-Zeile
   - **Browser-Tresor** (verschlüsselt & modellblind für Bestellformulare): \`[VAULT_REQUEST: payment | Kreditkarte für Bestellung]\`, \`[VAULT_REQUEST: address | Lieferadresse]\` oder \`[VAULT_REQUEST: login | Shop-Login | https://www.shop.de]\`
 - **Preisvergleich, Websuche mit Bildern & Bestellungen (Browser + Tresor):**

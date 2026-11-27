@@ -216,9 +216,31 @@ export function isSilentBotAck(text: string | null | undefined): boolean {
 }
 
 /**
+ * Returns true for internal Hermes background process dumps and bot-to-bot
+ * delivery envelopes (e.g. `[IMPORTANT: Background process ... bot_mode_dm.py]`,
+ * `{"outcome":"Your teammate answered."}`, or incoming bot-to-bot DMs) that
+ * should not clutter the human chat or trigger unread indicator badges.
+ */
+export function isInternalBotNoiseMessage(msg: Pick<HermesChatMessage, "role" | "content">): boolean {
+  const text = (msg.content || "").trim();
+  if (!text) return false;
+  if (/^\[IMPORTANT:\s*Background process\b/i.test(text)) return true;
+  if (/\bbot_mode_dm\.py\b/i.test(text) && /--run-delivery|--author/i.test(text)) return true;
+  if (/\{"outcome"\s*:\s*"Your teammate answered\."/i.test(text)) return true;
+  if (
+    msg.role === "user" &&
+    (/^\[(?:Direct message|DM|Bot-zu-Bot|From\s+@)/i.test(text) ||
+      /"is_bot"\s*:\s*true/i.test(text))
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/**
  * Inspects normalized messages from a session that had new activity and confirms
- * that the bot (assistant) actually sent a new message (preventing false positives
- * when only a user message was sent).
+ * that the bot (assistant) actually sent a new message addressed to the human user
+ * (ignoring internal background process dumps and bot-to-bot chatter).
  */
 export function detectUnreadAssistantMessages(
   messages: HermesChatMessage[],
@@ -236,7 +258,18 @@ export function detectUnreadAssistantMessages(
   if (turns.length === 0) return null;
 
   const latest = turns[turns.length - 1];
-  if (latest.role !== "assistant") {
+  if (latest.role !== "assistant" || isInternalBotNoiseMessage(latest)) {
+    return null;
+  }
+  // If the immediately preceding turn was an internal bot-to-bot DM or background
+  // process completion (and the bot didn't publish a user-facing briefing/card),
+  // suppress the unread indicator badge so bot-to-bot chatter stays silent.
+  const prevTurn = turns.length >= 2 ? turns[turns.length - 2] : null;
+  if (
+    prevTurn &&
+    isInternalBotNoiseMessage(prevTurn) &&
+    !/\[(?:POCKET_PAGE|PACKAGE_CARD|DEAL_CARD):/i.test(latest.content || "")
+  ) {
     return null;
   }
 

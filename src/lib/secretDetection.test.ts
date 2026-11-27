@@ -11,15 +11,19 @@ import {
 } from "./secretDetection";
 
 describe("secretDetection", () => {
-  it("detects explicit [SECRET_REQUEST: KEY | Prompt] tags", () => {
+  it("detects explicit [SECRET_REQUEST: KEY | Prompt] tags and normalizes Home Assistant to HASS_TOKEN", () => {
     const res = detectBotSecretRequest(
       "Ich verbinde mich gern. [SECRET_REQUEST: HOME_ASSISTANT_TOKEN | Home Assistant Long-Lived Token]"
     );
     expect(res).toEqual({
-      keyName: "HOME_ASSISTANT_TOKEN",
+      keyName: "HASS_TOKEN",
       prompt: "Home Assistant Long-Lived Token",
       explicit: true,
     });
+    const svc = detectBotSecretRequest(
+      "Für Home Assistant brauche ich [SECRET_REQUEST: SERVICE_TOKEN | Home Assistant Zugriff]"
+    );
+    expect(svc?.keyName).toBe("HASS_TOKEN");
     expect(
       stripSecretRequestTag(
         "Ich verbinde mich gern. [SECRET_REQUEST: HOME_ASSISTANT_TOKEN | Prompt]"

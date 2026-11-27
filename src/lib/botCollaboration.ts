@@ -1,5 +1,6 @@
 import type { HermesProfile, HermesSessionSummary } from "../../shared/types";
 import { getBotVisual } from "./botTheme";
+import { toTimestampMs } from "./format";
 
 /**
  * Exact canonical session title gated by Hermes `tools/bot_mode_probe.py`
@@ -75,16 +76,26 @@ function isBackgroundSession(session: HermesSessionSummary): boolean {
 }
 
 /**
- * Selects the best existing session to display while offline or browsing history:
- * 1. Prefer the canonical "Bot Chat" session (which holds bot-to-bot DMs & `message_agent`).
- * 2. Otherwise pick the newest interactive local/gui session.
- * 3. Return null so the canonical "Bot Chat" is opened/created directly.
+ * Selects the most up-to-date interactive session for a bot:
+ * 1. Sort interactive sessions strictly newest-first by `last_active` / `started_at`.
+ * 2. Prefer the newest interactive session (so newly started chats are never
+ *    replaced by an older "Bot Chat" when leaving and re-entering).
+ * 3. Fall back to canonical "Bot Chat" if timestamps tie or are missing.
  */
 export function pickPreferredBotSession(
   sessions: HermesSessionSummary[]
 ): HermesSessionSummary | null {
-  const canonical = sessions.find((s) => (s.title || "").trim() === BOT_CHAT_TITLE);
-  if (canonical) return canonical;
-  const interactive = sessions.find((s) => !isBackgroundSession(s));
-  return interactive || null;
+  const interactive = sessions.filter((s) => !isBackgroundSession(s));
+  if (interactive.length === 0) return null;
+
+  const sorted = [...interactive].sort((a, b) => {
+    const ta = toTimestampMs(a.last_active) ?? toTimestampMs(a.started_at) ?? 0;
+    const tb = toTimestampMs(b.last_active) ?? toTimestampMs(b.started_at) ?? 0;
+    if (tb !== ta) return tb - ta;
+    const aCanon = (a.title || "").trim() === BOT_CHAT_TITLE ? 1 : 0;
+    const bCanon = (b.title || "").trim() === BOT_CHAT_TITLE ? 1 : 0;
+    return bCanon - aCanon;
+  });
+
+  return sorted[0] || null;
 }
