@@ -27,9 +27,11 @@ import type {
 } from "../../shared/types";
 import { getBotVisual } from "../lib/botTheme";
 import {
+  cancelMcpOAuthFlow,
   fetchMcpCatalog,
   fetchMcpServers,
   installMcpCatalogEntry,
+  pollMcpOAuthFlow,
   savePocketSecret,
   startMcpServerAuth,
   testMcpServer,
@@ -71,7 +73,12 @@ export const ConnectorsView: React.FC<ConnectorsViewProps> = ({
   const [loadingHosted, setLoadingHosted] = useState(true);
   const [hostedError, setHostedError] = useState<string | null>(null);
   const [connectingSlug, setConnectingSlug] = useState<string | null>(null);
-  const [pendingLink, setPendingLink] = useState<{ slug: string; url: string; note?: string } | null>(null);
+  const [pendingLink, setPendingLink] = useState<{
+    slug: string;
+    url: string;
+    note?: string;
+    flowId?: string;
+  } | null>(null);
   const [copiedAuthUrl, setCopiedAuthUrl] = useState(false);
 
   // Quick Home Assistant (HASS_URL + HASS_TOKEN) inline setup
@@ -255,22 +262,66 @@ export const ConnectorsView: React.FC<ConnectorsViewProps> = ({
     }
   }
 
+  useEffect(() => {
+    const flowId = pendingLink?.flowId;
+    if (!flowId) return;
+    let cancelled = false;
+    const timer = window.setInterval(() => {
+      void pollMcpOAuthFlow(flowId)
+        .then((snap) => {
+          if (cancelled) return;
+          const url = snap.authorization_url || snap.auth_url || snap.authorize_url || snap.url;
+          if (url && pendingLink && !pendingLink.url) {
+            setPendingLink((prev) => (prev ? { ...prev, url } : prev));
+          }
+          if (snap.status === "connected" || snap.status === "completed" || snap.status === "done") {
+            setPendingLink(null);
+            setMcpNotice({
+              ok: true,
+              text: `${snap.server_name || pendingLink?.slug || "Dienst"} erfolgreich per OAuth verbunden!`,
+            });
+            void loadMcp();
+          } else if (snap.status === "error" || snap.status === "failed" || snap.status === "cancelled") {
+            setPendingLink(null);
+            setMcpNotice({
+              ok: false,
+              text: snap.error || "OAuth-Anmeldung abgebrochen oder fehlgeschlagen.",
+            });
+          }
+        })
+        .catch(() => null);
+    }, 2000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [pendingLink?.flowId, loadMcp]);
+
   async function handleAuthMcp(name: string) {
     setBusyMcp(name);
     setMcpNotice(null);
     try {
       const res = await startMcpServerAuth(name, selectedProfile);
-      const authUrl = res?.auth_url || res?.authorize_url || res?.url;
-      if (authUrl) {
+      const authUrl = res?.authorization_url || res?.auth_url || res?.authorize_url || res?.url;
+      if (res?.error) {
+        setMcpNotice({ ok: false, text: `${name}: ${res.error}` });
+      } else if (authUrl) {
         setPendingLink({
           slug: name,
           url: authUrl,
-          note: res?.message || "Falls sich Safari nicht automatisch öffnet, tippe unten auf den Button.",
+          flowId: res?.flow_id,
+          note: res?.message || "Tippe auf „In Safari anmelden“ und schließe den Login ab.",
         });
-        window.open(authUrl, "_blank", "noopener,noreferrer");
         setMcpNotice({
           ok: true,
-          text: `OAuth-Anmeldung für ${name} bereit.`,
+          text: `OAuth-Anmeldelink für ${name} bereit – tippe oben auf „In Safari anmelden“.`,
+        });
+      } else if (res?.flow_id) {
+        setPendingLink({
+          slug: name,
+          url: "",
+          flowId: res.flow_id,
+          note: "Warte auf OAuth-Anmeldelink vom Server…",
         });
       } else {
         setMcpNotice({
@@ -604,6 +655,59 @@ export const ConnectorsView: React.FC<ConnectorsViewProps> = ({
             />
           </div>
 
+          {pendingLink && (
+            <div className="notice ok" style={{ marginBottom: 12 }}>
+              <ExternalLink size={17} style={{ flexShrink: 0, marginTop: 2 }} />
+              <div style={{ flex: 1 }}>
+                <div>
+                  <strong>OAuth-Anmeldung für {pendingLink.slug} bereit</strong>
+                  {pendingLink.note ? ` – ${pendingLink.note}` : ""}
+                </div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+                  {pendingLink.url && (
+                    <>
+                      <a
+                        href={pendingLink.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="btn sm primary"
+                        style={{ textDecoration: "none" }}
+                      >
+                        In Safari anmelden <ExternalLink size={13} />
+                      </a>
+                      <button
+                        type="button"
+                        className="btn sm"
+                        onClick={() => {
+                          void navigator.clipboard?.writeText(pendingLink.url).then(() => {
+                            setCopiedAuthUrl(true);
+                            window.setTimeout(() => setCopiedAuthUrl(false), 1800);
+                          });
+                        }}
+                      >
+                        {copiedAuthUrl ? <Check size={13} /> : <Copy size={13} />}
+                        {copiedAuthUrl ? "Link kopiert" : "Link kopieren"}
+                      </button>
+                    </>
+                  )}
+                  {pendingLink.flowId && (
+                    <button
+                      type="button"
+                      className="btn sm"
+                      onClick={() => {
+                        const fid = pendingLink.flowId!;
+                        setPendingLink(null);
+                        void cancelMcpOAuthFlow(fid).catch(() => null);
+                      }}
+                    >
+                      Abbrechen
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
           {subTab === "connectors" && (
             <>
               {!search.trim() && (
@@ -792,42 +896,6 @@ export const ConnectorsView: React.FC<ConnectorsViewProps> = ({
                       </button>
                     </form>
                   )}
-                </div>
-              )}
-
-              {pendingLink && (
-                <div className="notice ok" style={{ marginBottom: 12 }}>
-                  <ExternalLink size={17} style={{ flexShrink: 0, marginTop: 2 }} />
-                  <div style={{ flex: 1 }}>
-                    <div>
-                      <strong>OAuth-Anmeldung für {pendingLink.slug} bereit</strong>
-                      {pendingLink.note ? ` – ${pendingLink.note}` : ""}
-                    </div>
-                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
-                      <a
-                        href={pendingLink.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="btn sm primary"
-                        style={{ textDecoration: "none" }}
-                      >
-                        In Safari anmelden <ExternalLink size={13} />
-                      </a>
-                      <button
-                        type="button"
-                        className="btn sm"
-                        onClick={() => {
-                          void navigator.clipboard?.writeText(pendingLink.url).then(() => {
-                            setCopiedAuthUrl(true);
-                            window.setTimeout(() => setCopiedAuthUrl(false), 1800);
-                          });
-                        }}
-                      >
-                        {copiedAuthUrl ? <Check size={13} /> : <Copy size={13} />}
-                        {copiedAuthUrl ? "Link kopiert" : "Link kopieren"}
-                      </button>
-                    </div>
-                  </div>
                 </div>
               )}
 

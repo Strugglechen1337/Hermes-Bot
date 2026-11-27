@@ -612,10 +612,24 @@ export async function testMcpServer(
   );
 }
 
+export interface McpOAuthFlowSnapshot {
+  flow_id?: string;
+  server_name?: string;
+  status?: string;
+  authorization_url?: string;
+  auth_url?: string;
+  authorize_url?: string;
+  url?: string;
+  redirect_uri?: string;
+  error?: string;
+  message?: string;
+  tools?: unknown[];
+}
+
 export async function startMcpServerAuth(
   name: string,
   profile?: string
-): Promise<{ auth_url?: string; authorize_url?: string; url?: string; flow_id?: string; message?: string }> {
+): Promise<McpOAuthFlowSnapshot> {
   const params = new URLSearchParams();
   if (profile) params.set("profile", profile);
   const query = params.toString() ? `?${params.toString()}` : "";
@@ -625,6 +639,16 @@ export async function startMcpServerAuth(
       method: "POST",
     }
   );
+}
+
+export async function pollMcpOAuthFlow(flowId: string): Promise<McpOAuthFlowSnapshot> {
+  return requestJson(`/api/mcp/oauth/flows/${encodeURIComponent(flowId)}`);
+}
+
+export async function cancelMcpOAuthFlow(flowId: string): Promise<void> {
+  await requestJson(`/api/mcp/oauth/flows/${encodeURIComponent(flowId)}`, {
+    method: "DELETE",
+  });
 }
 
 export async function installMcpCatalogEntry(

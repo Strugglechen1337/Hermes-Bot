@@ -806,6 +806,15 @@ export async function handleHermesHttpProxy(
   if (req.headers.cookie) {
     upstreamHeaders.Cookie = String(req.headers.cookie);
   }
+  // Forward external host/proto on MCP OAuth start so Hermes generates a callback URL
+  // reachable from the user's browser/iPhone (e.g. Tailscale Serve HTTPS origin).
+  if (pathname.startsWith("/api/mcp/")) {
+    const fwdHost = String(req.headers["x-forwarded-host"] || req.headers.host || "").trim();
+    if (fwdHost) {
+      upstreamHeaders["X-Forwarded-Host"] = fwdHost;
+      upstreamHeaders["X-Forwarded-Proto"] = isClientHttps(req, config.cookieSecure) ? "https" : "http";
+    }
+  }
   // Note: Intentionally omit browser Origin/Sec-Fetch-Site when talking server-to-server
   // to Hermes, after enforcing our own Same-Origin check above, matching Hermes's
   // cookie_origin_is_allowed contract for trusted local/proxy callers.

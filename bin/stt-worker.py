@@ -18,8 +18,9 @@ os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
 from faster_whisper import WhisperModel  # type: ignore
 
-MODEL_NAME = os.environ.get("HERMES_STT_MODEL", "small")
-model = WhisperModel(MODEL_NAME, device="cpu", compute_type="int8")
+MODEL_NAME = os.environ.get("HERMES_STT_MODEL", "base")
+CPU_THREADS = int(os.environ.get("HERMES_STT_THREADS", str(os.cpu_count() or 4)))
+model = WhisperModel(MODEL_NAME, device="cpu", compute_type="int8", cpu_threads=CPU_THREADS)
 
 
 def decode_audio_16k_mono(audio_path: str) -> np.ndarray:

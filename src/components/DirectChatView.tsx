@@ -2223,14 +2223,6 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
                       <button
                         type="button"
                         className="msg-action-btn"
-                        aria-label="Daumen hoch"
-                        onClick={() => handleToggleReaction(msgKey, "👍")}
-                      >
-                        👍
-                      </button>
-                      <button
-                        type="button"
-                        className="msg-action-btn"
                         aria-label="Auf Nachricht antworten"
                         onClick={() => {
                           const clean = (stripSecretRequestTag(msg.content) || msg.content)
