@@ -62,6 +62,10 @@ function defaultDisplayName(profileName: string, profileDir?: string): string {
       const yamlPath = path.join(profileDir, "profile.yaml");
       if (fs.existsSync(yamlPath)) {
         const text = fs.readFileSync(yamlPath, "utf8");
+        const titleMatch = text.match(/hermes-bots[\s\S]{0,160}?\btitle\s*:\s*["']?([^"'\r\n#]+)["']?/m);
+        if (titleMatch?.[1]?.trim()) {
+          return titleMatch[1].trim();
+        }
         const match = text.match(/^\s*display_name\s*:\s*["']?([^"'\r\n#]+)["']?/m);
         if (match?.[1]?.trim()) {
           return match[1].trim();

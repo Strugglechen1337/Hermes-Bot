@@ -535,6 +535,7 @@ export interface PocketProfileMeta {
   private?: boolean;
   chief?: boolean;
   pinned?: boolean;
+  botTitle?: string;
 }
 
 const SAFE_PROFILE_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
@@ -568,8 +569,8 @@ export function readPocketProfileMeta(
       const lines = fs.readFileSync(profileYamlPath, "utf8").split(/\r?\n/);
       let inUiMeta = false;
       let uiMetaIndent = -1;
-      let inPocket = false;
-      let pocketIndent = -1;
+      let activeSection: "pocket" | "bots" | null = null;
+      let sectionIndent = -1;
 
       for (const line of lines) {
         if (!line.trim() || line.trim().startsWith("#")) continue;
@@ -586,27 +587,37 @@ export function readPocketProfileMeta(
 
         if (indent <= uiMetaIndent) {
           inUiMeta = false;
-          inPocket = false;
+          activeSection = null;
           continue;
         }
 
-        if (!inPocket) {
+        if (activeSection !== null && indent <= sectionIndent) {
+          activeSection = null;
+        }
+
+        if (activeSection === null) {
           if (/^["']?hermes-pocket["']?\s*:\s*$/.test(trimmed)) {
-            inPocket = true;
-            pocketIndent = indent;
+            activeSection = "pocket";
+            sectionIndent = indent;
+          } else if (/^["']?hermes-bots["']?\s*:\s*$/.test(trimmed)) {
+            activeSection = "bots";
+            sectionIndent = indent;
           }
           continue;
         }
 
-        if (indent <= pocketIndent) {
-          inPocket = false;
-          continue;
-        }
-
-        const match = trimmed.match(/^(private|chief|pinned)\s*:\s*(true|false)\b/i);
-        if (match) {
-          const key = match[1].toLowerCase() as keyof PocketProfileMeta;
-          out[key] = match[2].toLowerCase() === "true";
+        if (activeSection === "pocket") {
+          const match = trimmed.match(/^(private|chief|pinned)\s*:\s*(true|false)\b/i);
+          if (match) {
+            const key = match[1].toLowerCase() as "private" | "chief" | "pinned";
+            out[key] = match[2].toLowerCase() === "true";
+          }
+        } else if (activeSection === "bots") {
+          const titleMatch = trimmed.match(/^title\s*:\s*(.+)$/);
+          if (titleMatch?.[1]) {
+            const rawVal = titleMatch[1].trim().replace(/^["']|["']$/g, "").trim();
+            if (rawVal) out.botTitle = rawVal;
+          }
         }
       }
     }
@@ -656,7 +667,8 @@ export function enrichProfilesPayloadWithPocketMeta(
       if (
         diskMeta.private === undefined &&
         diskMeta.chief === undefined &&
-        diskMeta.pinned === undefined
+        diskMeta.pinned === undefined &&
+        diskMeta.botTitle === undefined
       ) {
         continue;
       }
@@ -672,8 +684,9 @@ export function enrichProfilesPayloadWithPocketMeta(
           ? { ...(existingUiMeta["hermes-pocket"] as Record<string, unknown>) }
           : {};
 
+      const { botTitle, ...pocketFlags } = diskMeta;
       const mergedPocket: Record<string, unknown> = {
-        ...diskMeta,
+        ...pocketFlags,
         ...existingPocket,
       };
       // Disk private isolation always wins if Hermes REST omitted it
@@ -681,7 +694,22 @@ export function enrichProfilesPayloadWithPocketMeta(
         mergedPocket.private = true;
       }
 
-      existingUiMeta["hermes-pocket"] = mergedPocket;
+      if (Object.keys(mergedPocket).length > 0) {
+        existingUiMeta["hermes-pocket"] = mergedPocket;
+      }
+
+      if (botTitle) {
+        const existingBots =
+          existingUiMeta["hermes-bots"] &&
+          typeof existingUiMeta["hermes-bots"] === "object" &&
+          !Array.isArray(existingUiMeta["hermes-bots"])
+            ? { ...(existingUiMeta["hermes-bots"] as Record<string, unknown>) }
+            : {};
+        existingUiMeta["hermes-bots"] = { ...existingBots, title: botTitle };
+        item.bot_title = botTitle;
+        item.display_name = botTitle;
+      }
+
       item.ui_meta = existingUiMeta;
       mutated = true;
     }

@@ -36,7 +36,7 @@ function hashName(name: string): number {
 }
 
 export function getBotLabel(profile: Pick<HermesProfile, "name" | "display_name" | "bot_title">): string {
-  const custom = (profile.display_name || profile.bot_title || "").trim();
+  const custom = (profile.bot_title || profile.display_name || "").trim();
   if (custom) return custom;
   if (profile.name === "default") return "Hermes";
   return profile.name.charAt(0).toUpperCase() + profile.name.slice(1);
