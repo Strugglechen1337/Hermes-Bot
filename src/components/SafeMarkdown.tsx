@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import { Download, ExternalLink, FileText, Image as ImageIcon, Share2, Volume2, X } from "lucide-react";
+import { Check, Copy, Download, ExternalLink, FileText, Image as ImageIcon, Share2, Volume2, X } from "lucide-react";
 
 interface SafeMarkdownProps {
   text: string;
@@ -369,7 +369,9 @@ async function shareOrSaveLocalMedia(src: string, filename: string): Promise<voi
       typeof navigator.canShare === "function" ? navigator.canShare({ files: [file] }) : true;
     if (canShareFiles) {
       try {
-        await navigator.share({ files: [file], title: filename });
+        // Omit `title` / `text` so iOS Share Sheet "Kopieren" copies the actual
+        // image/file binary instead of falling back to the filename text.
+        await navigator.share({ files: [file] });
         return;
       } catch (err) {
         if (err instanceof DOMException && err.name === "AbortError") {
@@ -509,9 +511,62 @@ const LocalMediaBlock: React.FC<{
   );
 };
 
+/**
+ * Copies the actual image binary directly into the system clipboard (preserving
+ * iOS Safari user-gesture activation by passing the PNG Blob promise directly
+ * into ClipboardItem).
+ */
+async function copyImageToClipboard(src: string): Promise<boolean> {
+  if (
+    typeof navigator === "undefined" ||
+    !navigator.clipboard ||
+    typeof navigator.clipboard.write !== "function" ||
+    typeof ClipboardItem === "undefined"
+  ) {
+    return false;
+  }
+
+  const pngBlobPromise = fetch(src, { credentials: "same-origin" })
+    .then(async (res) => {
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const blob = await res.blob();
+      if (blob.type === "image/png") return blob;
+      // Convert JPEG/WebP to PNG in-browser so iOS/Chromium ClipboardItem accepts it
+      const bitmapUrl = URL.createObjectURL(blob);
+      try {
+        const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+          const el = new Image();
+          el.onload = () => resolve(el);
+          el.onerror = reject;
+          el.src = bitmapUrl;
+        });
+        const canvas = document.createElement("canvas");
+        canvas.width = img.naturalWidth || img.width;
+        canvas.height = img.naturalHeight || img.height;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return blob;
+        ctx.drawImage(img, 0, 0);
+        const png = await new Promise<Blob | null>((resolve) =>
+          canvas.toBlob((b) => resolve(b), "image/png")
+        );
+        return png || blob;
+      } finally {
+        URL.revokeObjectURL(bitmapUrl);
+      }
+    });
+
+  try {
+    await navigator.clipboard.write([new ClipboardItem({ "image/png": pngBlobPromise })]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export const SafeMarkdown: React.FC<SafeMarkdownProps> = ({ text }) => {
   const [lightboxImg, setLightboxImg] = useState<ExtractedWebImage | null>(null);
   const [lightboxBusy, setLightboxBusy] = useState(false);
+  const [lightboxCopied, setLightboxCopied] = useState(false);
 
   const { cleanedText, images, localMedia } = useMemo(() => {
     const local = extractLocalMediaAttachments(text);
@@ -644,24 +699,40 @@ export const SafeMarkdown: React.FC<SafeMarkdownProps> = ({ text }) => {
               <div className="image-lightbox-footer">
                 <span className="image-lightbox-caption">{lightboxImg.alt}</span>
                 {lightboxImg.isLocalMedia ? (
-                  <button
-                    type="button"
-                    className="btn sm primary"
-                    disabled={lightboxBusy}
-                    onClick={async () => {
-                      if (lightboxBusy) return;
-                      setLightboxBusy(true);
-                      try {
-                        await shareOrSaveLocalMedia(lightboxImg.src, lightboxImg.alt);
-                      } catch {
-                        // ignore
-                      } finally {
-                        setLightboxBusy(false);
-                      }
-                    }}
-                  >
-                    <Share2 size={14} /> {lightboxBusy ? "Lädt…" : "Teilen / Sichern"}
-                  </button>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <button
+                      type="button"
+                      className="btn sm"
+                      onClick={async () => {
+                        const ok = await copyImageToClipboard(lightboxImg.src);
+                        if (ok) {
+                          setLightboxCopied(true);
+                          setTimeout(() => setLightboxCopied(false), 1800);
+                        }
+                      }}
+                    >
+                      {lightboxCopied ? <Check size={14} /> : <Copy size={14} />}
+                      {lightboxCopied ? "Kopiert" : "Kopieren"}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn sm primary"
+                      disabled={lightboxBusy}
+                      onClick={async () => {
+                        if (lightboxBusy) return;
+                        setLightboxBusy(true);
+                        try {
+                          await shareOrSaveLocalMedia(lightboxImg.src, lightboxImg.alt);
+                        } catch {
+                          // ignore
+                        } finally {
+                          setLightboxBusy(false);
+                        }
+                      }}
+                    >
+                      <Share2 size={14} /> {lightboxBusy ? "Lädt…" : "Teilen / Sichern"}
+                    </button>
+                  </div>
                 ) : (
                   <a
                     href={lightboxImg.href || lightboxImg.src}

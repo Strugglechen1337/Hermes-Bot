@@ -89,6 +89,7 @@ describe("SafeMarkdown", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /Bild vergrößern: anime-charakter\.png/i }));
     expect(screen.getByRole("dialog", { name: "anime-charakter.png" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Kopieren/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Teilen \/ Sichern/i })).toBeInTheDocument();
   });
 });
