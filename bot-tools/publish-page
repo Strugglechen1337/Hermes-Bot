@@ -195,13 +195,13 @@ TEMPLATE = """<!doctype html>
 <html lang="de">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, viewport-fit=cover">
 <title>{title}</title>
 <style>
 :root {{ color-scheme: dark; --bg:#08090c; --card:#12141a; --card2:#1a1d24; --line:rgba(255,255,255,.09);
   --text:#f5f6f8; --muted:#98a0b0; --dim:#687080; --accent:#f59e0b; --accent-soft:rgba(245,158,11,.14); --link:#a5b4fc; }}
 * {{ box-sizing:border-box; }}
-html,body {{ margin:0; background:var(--bg); color:var(--text);
+html,body {{ margin:0; background:var(--bg); color:var(--text); font-size:16px; -webkit-text-size-adjust:100%; text-size-adjust:100%;
   font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Inter","Segoe UI",Roboto,sans-serif; -webkit-font-smoothing:antialiased; }}
 .wrap {{ max-width:760px; margin:0 auto; padding:calc(env(safe-area-inset-top) + 22px) 16px calc(env(safe-area-inset-bottom) + 40px); }}
 header.hero {{ padding:22px 20px 20px; border-radius:24px; margin-bottom:14px;

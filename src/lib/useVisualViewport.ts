@@ -28,19 +28,42 @@ export function useVisualViewport(): VisualViewportState {
     let rafId = 0;
     let lastKbOpen = false;
     let lastVvHeight = 0;
+    let lastIsLandscape = window.innerWidth > window.innerHeight;
     let baselineHeight = Math.max(
       window.innerHeight,
       vv ? Math.round(vv.height) : 0
     );
 
+    const resetViewportZoomIfNeeded = () => {
+      if (vv && Math.abs((vv.scale || 1) - 1) > 0.02) {
+        const meta = document.querySelector<HTMLMetaElement>('meta[name="viewport"]');
+        if (meta) {
+          meta.setAttribute(
+            "content",
+            "width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+          );
+        }
+      }
+      if (window.scrollX !== 0 || window.scrollY !== 0) {
+        window.scrollTo(0, 0);
+      }
+    };
+
     const syncNow = () => {
       rafId = 0;
+      const isLandscape = window.innerWidth > window.innerHeight;
       const vvHeight = vv ? Math.round(vv.height) : window.innerHeight;
       const vvOffsetTop = vv ? Math.max(0, Math.round(vv.offsetTop)) : 0;
       const focused = isTextInputFocused();
 
-      // Update baseline only when no text input is focused (keyboard closed)
-      if (!focused) {
+      // Immediately reset baseline when orientation changes so portrait -> landscape
+      // height drop is never mistaken for an open keyboard.
+      if (isLandscape !== lastIsLandscape) {
+        lastIsLandscape = isLandscape;
+        baselineHeight = Math.max(window.innerHeight, vvHeight);
+        resetViewportZoomIfNeeded();
+      } else if (!focused) {
+        // Update baseline only when no text input is focused (keyboard closed)
         baselineHeight = Math.max(baselineHeight, window.innerHeight, vvHeight);
       }
 
@@ -69,7 +92,7 @@ export function useVisualViewport(): VisualViewportState {
         );
       }
 
-      if (window.scrollY !== 0) {
+      if (window.scrollX !== 0 || window.scrollY !== 0) {
         window.scrollTo(0, 0);
       }
     };
@@ -79,12 +102,24 @@ export function useVisualViewport(): VisualViewportState {
       rafId = requestAnimationFrame(syncNow);
     };
 
+    const orientationTimers: number[] = [];
     const handleOrientation = () => {
+      for (const id of orientationTimers) window.clearTimeout(id);
+      orientationTimers.length = 0;
+      lastIsLandscape = window.innerWidth > window.innerHeight;
       baselineHeight = Math.max(window.innerHeight, vv ? Math.round(vv.height) : 0);
-      window.setTimeout(() => {
-        baselineHeight = Math.max(window.innerHeight, vv ? Math.round(vv.height) : 0);
-        scheduleSync();
-      }, 250);
+      resetViewportZoomIfNeeded();
+      scheduleSync();
+      for (const delay of [120, 300, 500]) {
+        orientationTimers.push(
+          window.setTimeout(() => {
+            lastIsLandscape = window.innerWidth > window.innerHeight;
+            baselineHeight = Math.max(window.innerHeight, vv ? Math.round(vv.height) : 0);
+            resetViewportZoomIfNeeded();
+            scheduleSync();
+          }, delay)
+        );
+      }
     };
 
     const handleFocusChange = () => {
@@ -102,17 +137,20 @@ export function useVisualViewport(): VisualViewportState {
     }
     window.addEventListener("resize", scheduleSync);
     window.addEventListener("orientationchange", handleOrientation);
+    screen.orientation?.addEventListener?.("change", handleOrientation);
     window.addEventListener("focusin", handleFocusChange);
     window.addEventListener("focusout", handleFocusChange);
 
     return () => {
       if (rafId) cancelAnimationFrame(rafId);
+      for (const id of orientationTimers) window.clearTimeout(id);
       if (vv) {
         vv.removeEventListener("resize", scheduleSync);
         vv.removeEventListener("scroll", scheduleSync);
       }
       window.removeEventListener("resize", scheduleSync);
       window.removeEventListener("orientationchange", handleOrientation);
+      screen.orientation?.removeEventListener?.("change", handleOrientation);
       window.removeEventListener("focusin", handleFocusChange);
       window.removeEventListener("focusout", handleFocusChange);
       root.classList.remove("kb-open");
