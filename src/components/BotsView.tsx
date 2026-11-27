@@ -42,14 +42,17 @@ import {
 import {
   createProfile,
   deleteProfile,
+  fetchModelOptions,
   fetchProfileFallback,
   fetchProfileSoul,
   searchSessions,
   updateProfileDescription,
   updateProfileFallback,
+  updateProfileModel,
   updateProfilePrivacy,
   updateProfileSoul,
 } from "../lib/hermesApi";
+import { recommendGptModelForBot } from "../lib/smartModelRouting";
 import { hermesWs, type WsConnectionState } from "../lib/hermesWs";
 import { cleanSearchSnippet } from "../lib/privateVault";
 import type { PushPreferences } from "../lib/pushClient";
@@ -441,6 +444,22 @@ export const BotsView: React.FC<BotsViewProps> = ({
         share_auth: true,
       });
       const finalName = created?.name || slug;
+      // Automatically assign the best matching GPT model for this bot's role/profile
+      const modelOpts = await fetchModelOptions(finalName).catch(() => null);
+      if (modelOpts?.providers?.length) {
+        const smartRec = recommendGptModelForBot(
+          {
+            name: finalName,
+            display_name: createName.trim() || finalName,
+            description: createDesc.trim(),
+            soul: createSoul.trim(),
+          },
+          modelOpts.providers
+        );
+        if (smartRec) {
+          await updateProfileModel(finalName, smartRec.provider, smartRec.model).catch(() => null);
+        }
+      }
       // Inherit default Hermes Anthropic fallback automatically on every newly created bot
       const defaultFallbacks = await fetchProfileFallback("default").catch(() => []);
       const targetFallbacks =

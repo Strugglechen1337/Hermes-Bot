@@ -1,12 +1,16 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertCircle, Check, Cpu, RefreshCw, Search, ShieldCheck, X } from "lucide-react";
-import type { HermesFallbackProvider, HermesModelOptionProvider } from "../../shared/types";
+import { AlertCircle, Check, Cpu, RefreshCw, Search, ShieldCheck, Sparkles, X } from "lucide-react";
+import type { HermesFallbackProvider, HermesModelOptionProvider, HermesProfile } from "../../shared/types";
 import {
   fetchModelOptions,
   fetchProfileFallback,
   updateProfileFallback,
   updateProfileModel,
 } from "../lib/hermesApi";
+import {
+  buildAutoAssignPlan,
+  recommendGptModelForBot,
+} from "../lib/smartModelRouting";
 import { RECOMMENDED_ANTHROPIC_FALLBACK } from "../lib/usageLimits";
 import { Sheet } from "./Sheet";
 
@@ -14,7 +18,9 @@ interface ModelPickerSheetProps {
   open: boolean;
   profileName: string;
   botLabel: string;
+  profileDescription?: string;
   allProfileNames?: string[];
+  allProfiles?: HermesProfile[];
   currentProvider?: string | null;
   currentModel?: string | null;
   initialSearch?: string;
@@ -28,7 +34,9 @@ export const ModelPickerSheet: React.FC<ModelPickerSheetProps> = ({
   open,
   profileName,
   botLabel,
+  profileDescription,
   allProfileNames = [],
+  allProfiles = [],
   currentProvider,
   currentModel,
   initialSearch = "",
@@ -49,6 +57,8 @@ export const ModelPickerSheet: React.FC<ModelPickerSheetProps> = ({
   );
   const [savingFallback, setSavingFallback] = useState(false);
   const [fallbackNotice, setFallbackNotice] = useState<string | null>(null);
+  const [autoAssigning, setAutoAssigning] = useState(false);
+  const [smartNotice, setSmartNotice] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -121,9 +131,58 @@ export const ModelPickerSheet: React.FC<ModelPickerSheetProps> = ({
       setSearch(initialSearch);
       setCustomModel("");
       setFallbackNotice(null);
+      setSmartNotice(null);
       void loadOptions(false);
     }
   }, [open, initialSearch, loadOptions]);
+
+  const smartRec = useMemo(
+    () =>
+      recommendGptModelForBot(
+        { name: profileName, display_name: botLabel, description: profileDescription },
+        providers
+      ),
+    [botLabel, profileDescription, profileName, providers]
+  );
+
+  async function handleAutoAssignAllBots() {
+    if (autoAssigning || providers.length === 0) return;
+    setAutoAssigning(true);
+    setError(null);
+    setSmartNotice(null);
+    try {
+      const targets =
+        allProfiles.length > 0
+          ? allProfiles
+          : allProfileNames.map((n) => ({ name: n, display_name: n, bot_title: "", description: "" }));
+      const plan = buildAutoAssignPlan(targets, providers);
+      let updated = 0;
+      for (const item of plan) {
+        try {
+          await updateProfileModel(
+            item.profileName,
+            item.recommendation.provider,
+            item.recommendation.model
+          );
+          updated += 1;
+          if (item.profileName === profileName) {
+            setActiveProvider(item.recommendation.provider);
+            setActiveModel(item.recommendation.model);
+            onSwitched(item.recommendation.provider, item.recommendation.model);
+          }
+        } catch {
+          // continue with remaining profiles
+        }
+      }
+      setSmartNotice(`Smart-Modelle für ${updated} Bots automatisch nach Profil zugewiesen.`);
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Automatische Modell-Zuweisung fehlgeschlagen."
+      );
+    } finally {
+      setAutoAssigning(false);
+    }
+  }
 
   const hasAnthropicFallback = fallbacks.some((f) =>
     f.provider.toLowerCase().includes("anthropic")
@@ -260,6 +319,49 @@ export const ModelPickerSheet: React.FC<ModelPickerSheetProps> = ({
         <div className="notice err" style={{ marginBottom: 12 }}>
           <AlertCircle size={16} style={{ flexShrink: 0, marginTop: 2 }} />
           <span>{error}</span>
+        </div>
+      )}
+
+      {/* Smart GPT Model Auto-Routing Card */}
+      {smartRec && (
+        <div className="card" style={{ marginBottom: 14, borderColor: "rgba(96, 165, 250, 0.28)" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 6 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 7, fontWeight: 700, fontSize: "0.86rem" }}>
+              <Sparkles size={16} style={{ color: "#93c5fd" }} />
+              <span>Smart-Modell nach Profil</span>
+            </div>
+            <span className="pill">{smartRec.tierLabel}</span>
+          </div>
+          <div style={{ fontSize: "0.78rem", color: "var(--text-secondary)", lineHeight: 1.45, marginBottom: 10 }}>
+            Empfehlung für {botLabel}: <strong>{smartRec.model}</strong> ({smartRec.provider}). {smartRec.reason}
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button
+              type="button"
+              className={`btn sm ${activeModel === smartRec.model && activeProvider === smartRec.provider ? "" : "primary"}`}
+              disabled={saving || autoAssigning || loading || (activeModel === smartRec.model && activeProvider === smartRec.provider)}
+              onClick={() => void handleSelect(smartRec.provider, smartRec.model)}
+            >
+              {activeModel === smartRec.model && activeProvider === smartRec.provider
+                ? "Bereits aktiv"
+                : `Empfehlung nutzen (${smartRec.model})`}
+            </button>
+            {(allProfiles.length > 1 || allProfileNames.length > 1) && (
+              <button
+                type="button"
+                className="btn sm"
+                disabled={saving || autoAssigning || loading}
+                onClick={() => void handleAutoAssignAllBots()}
+              >
+                {autoAssigning ? "Optimiere…" : "Alle Bots automatisch zuweisen"}
+              </button>
+            )}
+          </div>
+          {smartNotice && (
+            <div style={{ fontSize: "0.76rem", color: "var(--status-ok)", marginTop: 8 }}>
+              {smartNotice}
+            </div>
+          )}
         </div>
       )}
 
