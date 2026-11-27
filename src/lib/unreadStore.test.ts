@@ -169,4 +169,56 @@ describe("unreadStore", () => {
       })
     ).toBe(false);
   });
+
+  it("suppresses unread indicators for bot-to-bot DM replies while keeping human-facing replies", () => {
+    const cursor = {
+      sessionId: "s1",
+      lastActiveMs: 1_700_000_000_000,
+      messageCount: 1,
+      readAtMs: 1_700_000_000_100,
+    };
+
+    // Nina replying to Mia's bot-to-bot DM must NOT trigger an unread badge for the human user
+    const botToBotMsgs: HermesChatMessage[] = [
+      {
+        id: 19,
+        role: "user",
+        content: "Message from 🤖 Mia (@mia-einkauf): Hallo Nina, kannst du nach Maßen suchen?",
+        timestamp: 1_700_000_010_000,
+      },
+      {
+        id: 34,
+        role: "assistant",
+        content: "Mia, ich habe leider keine belastbaren Einzelmaße gefunden.",
+        timestamp: 1_700_000_020_000,
+      },
+    ];
+    expect(
+      detectUnreadAssistantMessages(botToBotMsgs, cursor, 1_700_000_020_000, "s1")
+    ).toBeNull();
+
+    // Mia reporting Nina's result back to the human user after background process finishes SHOULD trigger unread
+    const reportBackMsgs: HermesChatMessage[] = [
+      {
+        id: 136,
+        role: "user",
+        content: "[IMPORTANT: Background process proc_123 completed normally (exit code 0).]",
+        timestamp: 1_700_000_025_000,
+      },
+      {
+        id: 141,
+        role: "assistant",
+        content: "Nina hat nachgeschaut: Leider hat auch sie keine Einzelmaße gefunden.",
+        timestamp: 1_700_000_030_000,
+      },
+    ];
+    const detected = detectUnreadAssistantMessages(
+      reportBackMsgs,
+      cursor,
+      1_700_000_030_000,
+      "s1"
+    );
+    expect(detected).not.toBeNull();
+    expect(detected?.preview).toContain("Nina hat nachgeschaut");
+  });
 });

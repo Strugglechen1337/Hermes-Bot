@@ -69,6 +69,15 @@ describe("pushWatcher", () => {
       isNonNotifiableAssistantMessage({
         id: 5,
         role: "assistant",
+        content: "Mia, ich habe keine Maße gefunden.",
+        session_source: "local",
+        prev_user_content: "Message from 🤖 Mia (@mia-einkauf): Hallo Nina, kannst du nach Maßen suchen?",
+      })
+    ).toBe(true);
+    expect(
+      isNonNotifiableAssistantMessage({
+        id: 6,
+        role: "assistant",
         content: "Dein Bild ist fertig!",
         session_source: "gui",
       })
