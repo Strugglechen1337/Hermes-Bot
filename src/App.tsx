@@ -90,6 +90,7 @@ import {
   fetchPushPreferences,
   fetchPushStatus,
   sendTestPushNotification,
+  startPushPresenceHeartbeat,
   updatePushPreferences,
   type PushPreferences,
   type PushStatusInfo,
@@ -628,6 +629,12 @@ export const App: React.FC = () => {
     document.addEventListener("visibilitychange", onVisibility);
     return () => document.removeEventListener("visibilitychange", onVisibility);
   }, [privateProfileNames, selectedBotName]);
+
+  // Keep server-side push watcher informed about foreground vs. backgrounded/locked PWA state
+  useEffect(() => {
+    if (!user) return;
+    return startPushPresenceHeartbeat();
+  }, [user]);
 
   const handleToggleBotPrivate = useCallback(
     async (profile: HermesProfile, makePrivate: boolean) => {

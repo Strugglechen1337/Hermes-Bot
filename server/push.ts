@@ -75,6 +75,45 @@ async function readJsonBody(req: IncomingMessage, maxBytes = 32 * 1024): Promise
 let cachedStore: PushStoreFile | null = null;
 let cachedStorePath: string | null = null;
 
+// Tracks foreground client presence so the server-side push watcher avoids
+// sending redundant OS banners while the user is actively looking at the app,
+// while reliably pushing as soon as the iPhone is locked or backgrounded.
+let clientPresenceVisible = false;
+let clientPresenceUpdatedAt = 0;
+const CLIENT_PRESENCE_TTL_MS = 45_000;
+const recentBotPushAt = new Map<string, number>();
+
+export function updateClientPushPresence(visible: boolean, nowMs = Date.now()): void {
+  clientPresenceVisible = visible;
+  clientPresenceUpdatedAt = nowMs;
+}
+
+export function isClientCurrentlyForeground(nowMs = Date.now()): boolean {
+  return clientPresenceVisible && nowMs - clientPresenceUpdatedAt < CLIENT_PRESENCE_TTL_MS;
+}
+
+export function recordBotPushSent(bot: string, nowMs = Date.now()): void {
+  const clean = bot.trim();
+  if (!clean) return;
+  recentBotPushAt.set(clean, nowMs);
+}
+
+export function wasBotPushedRecently(
+  bot: string,
+  windowMs = 20_000,
+  nowMs = Date.now()
+): boolean {
+  const clean = bot.trim();
+  if (!clean) return false;
+  const last = recentBotPushAt.get(clean);
+  return typeof last === "number" && nowMs - last < windowMs;
+}
+
+export function hasActivePushSubscriptions(): boolean {
+  const store = ensureStore();
+  return store.subscriptions.length > 0 && store.preferences.globalEnabled;
+}
+
 function normalizeBotList(raw: unknown): string[] {
   if (!Array.isArray(raw)) return [];
   return Array.from(
@@ -390,6 +429,9 @@ export async function handlePocketPushRoute(
     }
 
     const stats = await dispatchPushNotification({ title, body: text, bot, tag });
+    if (bot && stats.sent > 0) {
+      recordBotPushSent(bot);
+    }
     sendJson(res, 200, { ok: true, ...stats });
     return true;
   }
@@ -403,6 +445,19 @@ export async function handlePocketPushRoute(
   const authenticated = await verifyHermesSession(req, config);
   if (!authenticated) {
     sendJson(res, 401, { error: "unauthorized", detail: "Anmeldung bei Hermes erforderlich." });
+    return true;
+  }
+
+  if (pathname === "/api/pocket/push/presence" && method === "POST") {
+    let body: Record<string, unknown> = {};
+    try {
+      body = await readJsonBody(req);
+    } catch {
+      // ignore malformed beacon body
+    }
+    const visible = Boolean(body.visible);
+    updateClientPushPresence(visible);
+    sendJson(res, 200, { ok: true, visible });
     return true;
   }
 

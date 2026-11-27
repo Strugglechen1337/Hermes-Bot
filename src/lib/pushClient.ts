@@ -263,3 +263,63 @@ export function notifyIfBackgrounded(payload: {
     // Best-effort background notification
   });
 }
+
+function sendPresenceUpdate(visible: boolean, useBeacon = false): void {
+  const body = JSON.stringify({ visible });
+  if (useBeacon && typeof navigator !== "undefined" && typeof navigator.sendBeacon === "function") {
+    try {
+      const blob = new Blob([body], { type: "application/json" });
+      if (navigator.sendBeacon("/api/pocket/push/presence", blob)) {
+        return;
+      }
+    } catch {
+      // fall back to keepalive fetch
+    }
+  }
+  void fetch("/api/pocket/push/presence", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+    body,
+    keepalive: true,
+  }).catch(() => {
+    // ignore transient network errors
+  });
+}
+
+/**
+ * Reports whether the PWA is currently visible in the foreground so the
+ * server-side push watcher sends native Web Push banners whenever the iPhone
+ * is locked or backgrounded without spamming while the user is actively viewing.
+ */
+export function startPushPresenceHeartbeat(): () => void {
+  if (typeof document === "undefined" || typeof window === "undefined") {
+    return () => {};
+  }
+
+  const reportNow = (useBeacon = false) => {
+    const visible = document.visibilityState === "visible";
+    sendPresenceUpdate(visible, useBeacon || !visible);
+  };
+
+  reportNow(false);
+
+  const onVisibility = () => reportNow(document.visibilityState !== "visible");
+  const onPageHide = () => sendPresenceUpdate(false, true);
+
+  document.addEventListener("visibilitychange", onVisibility);
+  window.addEventListener("pagehide", onPageHide);
+
+  const timer = window.setInterval(() => {
+    if (document.visibilityState === "visible") {
+      sendPresenceUpdate(true, false);
+    }
+  }, 25_000);
+
+  return () => {
+    document.removeEventListener("visibilitychange", onVisibility);
+    window.removeEventListener("pagehide", onPageHide);
+    window.clearInterval(timer);
+    sendPresenceUpdate(false, true);
+  };
+}

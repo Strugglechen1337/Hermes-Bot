@@ -4,6 +4,7 @@ import path from "node:path";
 import { WebSocketServer } from "ws";
 import { resolveConfig, type ServerConfig } from "./config.js";
 import { handleHermesHttpProxy } from "./proxy.js";
+import { startHermesPushWatcher } from "./pushWatcher.js";
 import { attachHermesWsBridge } from "./wsBridge.js";
 
 const MIME_TYPES: Record<string, string> = {
@@ -100,6 +101,10 @@ const isEntrypoint =
 if (isEntrypoint) {
   const config = resolveConfig();
   const server = createHermesPocketServer(config);
+  const pushWatcher = startHermesPushWatcher();
+  server.on("close", () => {
+    pushWatcher.stop();
+  });
   server.listen(config.port, config.host, () => {
     // Log only bind host/port — never log secrets, tokens, or upstream credentials
     console.log(`[hermes-pocket] BFF listening on http://${config.host}:${config.port}`);
