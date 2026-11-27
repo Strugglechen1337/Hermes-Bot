@@ -35,7 +35,9 @@ import {
   savePocketSecret,
   startMcpServerAuth,
   testMcpServer,
+  testMessagingPlatform,
   toggleMcpServer,
+  updateMessagingPlatform,
 } from "../lib/hermesApi";
 import { hermesWs, type WsConnectionState } from "../lib/hermesWs";
 import { BotAvatar } from "./BotAvatar";
@@ -168,10 +170,12 @@ export const ConnectorsView: React.FC<ConnectorsViewProps> = ({
     label: string;
     envKey?: string;
     placeholder?: string;
-    isEmail?: boolean;
+    emailPreset?: "gmail" | "outlook";
     hint: string;
   } | null>(null);
   const [quickTokenVal, setQuickTokenVal] = useState("");
+  const [quickEmailAddr, setQuickEmailAddr] = useState("");
+  const [quickEmailPass, setQuickEmailPass] = useState("");
   const [savingQuickToken, setSavingQuickToken] = useState(false);
 
   async function handleConnectHosted(slug: string, reconnect = false) {
@@ -436,8 +440,8 @@ export const ConnectorsView: React.FC<ConnectorsViewProps> = ({
     {
       label: "Gmail",
       aliases: ["gmail", "google-mail", "google_workspace", "google"],
-      isEmail: true,
-      hint: "Auf selbstgehostetem Hermes kannst du Gmail direkt über den E-Mail-Tab (Google App-Passwort) oder über den Bot-Chat (Google OAuth / gog-Skill) verbinden.",
+      emailPreset: "gmail" as const,
+      hint: "Einfach Gmail-Adresse & 16-stelliges Google App-Passwort einfügen – IMAP/SMTP werden automatisch konfiguriert und getestet.",
     },
     {
       label: "Google Kalender",
@@ -452,8 +456,8 @@ export const ConnectorsView: React.FC<ConnectorsViewProps> = ({
     {
       label: "Outlook / M365",
       aliases: ["outlook", "microsoft", "office365"],
-      isEmail: true,
-      hint: "Verbinde Outlook direkt über den E-Mail-Tab (IMAP/SMTP) oder über einen MCP-Server.",
+      emailPreset: "outlook" as const,
+      hint: "Einfach Outlook-Adresse & App-Passwort einfügen – IMAP/SMTP werden automatisch konfiguriert.",
     },
     {
       label: "GitHub",
@@ -485,10 +489,22 @@ export const ConnectorsView: React.FC<ConnectorsViewProps> = ({
 
   async function handleQuickOAuthService(svc: (typeof TOP_OAUTH_SERVICES)[number]) {
     setHostedError(null);
+    setHassFeedback(null);
     setQuickSetupInfo(null);
     setQuickTokenVal("");
+    setQuickEmailPass("");
     setConnectingSlug(svc.label);
     try {
+      // Gmail & Outlook: open the instant App-Passwort form directly (fastest & most reliable on self-hosted Hermes)
+      if (svc.emailPreset) {
+        setQuickSetupInfo({
+          label: svc.label,
+          emailPreset: svc.emailPreset,
+          hint: svc.hint,
+        });
+        return;
+      }
+
       // 1. Prefer matching Hermes Hosted Connector (if available on this instance)
       const hostedMatch = mergedConnectors.find((c) => {
         const hay = `${c.slug} ${c.name}`.toLowerCase();
@@ -526,11 +542,55 @@ export const ConnectorsView: React.FC<ConnectorsViewProps> = ({
         label: svc.label,
         envKey: svc.envKey,
         placeholder: svc.placeholder,
-        isEmail: svc.isEmail,
         hint: svc.hint,
       });
     } finally {
       setConnectingSlug(null);
+    }
+  }
+
+  async function handleSaveQuickEmail(e: React.FormEvent) {
+    e.preventDefault();
+    if (!quickSetupInfo?.emailPreset) return;
+    const addr = quickEmailAddr.trim();
+    const pass = quickEmailPass.replace(/\s+/g, "").trim();
+    if (!addr || !pass) return;
+    setSavingQuickToken(true);
+    setHostedError(null);
+    setHassFeedback(null);
+    try {
+      const isGmail = quickSetupInfo.emailPreset === "gmail";
+      const envPayload: Record<string, string> = {
+        EMAIL_ADDRESS: addr,
+        EMAIL_PASSWORD: pass,
+        EMAIL_IMAP_HOST: isGmail ? "imap.gmail.com" : "outlook.office365.com",
+        EMAIL_IMAP_PORT: "993",
+        EMAIL_SMTP_HOST: isGmail ? "smtp.gmail.com" : "smtp.office365.com",
+        EMAIL_SMTP_PORT: "587",
+      };
+      await updateMessagingPlatform("email", { enabled: true, env: envPayload }, selectedProfile);
+      // Mirror address & app password into profile .env for scripts/skills as well
+      await savePocketSecret("EMAIL_ADDRESS", addr, selectedProfile).catch(() => null);
+      await savePocketSecret("EMAIL_PASSWORD", pass, selectedProfile).catch(() => null);
+      setQuickEmailPass("");
+
+      const testRes = await testMessagingPlatform("email", selectedProfile).catch(() => null);
+      const ok = testRes ? testRes.ok !== false && !testRes.error : true;
+      setHassFeedback({
+        ok,
+        text: ok
+          ? `${quickSetupInfo.label} (${addr}) erfolgreich verbunden & getestet für ${selectedProfile}!`
+          : `Gespeichert, aber Verbindungstest meldet: ${testRes?.error || testRes?.detail || "Bitte App-Passwort prüfen."}`,
+      });
+      if (ok) {
+        setQuickSetupInfo(null);
+      }
+    } catch (err) {
+      setHostedError(
+        err instanceof Error ? err.message : "E-Mail-Konfiguration konnte nicht gespeichert werden."
+      );
+    } finally {
+      setSavingQuickToken(false);
     }
   }
 
@@ -757,6 +817,59 @@ export const ConnectorsView: React.FC<ConnectorsViewProps> = ({
                         {quickSetupInfo.hint}
                       </p>
 
+                      {quickSetupInfo.emailPreset && (
+                        <form onSubmit={handleSaveQuickEmail} style={{ marginBottom: 10 }}>
+                          <div className="field">
+                            <label htmlFor="quick-email-addr">E-Mail-Adresse</label>
+                            <input
+                              id="quick-email-addr"
+                              type="email"
+                              className="input"
+                              autoComplete="email"
+                              value={quickEmailAddr}
+                              onChange={(e) => setQuickEmailAddr(e.target.value)}
+                              placeholder={
+                                quickSetupInfo.emailPreset === "gmail"
+                                  ? "deinname@gmail.com"
+                                  : "deinname@outlook.de"
+                              }
+                            />
+                          </div>
+                          <div className="field">
+                            <label htmlFor="quick-email-pass">
+                              App-Passwort{" "}
+                              {quickSetupInfo.emailPreset === "gmail" && (
+                                <a
+                                  href="https://myaccount.google.com/apppasswords"
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  style={{ marginLeft: 6, fontSize: "0.75rem" }}
+                                >
+                                  (bei Google erstellen ↗)
+                                </a>
+                              )}
+                            </label>
+                            <input
+                              id="quick-email-pass"
+                              type="password"
+                              className="input"
+                              autoComplete="off"
+                              value={quickEmailPass}
+                              onChange={(e) => setQuickEmailPass(e.target.value)}
+                              placeholder="xxxx xxxx xxxx xxxx"
+                            />
+                          </div>
+                          <button
+                            type="submit"
+                            className="btn primary sm full"
+                            disabled={savingQuickToken || !quickEmailAddr.trim() || !quickEmailPass.trim()}
+                          >
+                            <ShieldCheck size={14} />{" "}
+                            {savingQuickToken ? "Speichere & teste…" : `${quickSetupInfo.label} verbinden & testen`}
+                          </button>
+                        </form>
+                      )}
+
                       {quickSetupInfo.envKey && (
                         <form
                           onSubmit={async (e) => {
@@ -811,16 +924,16 @@ export const ConnectorsView: React.FC<ConnectorsViewProps> = ({
                       )}
 
                       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                        {quickSetupInfo.isEmail && (
+                        {quickSetupInfo.emailPreset && (
                           <button
                             type="button"
-                            className="btn sm primary"
+                            className="btn sm"
                             onClick={() => {
                               setQuickSetupInfo(null);
                               setSubTab("email");
                             }}
                           >
-                            <Mail size={13} /> Im E-Mail-Tab verbinden
+                            <Mail size={13} /> Alle E-Mail-Details
                           </button>
                         )}
                         <button
