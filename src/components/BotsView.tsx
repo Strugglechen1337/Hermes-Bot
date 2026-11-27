@@ -30,6 +30,7 @@ import {
   savePinnedBots,
 } from "../lib/botPinStore";
 import { getBotVisual } from "../lib/botTheme";
+import { loadAllBotDrafts } from "../lib/draftStore";
 import {
   formatBadgeCount,
   type BotUnreadInfo,
@@ -720,8 +721,61 @@ export const BotsView: React.FC<BotsViewProps> = ({
     );
   }
 
+  const [pullDistance, setPullDistance] = useState(0);
+  const [pullRefreshing, setPullRefreshing] = useState(false);
+  const pullStartYRef = useRef<number | null>(null);
+
+  const botDrafts = useMemo(() => {
+    void selectedBotName;
+    void profiles.length;
+    return loadAllBotDrafts();
+  }, [selectedBotName, profiles.length]);
+
   return (
-    <div>
+    <div
+      onTouchStart={(e) => {
+        if (e.touches.length !== 1) return;
+        const scrollParent = (e.currentTarget as HTMLElement).closest(".app-main");
+        const top = scrollParent ? scrollParent.scrollTop : window.scrollY;
+        if (top <= 2) {
+          pullStartYRef.current = e.touches[0].clientY;
+        } else {
+          pullStartYRef.current = null;
+        }
+      }}
+      onTouchMove={(e) => {
+        if (pullStartYRef.current === null || e.touches.length !== 1) return;
+        const dy = e.touches[0].clientY - pullStartYRef.current;
+        if (dy > 12) {
+          setPullDistance(Math.min(dy * 0.55, 84));
+        } else {
+          setPullDistance(0);
+        }
+      }}
+      onTouchEnd={() => {
+        const shouldRefresh = pullDistance >= 52;
+        pullStartYRef.current = null;
+        setPullDistance(0);
+        if (shouldRefresh && !pullRefreshing) {
+          setPullRefreshing(true);
+          Promise.resolve(onRefreshProfiles()).finally(() => {
+            window.setTimeout(() => setPullRefreshing(false), 350);
+          });
+        }
+      }}
+    >
+      {(pullDistance > 16 || pullRefreshing) && (
+        <div className="pull-refresh-pill" role="status">
+          <RefreshCw size={13} className={pullRefreshing ? "spin" : ""} />
+          <span>
+            {pullRefreshing
+              ? "Aktualisiere…"
+              : pullDistance >= 52
+                ? "Zum Aktualisieren loslassen"
+                : "Zum Aktualisieren ziehen"}
+          </span>
+        </div>
+      )}
       <div className="search-wrap">
         <Search size={15} className="search-icon" />
         <input
@@ -867,10 +921,17 @@ export const BotsView: React.FC<BotsViewProps> = ({
                         </div>
                         <div className="bot-card-subrow">
                           <span className={`bot-card-meta ${unread ? "unread" : ""}`}>
-                            {unread?.preview ||
+                            {botDrafts[profile.name] ? (
+                              <>
+                                <span className="bot-card-draft-label">Entwurf: </span>
+                                {botDrafts[profile.name]}
+                              </>
+                            ) : (
+                              unread?.preview ||
                               profile.description?.trim() ||
                               recent?.title ||
-                              "Bereit zum Chatten"}
+                              "Bereit zum Chatten"
+                            )}
                           </span>
                           {unread && (
                             <span

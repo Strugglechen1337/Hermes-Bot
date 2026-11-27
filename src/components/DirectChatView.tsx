@@ -53,6 +53,7 @@ import {
   pickPreferredBotSession,
 } from "../lib/botCollaboration";
 import { getBotVisual } from "../lib/botTheme";
+import { loadBotDraft, saveBotDraft } from "../lib/draftStore";
 import { formatBadgeCount } from "../lib/unreadStore";
 import {
   formatChatDividerTime,
@@ -191,7 +192,17 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
   const [loadingChat, setLoadingChat] = useState(true);
   const [chatError, setChatError] = useState<string | null>(null);
 
-  const [input, setInput] = useState("");
+  const [input, setInput] = useState(() => loadBotDraft(profile.name));
+  const swipeStartRef = useRef<{ x: number; y: number } | null>(null);
+
+  useEffect(() => {
+    setInput(loadBotDraft(profile.name));
+    setReplyTo(null);
+  }, [profile.name]);
+
+  useEffect(() => {
+    saveBotDraft(profile.name, input);
+  }, [profile.name, input]);
   const [attachments, setAttachments] = useState<QueuedAttachment[]>([]);
   const [uploadingAttachments, setUploadingAttachments] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
@@ -1678,7 +1689,29 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
     activeModelOverride?.provider || usage.provider || profile.provider || null;
 
   return (
-    <div className="chat-screen">
+    <div
+      className="chat-screen"
+      onTouchStart={(e) => {
+        if (hideBackButton || e.touches.length !== 1) return;
+        const t = e.touches[0];
+        if (t.clientX <= 28) {
+          swipeStartRef.current = { x: t.clientX, y: t.clientY };
+        } else {
+          swipeStartRef.current = null;
+        }
+      }}
+      onTouchEnd={(e) => {
+        const start = swipeStartRef.current;
+        swipeStartRef.current = null;
+        if (!start || hideBackButton || e.changedTouches.length !== 1) return;
+        const t = e.changedTouches[0];
+        const dx = t.clientX - start.x;
+        const dy = Math.abs(t.clientY - start.y);
+        if (dx > 72 && dx > dy * 1.6) {
+          onBack();
+        }
+      }}
+    >
       <header className="chat-floating-header">
         {!hideBackButton ? (
           <button

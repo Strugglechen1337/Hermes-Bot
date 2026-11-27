@@ -2,11 +2,16 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   AlertCircle,
   ArrowUp,
+  Check,
   ChevronLeft,
   ChevronRight,
+  Copy,
+  Mic,
   MoreHorizontal,
   Plus,
   RefreshCw,
+  Reply,
+  Share2,
   Square,
   Trash2,
   Users,
@@ -472,10 +477,84 @@ const GroupRoomView: React.FC<GroupRoomViewProps> = ({
   const [confirmDisband, setConfirmDisband] = useState(false);
   const [disbanding, setDisbanding] = useState(false);
   const [openPocketPage, setOpenPocketPage] = useState<DetectedPocketPage | null>(null);
+  const [replyTo, setReplyTo] = useState<{ author: string; excerpt: string } | null>(null);
+  const [copiedEventId, setCopiedEventId] = useState<string | null>(null);
+  const [dictating, setDictating] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const cursorRef = useRef<number>(0);
   const scrollTimersRef = useRef<number[]>([]);
+  const swipeStartRef = useRef<{ x: number; y: number } | null>(null);
+  const speechRecRef = useRef<{ stop: () => void } | null>(null);
+
+  const handleToggleDictation = useCallback(() => {
+    if (dictating) {
+      try {
+        speechRecRef.current?.stop();
+      } catch {
+        // ignore
+      }
+      speechRecRef.current = null;
+      setDictating(false);
+      return;
+    }
+    const win = window as unknown as {
+      SpeechRecognition?: new () => {
+        lang: string;
+        interimResults: boolean;
+        continuous: boolean;
+        onresult: ((ev: { results: ArrayLike<{ 0: { transcript: string } }> }) => void) | null;
+        onerror: (() => void) | null;
+        onend: (() => void) | null;
+        start: () => void;
+        stop: () => void;
+      };
+      webkitSpeechRecognition?: new () => {
+        lang: string;
+        interimResults: boolean;
+        continuous: boolean;
+        onresult: ((ev: { results: ArrayLike<{ 0: { transcript: string } }> }) => void) | null;
+        onerror: (() => void) | null;
+        onend: (() => void) | null;
+        start: () => void;
+        stop: () => void;
+      };
+    };
+    const SpeechRec = win.SpeechRecognition || win.webkitSpeechRecognition;
+    if (!SpeechRec) {
+      setError("Spracheingabe wird in diesem Browser leider nicht unterstützt.");
+      return;
+    }
+    try {
+      const rec = new SpeechRec();
+      rec.lang = "de-DE";
+      rec.interimResults = true;
+      rec.continuous = false;
+      const base = input.trim();
+      rec.onresult = (ev) => {
+        let transcript = "";
+        for (let k = 0; k < ev.results.length; k++) {
+          transcript += ev.results[k][0]?.transcript || "";
+        }
+        setInput(base ? `${base} ${transcript.trim()}` : transcript.trim());
+      };
+      rec.onerror = () => {
+        speechRecRef.current = null;
+        setDictating(false);
+      };
+      rec.onend = () => {
+        speechRecRef.current = null;
+        setDictating(false);
+      };
+      speechRecRef.current = rec;
+      setDictating(true);
+      rec.start();
+    } catch {
+      speechRecRef.current = null;
+      setDictating(false);
+    }
+  }, [dictating, input]);
 
   const scrollToBottom = useCallback(() => {
     requestAnimationFrame(() => {
@@ -607,11 +686,13 @@ const GroupRoomView: React.FC<GroupRoomViewProps> = ({
   }, [anyBotBusy, syncRoom, wsState]);
 
   async function handleSend() {
-    const text = input.trim();
-    if (!text || wsState !== "connected") return;
+    const rawText = input.trim();
+    if (!rawText || wsState !== "connected") return;
+    const text = replyTo ? `> ${replyTo.author}: ${replyTo.excerpt}\n\n${rawText}` : rawText;
     setSending(true);
     setError(null);
     setInput("");
+    setReplyTo(null);
     try {
       await hermesWs.call("groups.send", {
         room_id: room.room_id,
@@ -623,7 +704,7 @@ const GroupRoomView: React.FC<GroupRoomViewProps> = ({
       });
       await syncRoom(true);
     } catch (err) {
-      setInput(text);
+      setInput(rawText);
       setError(err instanceof Error ? err.message : "Gruppennachricht fehlgeschlagen.");
     } finally {
       setSending(false);
@@ -691,7 +772,25 @@ const GroupRoomView: React.FC<GroupRoomViewProps> = ({
   );
 
   return (
-    <div className="chat-screen">
+    <div
+      className="chat-screen"
+      onTouchStart={(e) => {
+        if (e.touches.length !== 1) return;
+        const t = e.touches[0];
+        swipeStartRef.current = t.clientX <= 28 ? { x: t.clientX, y: t.clientY } : null;
+      }}
+      onTouchEnd={(e) => {
+        const start = swipeStartRef.current;
+        swipeStartRef.current = null;
+        if (!start || e.changedTouches.length !== 1) return;
+        const t = e.changedTouches[0];
+        const dx = t.clientX - start.x;
+        const dy = Math.abs(t.clientY - start.y);
+        if (dx > 72 && dx > dy * 1.6) {
+          onBack();
+        }
+      }}
+    >
       <header className="chat-floating-header">
         <button
           type="button"
@@ -788,6 +887,62 @@ const GroupRoomView: React.FC<GroupRoomViewProps> = ({
                       />
                     ))}
                   </div>
+                  {cleanText && (
+                    <div className="msg-actions-row">
+                      <button
+                        type="button"
+                        className="msg-action-btn"
+                        aria-label="Auf Nachricht antworten"
+                        onClick={() => {
+                          const flat = cleanText.replace(/\s+/g, " ").trim();
+                          setReplyTo({
+                            author: ev.actor.display_name || vis.label,
+                            excerpt: flat.length > 140 ? `${flat.slice(0, 140)}…` : flat,
+                          });
+                          requestAnimationFrame(() => textareaRef.current?.focus());
+                        }}
+                      >
+                        <Reply size={12} /> Antworten
+                      </button>
+                      <button
+                        type="button"
+                        className="msg-action-btn"
+                        aria-label="Nachricht kopieren"
+                        onClick={() => {
+                          void navigator.clipboard?.writeText(cleanText).then(() => {
+                            setCopiedEventId(ev.event_id);
+                            window.setTimeout(() => {
+                              setCopiedEventId((cur) => (cur === ev.event_id ? null : cur));
+                            }, 1600);
+                          });
+                        }}
+                      >
+                        {copiedEventId === ev.event_id ? (
+                          <>
+                            <Check size={12} /> Kopiert
+                          </>
+                        ) : (
+                          <>
+                            <Copy size={12} /> Kopieren
+                          </>
+                        )}
+                      </button>
+                      {typeof navigator !== "undefined" && typeof navigator.share === "function" && (
+                        <button
+                          type="button"
+                          className="msg-action-btn"
+                          aria-label="Nachricht teilen"
+                          onClick={() => {
+                            void navigator
+                              .share({ title: ev.actor.display_name || vis.label, text: cleanText })
+                              .catch(() => undefined);
+                          }}
+                        >
+                          <Share2 size={12} /> Teilen
+                        </button>
+                      )}
+                    </div>
+                  )}
                   <div className="msg-time">{formatShortTime(ev.created_at)}</div>
                 </div>
               );
@@ -820,8 +975,26 @@ const GroupRoomView: React.FC<GroupRoomViewProps> = ({
       </div>
 
       <div className="composer-wrap">
+        {replyTo && (
+          <div className="reply-preview-bar" role="status">
+            <Reply size={14} style={{ color: "var(--accent)", flexShrink: 0 }} />
+            <div className="reply-preview-text">
+              <span className="reply-preview-author">{replyTo.author}</span>
+              <span className="reply-preview-excerpt">{replyTo.excerpt}</span>
+            </div>
+            <button
+              type="button"
+              className="icon-btn ghost"
+              aria-label="Zitat entfernen"
+              onClick={() => setReplyTo(null)}
+            >
+              <X size={15} />
+            </button>
+          </div>
+        )}
         <div className="composer-box">
           <textarea
+            ref={textareaRef}
             className="composer-input"
             rows={1}
             enterKeyHint="send"
@@ -834,8 +1007,18 @@ const GroupRoomView: React.FC<GroupRoomViewProps> = ({
                 if (!sending) void handleSend();
               }
             }}
-            placeholder={`An ${room.name} schreiben…`}
+            placeholder={dictating ? "Höre zu… sprich jetzt" : `An ${room.name} schreiben…`}
           />
+          {!anyBotBusy && (
+            <button
+              type="button"
+              className={`composer-mic-btn${dictating ? " recording" : ""}`}
+              aria-label={dictating ? "Spracheingabe stoppen" : "Spracheingabe starten"}
+              onClick={handleToggleDictation}
+            >
+              <Mic size={17} />
+            </button>
+          )}
           {anyBotBusy ? (
             <button
               type="button"
