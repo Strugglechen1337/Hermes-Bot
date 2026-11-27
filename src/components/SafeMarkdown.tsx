@@ -633,6 +633,7 @@ export const SafeMarkdown: React.FC<SafeMarkdownProps> = ({ text }) => {
 
     const lines = segment.split(/\r?\n/);
     let listItems: string[] = [];
+    let orderedItems: string[] = [];
     let paraLines: string[] = [];
 
     const flushPara = (key: string) => {
@@ -664,21 +665,55 @@ export const SafeMarkdown: React.FC<SafeMarkdownProps> = ({ text }) => {
       );
     };
 
+    const flushOrderedList = (key: string) => {
+      if (orderedItems.length === 0) return;
+      const items = [...orderedItems];
+      orderedItems = [];
+      blocks.push(
+        <ol key={key}>
+          {items.map((item, i) => (
+            <li key={i}>{renderInline(item, `${key}-oli-${i}`)}</li>
+          ))}
+        </ol>
+      );
+    };
+
     lines.forEach((line, lineIdx) => {
+      const headingMatch = line.match(/^\s*(#{1,4})\s+(.+)$/);
       const bulletMatch = line.match(/^\s*[-*•]\s+(.*)$/);
-      if (bulletMatch) {
+      const orderedMatch = line.match(/^\s*\d+[.)]\s+(.*)$/);
+      if (headingMatch) {
+        flushList(`ul-${segIdx}-${lineIdx}`);
+        flushOrderedList(`ol-${segIdx}-${lineIdx}`);
+        flushPara(`p-${segIdx}-${lineIdx}`);
+        const level = headingMatch[1].length;
+        const HeadingTag = level <= 2 ? "h3" : "h4";
+        blocks.push(
+          <HeadingTag key={`h-${segIdx}-${lineIdx}`} className="md-heading">
+            {renderInline(headingMatch[2].trim(), `h-${segIdx}-${lineIdx}`)}
+          </HeadingTag>
+        );
+      } else if (bulletMatch) {
+        flushOrderedList(`ol-${segIdx}-${lineIdx}`);
         flushPara(`p-${segIdx}-${lineIdx}`);
         listItems.push(bulletMatch[1]);
+      } else if (orderedMatch) {
+        flushList(`ul-${segIdx}-${lineIdx}`);
+        flushPara(`p-${segIdx}-${lineIdx}`);
+        orderedItems.push(orderedMatch[1]);
       } else if (line.trim() === "") {
         flushList(`ul-${segIdx}-${lineIdx}`);
+        flushOrderedList(`ol-${segIdx}-${lineIdx}`);
         flushPara(`p-${segIdx}-${lineIdx}`);
       } else {
         flushList(`ul-${segIdx}-${lineIdx}`);
+        flushOrderedList(`ol-${segIdx}-${lineIdx}`);
         paraLines.push(line);
       }
     });
 
     flushList(`ul-${segIdx}-end`);
+    flushOrderedList(`ol-${segIdx}-end`);
     flushPara(`p-${segIdx}-end`);
   });
 

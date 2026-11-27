@@ -200,19 +200,25 @@ export function hasSessionNewActivity(
  * for bot list rows and floating notifications.
  */
 export function formatUnreadPreview(rawText: string, maxLen = 110): string {
+  const hasMedia = /(?:^|\s)MEDIA:\s*\/[^\s\r\n]+/i.test(rawText || "");
   const cleaned = stripSecretRequestTag(rawText || "")
+    .replace(/`?MEDIA:\s*\/[^\s`<>()[\]"']+`?/gi, " ")
+    .replace(/\[(?:CHECKLIST|REACT):[^\]]*\]/gi, " ")
     .replace(/```[\s\S]*?```/g, "[Code]")
     .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
     .replace(/[*_~`>#]+/g, "")
     .replace(/\s+/g, " ")
     .trim();
-  if (!cleaned) return "Neue Nachricht";
+  if (!cleaned) return hasMedia ? "Neues Bild gesendet" : "Neue Nachricht";
   if (cleaned.length <= maxLen) return cleaned;
   return `${cleaned.slice(0, maxLen - 1).trimEnd()}…`;
 }
 
 export function isSilentBotAck(text: string | null | undefined): boolean {
-  return /^(?:\[SILENT\]|NO_REPLY)$/i.test((text || "").trim());
+  const trimmed = (text || "").trim();
+  if (/^(?:\[SILENT\]|NO_REPLY)$/i.test(trimmed)) return true;
+  if (/^(\[REACT:\s*[^\]]+\]\s*)+$/i.test(trimmed)) return true;
+  return false;
 }
 
 /**

@@ -115,6 +115,7 @@ describe("unreadStore", () => {
         "**Ergebnis:** Schau auf [Otto](https://otto.de) vorbei [DEAL_CARD: Otto | Test | 10 € | | https://otto.de]"
       )
     ).toBe("Ergebnis: Schau auf Otto vorbei");
+    expect(formatUnreadPreview("MEDIA:/home/user/.hermes/pic.png")).toBe("Neues Bild gesendet");
     expect(formatBadgeCount(0)).toBe("");
     expect(formatBadgeCount(3)).toBe("3");
     expect(formatBadgeCount(142)).toBe("99+");

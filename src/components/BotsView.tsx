@@ -591,6 +591,7 @@ export const BotsView: React.FC<BotsViewProps> = ({
     return (
       <>
         <DirectChatView
+          key={selectedProfile.name}
           profile={selectedProfile}
           allProfiles={publicProfiles}
           isPrivateBot={isPrivateSelected}
