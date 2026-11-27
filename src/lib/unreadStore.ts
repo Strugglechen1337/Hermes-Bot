@@ -200,9 +200,12 @@ export function hasSessionNewActivity(
  * for bot list rows and floating notifications.
  */
 export function formatUnreadPreview(rawText: string, maxLen = 110): string {
-  const hasMedia = /(?:^|\s)MEDIA:\s*\/[^\s\r\n]+/i.test(rawText || "");
+  const hasMedia =
+    /(?:^|\s)MEDIA:\s*\/[^\s\r\n]+/i.test(rawText || "") ||
+    /\[(?:Image|File|Document|Audio|Video)\s+attached\s+at:\s*\/[^\]]+\]/i.test(rawText || "");
   const cleaned = stripSecretRequestTag(rawText || "")
     .replace(/`?MEDIA:\s*\/[^\s`<>()[\]"']+`?/gi, " ")
+    .replace(/\[(?:Image|File|Document|Audio|Video)\s+attached\s+at:\s*\/[^\]]+\](?:\s*\[(?:screenshot|image|photo|bild)\])?/gi, " ")
     .replace(/\[(?:CHECKLIST|REACT):[^\]]*\]/gi, " ")
     .replace(/```[\s\S]*?```/g, "[Code]")
     .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")

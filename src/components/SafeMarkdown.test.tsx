@@ -129,4 +129,21 @@ describe("SafeMarkdown", () => {
     expect(screen.getByText("238,89 €").tagName).toBe("TD");
     expect(screen.getByRole("link", { name: "Alza" })).toHaveAttribute("href", "https://www.alza.de/p1");
   });
+
+  it("renders Hermes [Image attached at: /path] user uploads inline as real images", () => {
+    const text =
+      "Bitte schau dir dieses Bild an.\n\n" +
+      "[Image attached at: /home/user/.hermes/profiles/mika/cache/documents/native-inputs/abc123/upload__gbjdk4h.jpeg]\n" +
+      "[screenshot]";
+
+    render(<SafeMarkdown text={text} />);
+    expect(screen.getByText(/Bitte schau dir dieses Bild an/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Image attached at/i)).toBeNull();
+    expect(screen.queryByText(/\[screenshot\]/i)).toBeNull();
+    const img = screen.getByRole("img", { name: "upload__gbjdk4h.jpeg" });
+    expect(img).toHaveAttribute(
+      "src",
+      "/api/pocket/media?path=%2Fhome%2Fuser%2F.hermes%2Fprofiles%2Fmika%2Fcache%2Fdocuments%2Fnative-inputs%2Fabc123%2Fupload__gbjdk4h.jpeg"
+    );
+  });
 });

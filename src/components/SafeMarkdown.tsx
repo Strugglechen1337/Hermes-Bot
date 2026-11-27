@@ -94,6 +94,15 @@ export function extractLocalMediaAttachments(text: string): {
       }
     );
 
+    // 3. Hermes user-uploaded attachment tags (`[Image attached at: /abs/path]`)
+    out = out.replace(
+      /\[(?:Image|File|Document|Audio|Video)\s+attached\s+at:\s*(\/[^\]]+)\](?:\s*\[(?:screenshot|image|photo|bild)\])?/gi,
+      (_m, filePath: string) => {
+        pushMedia(filePath);
+        return "";
+      }
+    );
+
     out = out
       .replace(/^\s*[-*•]\s*$/gm, "")
       .replace(/\n{3,}/g, "\n\n");
