@@ -4,9 +4,12 @@ import os from "node:os";
 import path from "node:path";
 import type { ServerConfig } from "./config.js";
 import { appendAutonomousGuidance } from "../shared/botAutonomy.js";
+import { handlePocketChecklistsRoute } from "./checklists.js";
 import { handlePocketMediaRoute } from "./media.js";
 import { handlePocketPagesRoute } from "./pages.js";
 import { handlePocketPreferencesRoute } from "./preferences.js";
+import { handlePocketShortcutRoute } from "./shortcuts.js";
+import { handlePocketUpdateRoute } from "./updater.js";
 import {
   handlePocketPushRoute,
   isBotPrivateOnServer,
@@ -737,6 +740,22 @@ export async function handleHermesHttpProxy(
 
   if (pathname === "/api/pocket/preferences") {
     return handlePocketPreferencesRoute(req, res, config, pathname);
+  }
+
+  if (pathname.startsWith("/api/pocket/checklists/")) {
+    return handlePocketChecklistsRoute(req, res, config, pathname);
+  }
+
+  if (
+    pathname === "/api/pocket/shortcut" ||
+    pathname === "/api/pocket/shortcut/config" ||
+    pathname === "/api/pocket/shortcut/rotate"
+  ) {
+    return handlePocketShortcutRoute(req, res, config, pathname);
+  }
+
+  if (pathname === "/api/pocket/update-check") {
+    return handlePocketUpdateRoute(req, res, config, parsedUrl);
   }
 
   const method = (req.method || "GET").toUpperCase();

@@ -640,9 +640,15 @@ export async function installMcpCatalogEntry(
   });
 }
 
+export interface QuickPromptItem {
+  label: string;
+  prompt: string;
+}
+
 export interface ServerUiPreferences {
   hiddenProfiles: string[];
   vaultPinHash: string | null;
+  quickPrompts: Record<string, QuickPromptItem[]>;
   updatedAt: number;
 }
 
@@ -651,12 +657,14 @@ export async function fetchServerUiPreferences(): Promise<ServerUiPreferences> {
   return {
     hiddenProfiles: Array.isArray(data.hiddenProfiles) ? data.hiddenProfiles : [],
     vaultPinHash: typeof data.vaultPinHash === "string" ? data.vaultPinHash : null,
+    quickPrompts:
+      data.quickPrompts && typeof data.quickPrompts === "object" ? data.quickPrompts : {},
     updatedAt: typeof data.updatedAt === "number" ? data.updatedAt : 0,
   };
 }
 
 export async function updateServerUiPreferences(
-  patch: Partial<Pick<ServerUiPreferences, "hiddenProfiles" | "vaultPinHash">>
+  patch: Partial<Pick<ServerUiPreferences, "hiddenProfiles" | "vaultPinHash" | "quickPrompts">>
 ): Promise<ServerUiPreferences> {
   const data = await requestJson<Partial<ServerUiPreferences>>("/api/pocket/preferences", {
     method: "PUT",
@@ -665,8 +673,84 @@ export async function updateServerUiPreferences(
   return {
     hiddenProfiles: Array.isArray(data.hiddenProfiles) ? data.hiddenProfiles : [],
     vaultPinHash: typeof data.vaultPinHash === "string" ? data.vaultPinHash : null,
+    quickPrompts:
+      data.quickPrompts && typeof data.quickPrompts === "object" ? data.quickPrompts : {},
     updatedAt: typeof data.updatedAt === "number" ? data.updatedAt : 0,
   };
+}
+
+export interface ChecklistItemDto {
+  text: string;
+  checked: boolean;
+}
+
+export interface StoredChecklistDto {
+  id: string;
+  title: string;
+  items: ChecklistItemDto[];
+  updatedAt: number;
+}
+
+export async function fetchChecklist(id: string): Promise<StoredChecklistDto | null> {
+  try {
+    const data = await requestJson<{ checklist?: StoredChecklistDto }>(
+      `/api/pocket/checklists/${encodeURIComponent(id)}`
+    );
+    return data.checklist || null;
+  } catch {
+    return null;
+  }
+}
+
+export async function saveChecklist(
+  id: string,
+  title: string,
+  items: ChecklistItemDto[]
+): Promise<StoredChecklistDto> {
+  const data = await requestJson<{ checklist: StoredChecklistDto }>(
+    `/api/pocket/checklists/${encodeURIComponent(id)}`,
+    {
+      method: "PUT",
+      body: JSON.stringify({ title, items }),
+    }
+  );
+  return data.checklist;
+}
+
+export async function fetchShortcutConfig(): Promise<{ token: string; endpoint: string }> {
+  const data = await requestJson<{ token: string; endpoint: string }>("/api/pocket/shortcut/config");
+  return { token: data.token, endpoint: data.endpoint };
+}
+
+export async function rotateShortcutTokenApi(): Promise<{ token: string }> {
+  const data = await requestJson<{ token: string }>("/api/pocket/shortcut/rotate", {
+    method: "POST",
+  });
+  return { token: data.token };
+}
+
+export interface AppUpdateStatus {
+  currentVersion: string;
+  latestVersion: string | null;
+  updateAvailable: boolean;
+  releaseUrl: string;
+  releaseNotes: string;
+  updateCommand: string;
+}
+
+export async function fetchAppUpdateStatus(force = false): Promise<AppUpdateStatus> {
+  return requestJson<AppUpdateStatus>(`/api/pocket/update-check${force ? "?force=1" : ""}`);
+}
+
+export async function savePocketSecret(
+  key: string,
+  value: string,
+  profile?: string
+): Promise<{ ok: boolean }> {
+  return requestJson<{ ok: boolean }>("/api/pocket/secret", {
+    method: "PUT",
+    body: JSON.stringify({ key, value, ...(profile ? { profile } : {}) }),
+  });
 }
 
 export interface ProfileMediaGalleryItem {

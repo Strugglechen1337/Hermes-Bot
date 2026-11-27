@@ -299,15 +299,73 @@ export function detectBotSecretRequest(text: string): DetectedSecretRequest | nu
   return form?.fields[0] ?? null;
 }
 
+export interface DetectedChecklist {
+  id: string;
+  title: string;
+  items: Array<{ text: string; checked: boolean }>;
+}
+
+const CHECKLIST_TAG_GLOBAL_RE = /\[CHECKLIST:\s*([^\]]+)\]/gi;
+
+function slugifyChecklistId(title: string): string {
+  const base = title
+    .toLowerCase()
+    .replace(/ä/g, "ae")
+    .replace(/ö/g, "oe")
+    .replace(/ü/g, "ue")
+    .replace(/ß/g, "ss")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+  return base.length >= 2 ? `cl-${base}` : "cl-liste";
+}
+
+/**
+ * Extracts interactive checklists emitted as:
+ * `[CHECKLIST: Einkaufsliste | Milch | [x] Kaffee | Brot]`
+ */
+export function extractChecklists(text: string): DetectedChecklist[] {
+  if (!text) return [];
+  const out: DetectedChecklist[] = [];
+  const seen = new Set<string>();
+  for (const m of text.matchAll(CHECKLIST_TAG_GLOBAL_RE)) {
+    const parts = m[1]
+      .split("|")
+      .map((p) => p.trim())
+      .filter(Boolean);
+    if (parts.length < 2) continue;
+    const title = parts[0];
+    const id = slugifyChecklistId(title);
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const items = parts.slice(1).map((raw) => {
+      const checkedMatch = raw.match(/^\[(x|X|✓)\]\s*(.+)$/);
+      if (checkedMatch) {
+        return { text: checkedMatch[2].trim(), checked: true };
+      }
+      const uncheckedMatch = raw.match(/^\[\s*\]\s*(.+)$/);
+      if (uncheckedMatch) {
+        return { text: uncheckedMatch[1].trim(), checked: false };
+      }
+      return { text: raw, checked: false };
+    });
+    if (items.length > 0) {
+      out.push({ id, title, items });
+    }
+  }
+  return out;
+}
+
 /**
  * Strips any internal `[SECRET_FORM: ...]`, `[SECRET_REQUEST: ...]`, `[VAULT_REQUEST: ...]`,
- * and `[DEAL_CARD: ...]` directives from rendered markdown prose.
+ * `[DEAL_CARD: ...]`, `[POCKET_PAGE: ...]`, and `[CHECKLIST: ...]` directives from rendered markdown prose.
  */
 export function stripSecretRequestTag(text: string): string {
   return text
     .replace(EXPLICIT_FORM_TITLE_GLOBAL_RE, "")
     .replace(EXPLICIT_TAG_GLOBAL_RE, "")
     .replace(EXPLICIT_VAULT_GLOBAL_RE, "")
+    .replace(CHECKLIST_TAG_GLOBAL_RE, "")
     .replace(EXPLICIT_DEAL_GLOBAL_RE, "")
     .replace(POCKET_PAGE_GLOBAL_RE, "")
     .replace(/\n{3,}/g, "\n\n")

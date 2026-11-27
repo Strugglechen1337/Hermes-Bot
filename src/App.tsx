@@ -4,14 +4,19 @@ import {
   BellOff,
   Bot,
   CalendarClock,
+  Check,
+  Copy,
+  Cpu,
   CreditCard,
   FileText,
   Lock,
   LogOut,
   Plug,
   Plus,
+  RefreshCw,
   ShieldCheck,
   Smartphone,
+  Sparkles,
   User,
   Users,
   WifiOff,
@@ -30,6 +35,9 @@ import { BotsView } from "./components/BotsView";
 import { LoginView } from "./components/LoginView";
 import { Sheet } from "./components/Sheet";
 
+const AiProvidersSheet = lazy(() =>
+  import("./components/AiProvidersSheet").then((m) => ({ default: m.AiProvidersSheet }))
+);
 const ConnectorsView = lazy(() =>
   import("./components/ConnectorsView").then((m) => ({ default: m.ConnectorsView }))
 );
@@ -53,15 +61,19 @@ import { fetchBotAvatar } from "./lib/avatarStore";
 import { getBotVisual } from "./lib/botTheme";
 import { toTimestampMs } from "./lib/format";
 import {
+  fetchAppUpdateStatus,
   fetchCurrentUser,
   fetchProfiles,
   fetchServerUiPreferences,
   fetchSessionMessages,
   fetchSessions,
+  fetchShortcutConfig,
   fetchStatus,
   logout,
+  rotateShortcutTokenApi,
   updateProfilePrivacy,
   updateServerUiPreferences,
+  type AppUpdateStatus,
 } from "./lib/hermesApi";
 import { hermesWs, type WsConnectionState } from "./lib/hermesWs";
 import {
@@ -151,6 +163,11 @@ export const App: React.FC = () => {
   const [showAccountSheet, setShowAccountSheet] = useState(false);
   const [showCredentialVault, setShowCredentialVault] = useState(false);
   const [showPagesArchive, setShowPagesArchive] = useState(false);
+  const [showAiProviders, setShowAiProviders] = useState(false);
+  const [shortcutConfig, setShortcutConfig] = useState<{ token: string; endpoint: string } | null>(null);
+  const [shortcutCopied, setShortcutCopied] = useState(false);
+  const [updateStatus, setUpdateStatus] = useState<AppUpdateStatus | null>(null);
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [draftPrefill, setDraftPrefill] = useState<{
     botName: string;
     text: string;
@@ -393,6 +410,10 @@ export const App: React.FC = () => {
     if (botParam) {
       setTab("bots");
       setSelectedBotName(botParam);
+      const promptParam = params.get("prompt");
+      if (promptParam && promptParam.trim()) {
+        setDraftPrefill({ botName: botParam, text: promptParam.trim(), id: Date.now() });
+      }
       window.history.replaceState({}, "", window.location.pathname);
     }
     const onSwMessage = (ev: MessageEvent) => {
@@ -1596,6 +1617,19 @@ export const App: React.FC = () => {
         <button
           type="button"
           className="btn full"
+          style={{ marginBottom: 10, borderColor: "rgba(245, 158, 11, 0.36)" }}
+          onClick={() => {
+            setShowAccountSheet(false);
+            setShowAiProviders(true);
+          }}
+        >
+          <Cpu size={15} style={{ color: "var(--accent)" }} />
+          KI-Anbieter &amp; API-Keys (OpenAI, Claude, Gemini, Grok…)
+        </button>
+
+        <button
+          type="button"
+          className="btn full"
           style={{ marginBottom: 10, borderColor: "rgba(165, 180, 252, 0.34)" }}
           onClick={() => {
             setShowAccountSheet(false);
@@ -1618,6 +1652,112 @@ export const App: React.FC = () => {
           <Lock size={15} style={{ color: "var(--status-ok)" }} />
           Privater Bereich
         </button>
+
+        <div className="card" style={{ marginBottom: 10 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 6 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 7, fontWeight: 700, fontSize: "0.88rem" }}>
+              <Sparkles size={15} style={{ color: "var(--accent)" }} />
+              <span>iOS Kurzbefehle / Siri</span>
+            </div>
+            <button
+              type="button"
+              className="btn sm"
+              onClick={() => {
+                if (shortcutConfig) {
+                  setShortcutConfig(null);
+                } else {
+                  void fetchShortcutConfig().then(setShortcutConfig).catch(() => null);
+                }
+              }}
+            >
+              {shortcutConfig ? "Verbergen" : "Einrichten"}
+            </button>
+          </div>
+          <p style={{ margin: 0, fontSize: "0.76rem", color: "var(--text-secondary)", lineHeight: 1.4 }}>
+            Frage deine Bots per „Hey Siri“, Action-Button oder CarPlay (private Bots sind gesperrt).
+          </p>
+          {shortcutConfig && (
+            <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 6, fontSize: "0.76rem" }}>
+              <div style={{ color: "var(--text-muted)" }}>
+                POST-URL: <code>{`${window.location.origin}${shortcutConfig.endpoint}`}</code>
+              </div>
+              <div style={{ color: "var(--text-muted)" }}>
+                Body (JSON): <code>{`{"bot":"nova-chief","text":"Kurzes Tages-Update"}`}</code>
+              </div>
+              <div style={{ display: "flex", gap: 6, marginTop: 2 }}>
+                <button
+                  type="button"
+                  className="btn sm primary"
+                  onClick={() => {
+                    void navigator.clipboard?.writeText(`Bearer ${shortcutConfig.token}`).then(() => {
+                      setShortcutCopied(true);
+                      window.setTimeout(() => setShortcutCopied(false), 1800);
+                    });
+                  }}
+                >
+                  {shortcutCopied ? <Check size={13} /> : <Copy size={13} />}
+                  {shortcutCopied ? "Header kopiert" : "Auth-Header kopieren"}
+                </button>
+                <button
+                  type="button"
+                  className="btn sm"
+                  onClick={() => {
+                    void rotateShortcutTokenApi()
+                      .then((r) => setShortcutConfig((prev) => (prev ? { ...prev, token: r.token } : null)))
+                      .catch(() => null);
+                  }}
+                >
+                  <RefreshCw size={13} /> Neu erzeugen
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="card" style={{ marginBottom: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+            <div>
+              <div style={{ fontWeight: 700, fontSize: "0.86rem" }}>
+                Hermes Bots {updateStatus ? `v${updateStatus.currentVersion}` : "v2.0.0"}
+              </div>
+              <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 2 }}>
+                {updateStatus
+                  ? updateStatus.updateAvailable
+                    ? `Update verfügbar: v${updateStatus.latestVersion} (bash scripts/update.sh)`
+                    : updateStatus.latestVersion
+                      ? "Auf dem neuesten Stand"
+                      : "Lokale Version aktiv"
+                  : "Auto-Updater & Versionsprüfung"}
+              </div>
+            </div>
+            <button
+              type="button"
+              className="btn sm"
+              disabled={checkingUpdate}
+              onClick={() => {
+                setCheckingUpdate(true);
+                void fetchAppUpdateStatus(true)
+                  .then(setUpdateStatus)
+                  .finally(() => setCheckingUpdate(false));
+              }}
+            >
+              <RefreshCw size={13} /> {checkingUpdate ? "Prüfe…" : "Prüfen"}
+            </button>
+          </div>
+          {updateStatus?.updateAvailable && (
+            <div style={{ marginTop: 8, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <a
+                href={updateStatus.releaseUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="btn sm primary"
+              >
+                Release v{updateStatus.latestVersion} ansehen
+              </a>
+              <code style={{ fontSize: "0.74rem" }}>{updateStatus.updateCommand}</code>
+            </div>
+          )}
+        </div>
 
         {hiddenProfiles.length > 0 && (
           <button
@@ -1699,6 +1839,15 @@ export const App: React.FC = () => {
             privateProfileNames={privateProfileNames}
             avatars={avatars}
             onClose={() => setShowPagesArchive(false)}
+          />
+        </Suspense>
+      )}
+
+      {showAiProviders && (
+        <Suspense fallback={null}>
+          <AiProvidersSheet
+            open={showAiProviders}
+            onClose={() => setShowAiProviders(false)}
           />
         </Suspense>
       )}

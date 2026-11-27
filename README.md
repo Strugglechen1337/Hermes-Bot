@@ -1,78 +1,136 @@
 <div align="center">
-  <img src="public/icon.svg" alt="Hermes Pocket Logo" width="88" height="88" />
-  <h1>Hermes Pocket</h1>
+  <img src="public/icon-180.png" alt="Hermes Bots Logo" width="112" height="112" style="border-radius: 26px;" />
+  <h1>Hermes Bots</h1>
+  <p><strong>Private, mobile-first PWA &amp; BFF for your self-hosted Hermes Agent</strong></p>
+
   <p>
-    <strong>Private, mobile-first Web-App (PWA) für deinen selbst betriebenen Hermes Agent.</strong>
+    <a href="README.de.md"><strong>🇩🇪 Deutsche Version lesen</strong></a> ·
+    <a href="#quick-install">⚡ 1-Line Installer</a> ·
+    <a href="#tailscale-recommended">🔒 Tailscale Security</a> ·
+    <a href="#supported-ai-providers">🤖 AI Providers</a> ·
+    <a href="#auto-updater">🔄 Auto-Updater</a>
   </p>
+
   <p>
-    <img src="https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react&logoColor=08090c" alt="React 19" />
-    <img src="https://img.shields.io/badge/TypeScript-5.7-3178C6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript" />
-    <img src="https://img.shields.io/badge/Vite-6-646CFF?style=flat-square&logo=vite&logoColor=white" alt="Vite" />
-    <img src="https://img.shields.io/badge/PWA-iOS%20%26%20Desktop-f59e0b?style=flat-square" alt="PWA" />
-    <img src="https://img.shields.io/badge/Hermes%20Agent-v0.23.4%2B-34d399?style=flat-square" alt="Hermes Agent" />
+    <img alt="Version" src="https://img.shields.io/badge/version-2.0.0-f59e0b?style=flat-square" />
+    <img alt="Node" src="https://img.shields.io/badge/node-20%2B-34d399?style=flat-square" />
+    <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5-38bdf8?style=flat-square" />
+    <img alt="Tailscale Recommended" src="https://img.shields.io/badge/Tailscale-Recommended-6366f1?style=flat-square" />
   </p>
 </div>
 
+<p align="center">
+  <img src="docs/screenshots/hero-overview.svg" alt="Hermes Bots Mobile &amp; Split-Screen Preview" width="100%" />
+</p>
+
 ---
 
-## Überblick
+## Why Hermes Bots?
 
-**Hermes Pocket** bringt deine Hermes-Bots, Einzel- und Gruppenchats, Routinen, Connectoren und E-Mail-Integrationen in eine dunkle, auf dem iPhone (und Desktop) schnell bedienbare Oberfläche – vollständig mit eigener Gestaltung und eigenen Ressourcen.
+**Hermes Bots** turns your self-hosted **Hermes Agent** into a fast, native-feeling mobile messenger for iPhone, iPad, Foldable / iPhone Duo, and desktop — while keeping **100% of your chats, bots, routines, media, and API keys on your own server**.
 
-Die bestehende **Hermes-Installation bleibt jederzeit die alleinige Datenquelle** für Profile, Chats, Gruppen, Routinen, Vault-Einträge und Authentifizierung.
+<p align="center">
+  <img src="docs/screenshots/features-grid.svg" alt="Hermes Bots Key Features" width="100%" />
+</p>
 
-## Highlights
+### Highlights
+- **Chief Bot &amp; Pinned Showcase:** Pin your primary coordinator bot (with ★ Chief badge) and favorite bots right at the top, synced across devices.
+- **Inline Bot Media &amp; Gallery:** Bot-generated images (`MEDIA:/...`), audio, video, and files render directly inside chat bubbles — with 1-tap **Copy Image**, native iOS **Share / Save to Photos**, and a per-bot **Media Gallery**.
+- **Interactive Briefings &amp; Checklists:** Sandboxed HTML briefings (weather, news, live rain radar) plus tappable **shopping &amp; to-do checklists** (`[CHECKLIST: ...]`) synced on your server.
+- **Voice Dictation &amp; iOS Siri Shortcuts:** Speak directly into the composer or trigger your bots via **“Hey Siri”**, iPhone Action Button, or CarPlay using a dedicated Bearer token.
+- **Private Bot Vault:** Isolate sensitive bots behind a server-synced PIN hash — hidden from the main list, excluded from Briefings, and **hard-blocked from Web Push &amp; Siri on the server**.
+- **Granular Web Push:** Master toggle + per-bot push switches, unread counters, floating in-app toasts, and iOS Home Screen badges.
+- **iPhone &amp; iPhone Duo Ready:** Edge swipe-back gesture, pull-to-refresh, per-bot draft auto-save, in-chat search with jump-to-match, message quote-reply, and adaptive 2-column split-screen layout for wide/foldable screens.
 
-- **Chef-Bot & angeheftete Favoriten:** Markiere deinen Haupt-Bot mit einem Tipp als **Chef** (großer Avatar mit Stern-Badge ganz oben) und hefte weitere Favoriten direkt daneben an – synchronisiert über Hermes `ui_meta`.
-- **Live-Indikator für neue Bot-Nachrichten:** Ungelesen-Zähler in der Bot-Liste, im Chef-Bereich, in der Tab-Leiste, am Zurück-Button im Chat, als schwebendes In-App-Banner, auf Gruppenkarten sowie als nativer PWA-App-Badge.
-- **Wischbare Bild- & Produktkarten bei Websuchen:** Bilder (`![Titel](url)`, direkte Bild-URLs) und Angebotskarten (`[DEAL_CARD: ...]`) erscheinen als nach rechts wischbare Kartenreihe direkt unter der Nachricht – inkl. Vollbild-Lightbox und **„Jetzt kaufen“**-Aktion.
-- **1:1-Streaming-Chats & Bot-Komfort:**
-  - Live-Streaming (`session.create`, `session.resume`, `prompt.submit`, `session.interrupt`), Tool-Fortschritt, Bild- & Datei-Anhänge.
-  - Chat-Befehle (`/model`, `/provider`, `/limit`, `/secret`, `/new`, `/help`), dauerhafte Kontext-/Plan-Limit-Leiste und automatischer Fallback-Anbieter.
-  - Interaktive Karten für Rückfragen (`clarify`), Sicherheitsfreigaben, verschlüsselte Tresor-Formulare (`browser_vault`) und Write-Only-`.env`-Geheimnisse.
-- **Gruppenchats & Zusammenarbeit:** Erstelle und steuere Hermes-Gruppenräume (`groups.*`) mit Echtzeit-Updates (`groups.changed`) und konfigurierbarem Routing (`auto`, `everyone`, `lead`).
-- **Routinen mit Schutzmechanismus:** Übersicht aller Hermes-Cron-Jobs inkl. Zeitplan und Laufhistorie. Aktivieren (`resume`) und manuelles Ausführen (`trigger`) erfordern stets eine ausdrückliche Bestätigung.
-- **Privater Bot-Bereich (PIN-geschützt):** Isolierte Bots sind in der normalen Liste, in der Suche, in Gruppen und in öffentlichen Benachrichtigungs-Badges unsichtbar.
-- **Native iOS Web Push & Home-Bildschirm-PWA:** Safe-Area-Layout, eigenes App-Manifest, Service Worker für Push-Benachrichtigungen ohne aggressives Bundle-Caching.
+---
 
-## Architektur & Sicherheit
+## ⚡ Quick Install
 
-| Schicht | Aufgabe |
-| --- | --- |
-| **Frontend (`src/`)** | React 19 + TypeScript + Vite PWA mit strikt XSS-sicherem Markdown (`SafeMarkdown`) und sicherer URL-Prüfung. |
-| **BFF-Proxy (`server/`)** | Schlanker Node/TypeScript HTTP- & WebSocket-Proxy (Standardport `9135`) mit Pfad-Allowlist, Same-Origin- & `Sec-Fetch-Site`-Prüfung und transparentem Cookie-/WS-Ticket-Passthrough. |
-| **Authentifizierung** | Nutzt ausschließlich den bestehenden Hermes-Login (`POST /auth/password-login`, `GET /api/auth/me`, `POST /auth/logout`) über `HttpOnly`-Cookies sowie kurzlebige WebSocket-Einmal-Tickets (`POST /api/auth/ws-ticket`). |
-| **Geheimnisse** | Keine Zugangsdaten, Tokens, Cookies, `.env`-Dateien oder persönliche Chatdaten im Repository. Konfiguration erfolgt ausschließlich über lokale, nicht versionierte `.env` (siehe [`.env.example`](.env.example)). |
-
-Ausführliche Betriebs-, Tailscale-Serve- und Sicherheitsdetails findest du in **[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)**.
-
-## Schnellstart
+Install Hermes Bots on your Linux/macOS server (where Hermes Agent is running) with one command:
 
 ```bash
-cp .env.example .env
-# In .env mindestens HERMES_BASE_URL setzen (z. B. http://127.0.0.1:9130)
+curl -fsSL https://raw.githubusercontent.com/Strugglechen1337/Hermes-Pocket-/main/scripts/install.sh | bash
+```
 
+What the installer does:
+1. Checks Node.js 20+ and Git.
+2. Clones Hermes Bots into `~/hermes-bots` (or updates without touching `.env` / `.data/`).
+3. Builds the web PWA and Node BFF server (`npm ci && npm run build`).
+4. Binds strictly to `127.0.0.1:9135` and installs a `systemd --user` service with lingering enabled so **Hermes Bots auto-starts cleanly after server reboots**.
+
+---
+
+## 🔒 Tailscale Recommended (Best Security Setup)
+
+We **strongly recommend running Hermes Bots behind [Tailscale](https://tailscale.com/)** instead of exposing ports to the public internet:
+
+```bash
+tailscale serve --bg --https=8444 http://127.0.0.1:9135
+```
+
+**Why Tailscale is the best fit:**
+- **Zero open router ports:** Your server stays completely invisible to the public internet.
+- **Automatic valid HTTPS:** Required by iOS Safari for Home Screen PWAs, Web Push notifications, and Microphone access.
+- **Private tailnet access only:** Only your own signed-in devices (iPhone, iPad, laptop) can reach the URL.
+- **Survives reboots:** `tailscale serve --bg` persists automatically across server restarts.
+
+Then open your `https://<your-machine>.ts.net:8444` link in **Safari on iPhone** → **Share** → **Add to Home Screen**.
+
+---
+
+## 🤖 Supported AI Providers
+
+Connect the most popular AI providers directly from **Account → AI Providers &amp; API Keys** (write-only into your server's protected `.env` — keys are never stored in the browser):
+
+| Provider | Env Variable | Popular Models |
+| --- | --- | --- |
+| **OpenAI** | `OPENAI_API_KEY` | GPT-5, GPT-4.1, o3, o4-mini |
+| **Anthropic Claude** | `ANTHROPIC_API_KEY` | Claude Sonnet 4.5, Claude Opus 4 |
+| **Google Gemini** | `GEMINI_API_KEY` | Gemini 2.5 Pro, Gemini 2.5 Flash |
+| **xAI Grok** | `XAI_API_KEY` | Grok 4, Grok 3, Grok Vision |
+| **OpenRouter** | `OPENROUTER_API_KEY` | 200+ models via one API key |
+| **DeepSeek** | `DEEPSEEK_API_KEY` | DeepSeek R1, DeepSeek V3 |
+| **Mistral AI** | `MISTRAL_API_KEY` | Mistral Large, Codestral |
+| **Groq** | `GROQ_API_KEY` | Ultra-fast Llama 4 &amp; Qwen |
+| **Ollama (Local)** | `OLLAMA_BASE_URL` | 100% local models on your own hardware |
+
+Every bot can use its own model + automatic fallback provider (e.g. Anthropic fallback when rate limits hit).
+
+---
+
+## 🔄 Auto-Updater
+
+- **In-App Check:** Open **Account → Check for Updates** to compare your installed version against the latest GitHub Release.
+- **One-Command Safe Update** (never touches `.env`, `.data/`, or Hermes profiles):
+
+```bash
+cd ~/hermes-bots && bash scripts/update.sh
+```
+
+---
+
+## 🎙️ iOS Shortcuts / Siri Setup
+
+1. In Hermes Bots, open **Account → iOS Kurzbefehle / Siri → Setup** and copy the **Auth-Header**.
+2. In the Apple **Shortcuts** app, add **Get Contents of URL**:
+   - **URL:** `https://<your-tailnet-host>:8444/api/pocket/shortcut`
+   - **Method:** `POST`
+   - **Header:** `Authorization` → paste the copied `Bearer ...` header
+   - **JSON Body:** `{"bot": "nova-chief", "text": "<Dictated Text>"}`
+3. Add **Speak Text** on the `reply` field — now you can ask your bots hands-free via Siri!
+
+---
+
+## Development &amp; Tests
+
+```bash
 npm install
 npm run typecheck
 npm test
 npm run build
 ```
 
-### Lokale Entwicklung
-
-```bash
-npm run dev       # Windows (PowerShell/cmd)
-npm run dev:unix  # Linux / macOS
-```
-
-- **Frontend (Vite Dev):** `http://127.0.0.1:5178`
-- **BFF-Proxy:** `http://127.0.0.1:9135`
-
-### Produktionsstart
-
-```bash
-npm run build
-npm start
-```
-
-Auf dem iPhone in Safari öffnen → **Teilen** → **„Zum Home-Bildschirm“** hinzufügen.
+## Security Model
+- Hermes Agent remains the single source of truth for authentication, bots, sessions, groups, and routines.
+- All BFF endpoints (`/api/pocket/*`) enforce Hermes session cookies (or dedicated constant-time Bearer token for `/api/pocket/shortcut`), strict Same-Origin checks on mutations, and path allowlists blocking `.env`, `config.yaml`, databases, logs, and vaults.
+- Briefings render inside CSP-sandboxed iframes without `allow-same-origin`.

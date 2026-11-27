@@ -65,13 +65,16 @@ import {
   deleteSession,
   fetchModelOptions,
   fetchProfileFallback,
+  fetchServerUiPreferences,
   fetchSessionMessages,
   fetchSessions,
   normalizeMessages,
   prepareChatImageDataUrl,
   renameSession,
   updateProfileModel,
+  updateServerUiPreferences,
   uploadChatFile,
+  type QuickPromptItem,
 } from "../lib/hermesApi";
 import { hermesWs, type WsConnectionState } from "../lib/hermesWs";
 import { PRIVATE_CHAT_TITLE } from "../lib/privateVault";
@@ -79,6 +82,7 @@ import { notifyIfBackgrounded } from "../lib/pushClient";
 import {
   detectBotSecretForm,
   detectBotVaultRequest,
+  extractChecklists,
   extractPocketPages,
   extractProductDeals,
   stripSecretRequestTag,
@@ -100,6 +104,7 @@ import { BotAvatar } from "./BotAvatar";
 import { BotMediaGallerySheet } from "./BotMediaGallerySheet";
 import { ConfirmSheet } from "./ConfirmSheet";
 import { InChatConnectionCard } from "./InChatConnectionCard";
+import { InteractiveChecklistCard } from "./InteractiveChecklistCard";
 import {
   ApprovalPromptCard,
   ClarifyPromptCard,
@@ -286,6 +291,46 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
   const [inChatSearchQuery, setInChatSearchQuery] = useState("");
   const [activeMatchPos, setActiveMatchPos] = useState(0);
   const [voiceActive, setVoiceActive] = useState<"idle" | "dictating" | "recording">("idle");
+  const [allQuickPrompts, setAllQuickPrompts] = useState<Record<string, QuickPromptItem[]>>({});
+  const [showQuickPromptEditor, setShowQuickPromptEditor] = useState(false);
+  const [newQuickLabel, setNewQuickLabel] = useState("");
+  const [newQuickPrompt, setNewQuickPrompt] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetchServerUiPreferences()
+      .then((prefs) => {
+        if (!cancelled) setAllQuickPrompts(prefs.quickPrompts || {});
+      })
+      .catch(() => null);
+    return () => {
+      cancelled = true;
+    };
+  }, [profile.name]);
+
+  const botQuickPrompts = allQuickPrompts[profile.name] || [];
+
+  const handleSaveQuickPrompt = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const label = newQuickLabel.trim();
+    const prompt = newQuickPrompt.trim();
+    if (!label || !prompt) return;
+    const nextList = [...botQuickPrompts, { label, prompt }].slice(0, 8);
+    const nextMap = { ...allQuickPrompts, [profile.name]: nextList };
+    setAllQuickPrompts(nextMap);
+    setNewQuickLabel("");
+    setNewQuickPrompt("");
+    setShowQuickPromptEditor(false);
+    void updateServerUiPreferences({ quickPrompts: nextMap }).catch(() => null);
+  };
+
+  const handleRemoveQuickPrompt = (idx: number) => {
+    const nextList = botQuickPrompts.filter((_, i) => i !== idx);
+    const nextMap = { ...allQuickPrompts, [profile.name]: nextList };
+    if (nextList.length === 0) delete nextMap[profile.name];
+    setAllQuickPrompts(nextMap);
+    void updateServerUiPreferences({ quickPrompts: nextMap }).catch(() => null);
+  };
 
   const inChatMatchIndices = useMemo(() => {
     const q = inChatSearchQuery.trim().toLowerCase();
@@ -1929,6 +1974,22 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
                               onOpen={setOpenPocketPage}
                             />
                           ))}
+                        {(msg.role === "assistant" || msg.role === "user") &&
+                          extractChecklists(msg.content).map((cl) => (
+                            <InteractiveChecklistCard
+                              key={cl.id}
+                              checklist={cl}
+                              onSendStatus={(summary) => {
+                                setInput(summary);
+                                requestAnimationFrame(() => {
+                                  if (textareaRef.current) {
+                                    textareaRef.current.focus();
+                                    autoResizeInput(textareaRef.current);
+                                  }
+                                });
+                              }}
+                            />
+                          ))}
                         {msg.role === "assistant" &&
                           (() => {
                             const deals = extractProductDeals(msg.content);
@@ -2297,6 +2358,37 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
           </div>
         )}
 
+        {!isStreaming && (botQuickPrompts.length > 0 || !input.trim()) && (
+          <div className="quick-prompts-bar" aria-label="Schnell-Aktionen">
+            {botQuickPrompts.map((qp, idx) => (
+              <button
+                key={`${qp.label}-${idx}`}
+                type="button"
+                className="quick-prompt-chip"
+                onClick={() => {
+                  setInput(qp.prompt);
+                  requestAnimationFrame(() => {
+                    if (textareaRef.current) {
+                      textareaRef.current.focus();
+                      autoResizeInput(textareaRef.current);
+                    }
+                  });
+                }}
+              >
+                {qp.label}
+              </button>
+            ))}
+            <button
+              type="button"
+              className="quick-prompt-chip"
+              aria-label="Schnell-Aktion hinzufügen"
+              onClick={() => setShowQuickPromptEditor(true)}
+            >
+              <Plus size={12} /> {botQuickPrompts.length === 0 ? "Schnell-Aktion" : ""}
+            </button>
+          </div>
+        )}
+
         {replyTo && (
           <div className="reply-preview-bar" role="status">
             <Reply size={14} style={{ color: "var(--accent)", flexShrink: 0 }} />
@@ -2399,6 +2491,85 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
         botLabel={visual.label}
         onClose={() => setShowMediaGallery(false)}
       />
+
+      <Sheet open={showQuickPromptEditor} onClose={() => setShowQuickPromptEditor(false)}>
+        <div className="sheet-header">
+          <h2 className="sheet-title">Schnell-Aktionen · {visual.label}</h2>
+          <button
+            type="button"
+            className="icon-btn ghost"
+            aria-label="Schließen"
+            onClick={() => setShowQuickPromptEditor(false)}
+          >
+            <X size={20} />
+          </button>
+        </div>
+
+        {botQuickPrompts.length > 0 && (
+          <div className="card-stack" style={{ marginBottom: 14 }}>
+            {botQuickPrompts.map((qp, idx) => (
+              <div
+                key={`${qp.label}-${idx}`}
+                className="card"
+                style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px" }}
+              >
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 700, fontSize: "0.86rem" }}>{qp.label}</div>
+                  <div
+                    style={{
+                      fontSize: "0.76rem",
+                      color: "var(--text-muted)",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {qp.prompt}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="icon-btn ghost"
+                  aria-label={`${qp.label} entfernen`}
+                  onClick={() => handleRemoveQuickPrompt(idx)}
+                >
+                  <Trash2 size={15} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <form onSubmit={handleSaveQuickPrompt}>
+          <div className="field">
+            <label htmlFor="qp-label">Button-Titel (kurz)</label>
+            <input
+              id="qp-label"
+              className="input"
+              value={newQuickLabel}
+              onChange={(e) => setNewQuickLabel(e.target.value)}
+              placeholder="z. B. Tages-Update, Einkaufsliste, Server-Check"
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="qp-prompt">Nachricht an {visual.label}</label>
+            <textarea
+              id="qp-prompt"
+              className="textarea"
+              value={newQuickPrompt}
+              onChange={(e) => setNewQuickPrompt(e.target.value)}
+              placeholder="Welche Aufgabe soll beim Antippen eingefügt werden?"
+            />
+          </div>
+          <button
+            type="submit"
+            className="btn primary full"
+            disabled={!newQuickLabel.trim() || !newQuickPrompt.trim()}
+          >
+            Schnell-Aktion speichern
+          </button>
+        </form>
+      </Sheet>
 
       <input
         ref={imagePickerRef}

@@ -14,9 +14,15 @@ import { isSameOriginRequest } from "./security.js";
  * All reads and writes require a valid authenticated Hermes session cookie.
  */
 
+export interface QuickPromptItem {
+  label: string;
+  prompt: string;
+}
+
 export interface PocketUiPreferences {
   hiddenProfiles: string[];
   vaultPinHash: string | null;
+  quickPrompts: Record<string, QuickPromptItem[]>;
   updatedAt: number;
 }
 
@@ -47,6 +53,24 @@ function normalizePinHash(raw: unknown): string | null {
   return null;
 }
 
+function normalizeQuickPrompts(raw: unknown): Record<string, QuickPromptItem[]> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const out: Record<string, QuickPromptItem[]> = {};
+  for (const [bot, list] of Object.entries(raw as Record<string, unknown>).slice(0, 30)) {
+    if (!PROFILE_NAME_RE.test(bot) || !Array.isArray(list)) continue;
+    const cleaned = list
+      .filter((x): x is Record<string, unknown> => Boolean(x && typeof x === "object"))
+      .map((x) => ({
+        label: typeof x.label === "string" ? x.label.trim().slice(0, 40) : "",
+        prompt: typeof x.prompt === "string" ? x.prompt.trim().slice(0, 300) : "",
+      }))
+      .filter((x) => x.label && x.prompt)
+      .slice(0, 8);
+    if (cleaned.length > 0) out[bot] = cleaned;
+  }
+  return out;
+}
+
 export function loadServerUiPreferences(): PocketUiPreferences {
   const filePath = getPrefsPath();
   try {
@@ -55,17 +79,18 @@ export function loadServerUiPreferences(): PocketUiPreferences {
       return {
         hiddenProfiles: normalizeHiddenProfiles(parsed.hiddenProfiles),
         vaultPinHash: normalizePinHash(parsed.vaultPinHash),
+        quickPrompts: normalizeQuickPrompts(parsed.quickPrompts),
         updatedAt: typeof parsed.updatedAt === "number" ? parsed.updatedAt : 0,
       };
     }
   } catch {
     // Fall back to empty defaults
   }
-  return { hiddenProfiles: [], vaultPinHash: null, updatedAt: 0 };
+  return { hiddenProfiles: [], vaultPinHash: null, quickPrompts: {}, updatedAt: 0 };
 }
 
 export function saveServerUiPreferences(
-  patch: Partial<Pick<PocketUiPreferences, "hiddenProfiles" | "vaultPinHash">>
+  patch: Partial<Pick<PocketUiPreferences, "hiddenProfiles" | "vaultPinHash" | "quickPrompts">>
 ): PocketUiPreferences {
   const current = loadServerUiPreferences();
   const next: PocketUiPreferences = {
@@ -77,6 +102,10 @@ export function saveServerUiPreferences(
       patch.vaultPinHash !== undefined
         ? normalizePinHash(patch.vaultPinHash)
         : current.vaultPinHash,
+    quickPrompts:
+      patch.quickPrompts !== undefined
+        ? normalizeQuickPrompts(patch.quickPrompts)
+        : current.quickPrompts,
     updatedAt: Date.now(),
   };
 
@@ -156,7 +185,7 @@ export async function handlePocketPreferencesRoute(
     return true;
   }
 
-  const patch: Partial<Pick<PocketUiPreferences, "hiddenProfiles" | "vaultPinHash">> = {};
+  const patch: Partial<Pick<PocketUiPreferences, "hiddenProfiles" | "vaultPinHash" | "quickPrompts">> = {};
   if ("hiddenProfiles" in body) {
     patch.hiddenProfiles = normalizeHiddenProfiles(body.hiddenProfiles);
   }
@@ -166,6 +195,9 @@ export async function handlePocketPreferencesRoute(
       return true;
     }
     patch.vaultPinHash = normalizePinHash(body.vaultPinHash);
+  }
+  if ("quickPrompts" in body) {
+    patch.quickPrompts = normalizeQuickPrompts(body.quickPrompts);
   }
 
   const updated = saveServerUiPreferences(patch);

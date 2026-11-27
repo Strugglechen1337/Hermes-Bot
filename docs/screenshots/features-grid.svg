@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 420" width="1200" height="420">
+  <defs>
+    <linearGradient id="bg2" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#07090f"/>
+      <stop offset="100%" stop-color="#0d1324"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="420" rx="24" fill="url(#bg2)"/>
+
+  <!-- Panel 1: Top AI Providers -->
+  <g transform="translate(36, 32)">
+    <rect width="356" height="356" rx="22" fill="#111624" stroke="#25314d" stroke-width="2"/>
+    <text x="24" y="42" fill="#f59e0b" font-family="sans-serif" font-size="12" font-weight="800">MULTI-MODEL &amp; FALLBACK</text>
+    <text x="24" y="70" fill="#f8fafc" font-family="sans-serif" font-size="20" font-weight="800">9+ Top AI Providers</text>
+    <g transform="translate(24, 94)" font-family="sans-serif" font-size="13">
+      <rect width="308" height="38" rx="10" fill="#171e30"/><text x="14" y="24" fill="#f8fafc" font-weight="700">OpenAI</text><text x="128" y="24" fill="#94a3b8">GPT-5 · o3 · GPT-4.1</text>
+      <rect y="46" width="308" height="38" rx="10" fill="#171e30"/><text x="14" y="70" fill="#f8fafc" font-weight="700">Anthropic</text><text x="128" y="70" fill="#94a3b8">Claude Sonnet / Opus</text>
+      <rect y="92" width="308" height="38" rx="10" fill="#171e30"/><text x="14" y="116" fill="#f8fafc" font-weight="700">Google</text><text x="128" y="116" fill="#94a3b8">Gemini 2.5 Pro / Flash</text>
+      <rect y="138" width="308" height="38" rx="10" fill="#171e30"/><text x="14" y="162" fill="#f8fafc" font-weight="700">xAI Grok</text><text x="128" y="162" fill="#94a3b8">Grok 4 · Grok 3</text>
+      <rect y="184" width="308" height="38" rx="10" fill="#171e30"/><text x="14" y="208" fill="#f8fafc" font-weight="700">OpenRouter</text><text x="128" y="208" fill="#94a3b8">DeepSeek · Mistral · Groq</text>
+    </g>
+  </g>
+
+  <!-- Panel 2: Tailscale-First Security -->
+  <g transform="translate(422, 32)">
+    <rect width="356" height="356" rx="22" fill="#111624" stroke="#34d399" stroke-opacity="0.45" stroke-width="2"/>
+    <text x="24" y="42" fill="#34d399" font-family="sans-serif" font-size="12" font-weight="800">ZERO OPEN PORTS</text>
+    <text x="24" y="70" fill="#f8fafc" font-family="sans-serif" font-size="20" font-weight="800">Tailscale-First Privacy</text>
+    <g transform="translate(24, 102)" font-family="sans-serif" font-size="13" fill="#cbd5e1">
+      <text y="16">🔒  100% self-hosted on your server</text>
+      <text y="50">🛡️  Tailscale Serve HTTPS (no router ports)</text>
+      <text y="84">🔑  Write-only API keys &amp; Vault PIN</text>
+      <text y="118">🔕  Private Bot Vault (push hard-blocked)</text>
+      <text y="152">⚡  Auto-starts cleanly after server reboot</text>
+      <rect y="180" width="308" height="44" rx="12" fill="#0d221c" stroke="#34d399" stroke-opacity="0.4"/>
+      <text x="154" y="207" text-anchor="middle" fill="#6ee7b7" font-family="monospace" font-size="11.5">tailscale serve --https=8444 :9135</text>
+    </g>
+  </g>
+
+  <!-- Panel 3: Native Mobile Extras -->
+  <g transform="translate(808, 32)">
+    <rect width="356" height="356" rx="22" fill="#111624" stroke="#38bdf8" stroke-opacity="0.45" stroke-width="2"/>
+    <text x="24" y="42" fill="#38bdf8" font-family="sans-serif" font-size="12" font-weight="800">IPHONE · IPAD · IPHONE DUO</text>
+    <text x="24" y="70" fill="#f8fafc" font-family="sans-serif" font-size="20" font-weight="800">Built for Daily Use</text>
+    <g transform="translate(24, 102)" font-family="sans-serif" font-size="13" fill="#cbd5e1">
+      <text y="16">🖼️  Inline AI images &amp; Bot Media Gallery</text>
+      <text y="50">🎙️  Voice dictation &amp; iOS Siri Shortcuts</text>
+      <text y="84">☑️  Interactive synced Checklists</text>
+      <text y="118">📱  Foldable / Split-Screen &amp; Swipe-Back</text>
+      <text y="152">🔄  1-Command Installer &amp; Auto-Updater</text>
+      <rect y="180" width="308" height="44" rx="12" fill="#101d30" stroke="#38bdf8" stroke-opacity="0.4"/>
+      <text x="154" y="207" text-anchor="middle" fill="#7dd3fc" font-family="monospace" font-size="12">bash scripts/update.sh</text>
+    </g>
+  </g>
+</svg>
