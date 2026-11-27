@@ -3,6 +3,7 @@ import {
   detectBotSecretForm,
   detectBotSecretRequest,
   detectBotVaultRequest,
+  extractPackageCards,
   extractPocketPages,
   extractProductDeals,
   isPlaintextFormFieldKey,
@@ -125,6 +126,26 @@ describe("secretDetection", () => {
     );
     expect(fromUrl).toHaveLength(1);
     expect(fromUrl[0].id).toBe("morning-board-20261127-abc123");
+  });
+
+  it("extracts [PACKAGE_CARD] tracking cards with auto carrier URL and strips directive", () => {
+    const raw =
+      "Dein Paket ist unterwegs:\n" +
+      "[PACKAGE_CARD: BeispielShop | Konsole Spiel | Versandt | Ankunft Mo. 30. Nov. | DHL | 123456 | 00340433919000000000]";
+    const cards = extractPackageCards(raw);
+    expect(cards).toHaveLength(1);
+    expect(cards[0]).toMatchObject({
+      shop: "BeispielShop",
+      product: "Konsole Spiel",
+      status: "Versandt",
+      eta: "Ankunft Mo. 30. Nov.",
+      carrier: "DHL",
+      orderNumber: "123456",
+      trackingNumber: "00340433919000000000",
+      progress: 52,
+    });
+    expect(cards[0].trackingUrl).toContain("dhl.de");
+    expect(stripSecretRequestTag(raw)).toBe("Dein Paket ist unterwegs:");
   });
 
   it("detects natural German bot requests and extracts explicit or inferred env var names", () => {

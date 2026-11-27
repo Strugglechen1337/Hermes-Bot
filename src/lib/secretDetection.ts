@@ -305,7 +305,85 @@ export interface DetectedChecklist {
   items: Array<{ text: string; checked: boolean }>;
 }
 
+export interface DetectedPackageCard {
+  shop: string;
+  product: string;
+  status: string;
+  eta?: string;
+  carrier: string;
+  orderNumber?: string;
+  trackingNumber?: string;
+  trackingUrl?: string;
+  progress: number; // 20 | 50 | 80 | 100
+}
+
 const CHECKLIST_TAG_GLOBAL_RE = /\[CHECKLIST:\s*([^\]]+)\]/gi;
+const PACKAGE_CARD_GLOBAL_RE = /\[PACKAGE_CARD:\s*([^\]]+)\]/gi;
+
+export function buildCarrierTrackingUrl(carrier: string, trackingNumber?: string): string | undefined {
+  const num = (trackingNumber || "").trim();
+  if (!num) return undefined;
+  const c = carrier.trim().toLowerCase();
+  const enc = encodeURIComponent(num);
+  if (c.includes("dhl")) {
+    return `https://www.dhl.de/de/privatkunden/pakete-empfangen/verfolgen.html?piececode=${enc}`;
+  }
+  if (c.includes("dpd")) {
+    return `https://tracking.dpd.de/status/de_DE/parcel/${enc}`;
+  }
+  if (c.includes("hermes")) {
+    return `https://www.myhermes.de/empfangen/sendungsverfolgung/sendungsinformation/#${enc}`;
+  }
+  if (c.includes("gls")) {
+    return `https://www.gls-pakete.de/sendungsverfolgung?match=${enc}`;
+  }
+  if (c.includes("ups")) {
+    return `https://www.ups.com/track?loc=de_DE&tracknum=${enc}`;
+  }
+  if (c.includes("post")) {
+    return `https://www.deutschepost.de/de/s/sendungsverfolgung.html?piececode=${enc}`;
+  }
+  return undefined;
+}
+
+function inferPackageProgress(status: string): number {
+  const s = status.trim().toLowerCase();
+  if (/zugestellt|delivered|abgeholt|empfangen/.test(s)) return 100;
+  if (/zustellung|out for delivery|heute|zustellfahrzeug/.test(s)) return 80;
+  if (/versandt|unterwegs|shipped|transit|übergeben|paketzentrum/.test(s)) return 52;
+  return 20;
+}
+
+/**
+ * Extracts package delivery tracking cards emitted as:
+ * `[PACKAGE_CARD: Shop | Produkt | Status | Ankunft | Paketdienst | Bestellnummer | Sendungsnummer | TrackingURL]`
+ */
+export function extractPackageCards(text: string): DetectedPackageCard[] {
+  if (!text) return [];
+  const out: DetectedPackageCard[] = [];
+  for (const m of text.matchAll(PACKAGE_CARD_GLOBAL_RE)) {
+    const parts = m[1].split("|").map((p) => p.trim());
+    if (parts.length < 3) continue;
+    const [shop, product, status, etaRaw, carrierRaw, orderRaw, trackingRaw, urlRaw] = parts;
+    if (!shop || !product || !status) continue;
+    const carrier = carrierRaw || "Paketdienst";
+    const trackingNumber = trackingRaw && trackingRaw !== "-" ? trackingRaw : undefined;
+    const explicitUrl = urlRaw && /^https?:\/\//i.test(urlRaw) ? urlRaw : undefined;
+    const trackingUrl = explicitUrl || buildCarrierTrackingUrl(carrier, trackingNumber);
+    out.push({
+      shop,
+      product,
+      status,
+      ...(etaRaw && etaRaw !== "-" ? { eta: etaRaw } : {}),
+      carrier,
+      ...(orderRaw && orderRaw !== "-" ? { orderNumber: orderRaw } : {}),
+      ...(trackingNumber ? { trackingNumber } : {}),
+      ...(trackingUrl ? { trackingUrl } : {}),
+      progress: inferPackageProgress(status),
+    });
+  }
+  return out;
+}
 
 function slugifyChecklistId(title: string): string {
   const base = title
@@ -366,6 +444,7 @@ export function stripSecretRequestTag(text: string): string {
     .replace(EXPLICIT_TAG_GLOBAL_RE, "")
     .replace(EXPLICIT_VAULT_GLOBAL_RE, "")
     .replace(CHECKLIST_TAG_GLOBAL_RE, "")
+    .replace(PACKAGE_CARD_GLOBAL_RE, "")
     .replace(EXPLICIT_DEAL_GLOBAL_RE, "")
     .replace(POCKET_PAGE_GLOBAL_RE, "")
     .replace(/\n{3,}/g, "\n\n")

@@ -84,6 +84,7 @@ import {
   detectBotSecretForm,
   detectBotVaultRequest,
   extractChecklists,
+  extractPackageCards,
   extractPocketPages,
   extractProductDeals,
   stripSecretRequestTag,
@@ -106,6 +107,7 @@ import { BotMediaGallerySheet } from "./BotMediaGallerySheet";
 import { ConfirmSheet } from "./ConfirmSheet";
 import { InChatConnectionCard } from "./InChatConnectionCard";
 import { InteractiveChecklistCard } from "./InteractiveChecklistCard";
+import { PackageTrackingCard } from "./PackageTrackingCard";
 import {
   ApprovalPromptCard,
   ClarifyPromptCard,
@@ -2018,6 +2020,13 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
                               key={page.id}
                               page={page}
                               onOpen={setOpenPocketPage}
+                            />
+                          ))}
+                        {(msg.role === "assistant" || msg.role === "user") &&
+                          extractPackageCards(msg.content).map((pkg, pIdx) => (
+                            <PackageTrackingCard
+                              key={`${pkg.shop}-${pkg.trackingNumber || pkg.orderNumber || pIdx}`}
+                              pkg={pkg}
                             />
                           ))}
                         {(msg.role === "assistant" || msg.role === "user") &&

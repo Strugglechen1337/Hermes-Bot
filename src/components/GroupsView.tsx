@@ -32,6 +32,7 @@ import { formatRelativeTime, formatShortTime, randomClientId, toTimestampMs } fr
 import { transcribeAudioBlob } from "../lib/hermesApi";
 import { hermesWs, type WsConnectionState } from "../lib/hermesWs";
 import {
+  extractPackageCards,
   extractPocketPages,
   stripSecretRequestTag,
   type DetectedPocketPage,
@@ -39,6 +40,7 @@ import {
 import type { GroupUnreadInfo } from "../lib/unreadStore";
 import { BotAvatar } from "./BotAvatar";
 import { ConfirmSheet } from "./ConfirmSheet";
+import { PackageTrackingCard } from "./PackageTrackingCard";
 import { PocketPageCard, PocketPageViewer } from "./InChatPromptCards";
 import { SafeMarkdown } from "./SafeMarkdown";
 import { Sheet } from "./Sheet";
@@ -966,6 +968,12 @@ const GroupRoomView: React.FC<GroupRoomViewProps> = ({
                         key={page.id}
                         page={page}
                         onOpen={setOpenPocketPage}
+                      />
+                    ))}
+                    {extractPackageCards(payloadText).map((pkg, pIdx) => (
+                      <PackageTrackingCard
+                        key={`${pkg.shop}-${pkg.trackingNumber || pkg.orderNumber || pIdx}`}
+                        pkg={pkg}
                       />
                     ))}
                   </div>
