@@ -355,7 +355,7 @@ const WebImageCard: React.FC<{
  * "Bild sichern" into Photos gallery, AirDrop, WhatsApp, etc. without leaving
  * the standalone PWA). Falls back to a Blob download on desktop browsers.
  */
-async function shareOrSaveLocalMedia(src: string, filename: string): Promise<void> {
+export async function shareOrSaveLocalMedia(src: string, filename: string): Promise<void> {
   const res = await fetch(src, { credentials: "same-origin" });
   if (!res.ok) {
     throw new Error(`HTTP ${res.status}`);
@@ -516,7 +516,7 @@ const LocalMediaBlock: React.FC<{
  * iOS Safari user-gesture activation by passing the PNG Blob promise directly
  * into ClipboardItem).
  */
-async function copyImageToClipboard(src: string): Promise<boolean> {
+export async function copyImageToClipboard(src: string): Promise<boolean> {
   if (
     typeof navigator === "undefined" ||
     !navigator.clipboard ||

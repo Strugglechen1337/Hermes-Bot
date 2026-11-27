@@ -42,12 +42,29 @@ export function saveLocalPrivateProfiles(names: string[]): void {
   }
 }
 
-export function hasVaultPin(): boolean {
+export function getStoredVaultPinHash(): string | null {
   try {
-    return Boolean(localStorage.getItem(PIN_STORAGE_KEY));
+    const val = localStorage.getItem(PIN_STORAGE_KEY);
+    return val && val.trim() ? val.trim() : null;
   } catch {
-    return false;
+    return null;
   }
+}
+
+export function hydrateVaultPinHash(hash: string | null): void {
+  try {
+    if (hash && hash.trim()) {
+      localStorage.setItem(PIN_STORAGE_KEY, hash.trim());
+    } else {
+      localStorage.removeItem(PIN_STORAGE_KEY);
+    }
+  } catch {
+    // ignore
+  }
+}
+
+export function hasVaultPin(): boolean {
+  return Boolean(getStoredVaultPinHash());
 }
 
 export function clearVaultPin(): void {
@@ -55,6 +72,14 @@ export function clearVaultPin(): void {
     localStorage.removeItem(PIN_STORAGE_KEY);
   } catch {
     // ignore
+  }
+  if (typeof fetch === "function") {
+    void fetch("/api/pocket/preferences", {
+      method: "PUT",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ vaultPinHash: null }),
+    }).catch(() => null);
   }
 }
 
@@ -82,6 +107,14 @@ export async function setVaultPin(pin: string): Promise<void> {
     localStorage.setItem(PIN_STORAGE_KEY, hashed);
   } catch {
     // ignore
+  }
+  if (typeof fetch === "function") {
+    void fetch("/api/pocket/preferences", {
+      method: "PUT",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ vaultPinHash: hashed }),
+    }).catch(() => null);
   }
 }
 

@@ -6,6 +6,7 @@ import type { ServerConfig } from "./config.js";
 import { appendAutonomousGuidance } from "../shared/botAutonomy.js";
 import { handlePocketMediaRoute } from "./media.js";
 import { handlePocketPagesRoute } from "./pages.js";
+import { handlePocketPreferencesRoute } from "./preferences.js";
 import {
   handlePocketPushRoute,
   isBotPrivateOnServer,
@@ -730,8 +731,12 @@ export async function handleHermesHttpProxy(
     return handlePocketPagesRoute(req, res, config, pathname);
   }
 
-  if (pathname === "/api/pocket/media") {
+  if (pathname === "/api/pocket/media" || pathname === "/api/pocket/media/list") {
     return handlePocketMediaRoute(req, res, config, parsedUrl);
+  }
+
+  if (pathname === "/api/pocket/preferences") {
+    return handlePocketPreferencesRoute(req, res, config, pathname);
   }
 
   const method = (req.method || "GET").toUpperCase();

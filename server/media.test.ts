@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { resolveSafeMediaFile } from "./media.js";
+import { listProfileMediaFiles, resolveSafeMediaFile } from "./media.js";
 
 const tempDirs: string[] = [];
 
@@ -67,5 +67,25 @@ describe("resolveSafeMediaFile", () => {
     if (res.ok) {
       expect(res.forceAttachment).toBe(true);
     }
+  });
+
+  it("lists generated media files for a profile sorted newest-first while excluding secrets", () => {
+    const hermesHome = makeTempHermesHome();
+    const scratchDir = path.join(hermesHome, "profiles", "anna-coding", "cache", "scratch");
+    const logsDir = path.join(hermesHome, "profiles", "anna-coding", "logs");
+    fs.mkdirSync(scratchDir, { recursive: true });
+    fs.mkdirSync(logsDir, { recursive: true });
+
+    const imgPath = path.join(scratchDir, "anime-charakter.png");
+    fs.writeFileSync(imgPath, Buffer.alloc(128, 1));
+    fs.writeFileSync(path.join(logsDir, "secret.txt"), Buffer.alloc(128, 2));
+
+    const items = listProfileMediaFiles("anna-coding", { hermesHome });
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({
+      filename: "anime-charakter.png",
+      kind: "image",
+      mime: "image/png",
+    });
   });
 });

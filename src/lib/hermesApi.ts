@@ -639,3 +639,52 @@ export async function installMcpCatalogEntry(
     body: JSON.stringify({ name, enable: true }),
   });
 }
+
+export interface ServerUiPreferences {
+  hiddenProfiles: string[];
+  vaultPinHash: string | null;
+  updatedAt: number;
+}
+
+export async function fetchServerUiPreferences(): Promise<ServerUiPreferences> {
+  const data = await requestJson<Partial<ServerUiPreferences>>("/api/pocket/preferences");
+  return {
+    hiddenProfiles: Array.isArray(data.hiddenProfiles) ? data.hiddenProfiles : [],
+    vaultPinHash: typeof data.vaultPinHash === "string" ? data.vaultPinHash : null,
+    updatedAt: typeof data.updatedAt === "number" ? data.updatedAt : 0,
+  };
+}
+
+export async function updateServerUiPreferences(
+  patch: Partial<Pick<ServerUiPreferences, "hiddenProfiles" | "vaultPinHash">>
+): Promise<ServerUiPreferences> {
+  const data = await requestJson<Partial<ServerUiPreferences>>("/api/pocket/preferences", {
+    method: "PUT",
+    body: JSON.stringify(patch),
+  });
+  return {
+    hiddenProfiles: Array.isArray(data.hiddenProfiles) ? data.hiddenProfiles : [],
+    vaultPinHash: typeof data.vaultPinHash === "string" ? data.vaultPinHash : null,
+    updatedAt: typeof data.updatedAt === "number" ? data.updatedAt : 0,
+  };
+}
+
+export interface ProfileMediaGalleryItem {
+  path: string;
+  filename: string;
+  kind: "image" | "audio" | "video" | "file";
+  mime: string;
+  size: number;
+  mtimeMs: number;
+  src: string;
+  downloadUrl: string;
+}
+
+export async function fetchProfileMediaGallery(
+  profileName: string
+): Promise<ProfileMediaGalleryItem[]> {
+  const data = await requestJson<{ items?: ProfileMediaGalleryItem[] }>(
+    `/api/pocket/media/list?profile=${encodeURIComponent(profileName)}`
+  );
+  return Array.isArray(data.items) ? data.items : [];
+}

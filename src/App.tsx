@@ -55,15 +55,19 @@ import { toTimestampMs } from "./lib/format";
 import {
   fetchCurrentUser,
   fetchProfiles,
+  fetchServerUiPreferences,
   fetchSessionMessages,
   fetchSessions,
   fetchStatus,
   logout,
   updateProfilePrivacy,
+  updateServerUiPreferences,
 } from "./lib/hermesApi";
 import { hermesWs, type WsConnectionState } from "./lib/hermesWs";
 import {
+  getStoredVaultPinHash,
   hasVaultPin,
+  hydrateVaultPinHash,
   isProfilePrivate,
   loadLocalPrivateProfiles,
   saveLocalPrivateProfiles,
@@ -646,6 +650,7 @@ export const App: React.FC = () => {
       } catch {
         // ignore storage errors
       }
+      void updateServerUiPreferences({ hiddenProfiles: next }).catch(() => null);
       return next;
     });
   }, []);
@@ -661,6 +666,43 @@ export const App: React.FC = () => {
         hermesWs.connect();
         await loadProfiles();
         void fetchPushPreferences().then(setPushPreferences);
+        void fetchServerUiPreferences()
+          .then((srvPrefs) => {
+            if (srvPrefs.updatedAt > 0) {
+              setHiddenProfiles(srvPrefs.hiddenProfiles);
+              try {
+                localStorage.setItem(
+                  "hermes-pocket.hiddenProfiles",
+                  JSON.stringify(srvPrefs.hiddenProfiles)
+                );
+              } catch {
+                // ignore
+              }
+            } else {
+              // First-time migration: push any existing local hidden profiles to server
+              let localHidden: string[] = [];
+              try {
+                const raw = localStorage.getItem("hermes-pocket.hiddenProfiles");
+                const parsed = raw ? JSON.parse(raw) : [];
+                if (Array.isArray(parsed)) localHidden = parsed;
+              } catch {
+                // ignore
+              }
+              if (localHidden.length > 0) {
+                void updateServerUiPreferences({ hiddenProfiles: localHidden }).catch(() => null);
+              }
+            }
+
+            if (srvPrefs.vaultPinHash) {
+              hydrateVaultPinHash(srvPrefs.vaultPinHash);
+            } else {
+              const localHash = getStoredVaultPinHash();
+              if (localHash) {
+                void updateServerUiPreferences({ vaultPinHash: localHash }).catch(() => null);
+              }
+            }
+          })
+          .catch(() => null);
       } else {
         hermesWs.disconnect();
       }
