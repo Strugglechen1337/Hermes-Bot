@@ -1998,12 +1998,6 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
                         )}
                       </div>
                     )}
-                    {msg.reasoning && (
-                      <details className="reasoning-box">
-                        <summary>Gedankengang</summary>
-                        <pre>{msg.reasoning}</pre>
-                      </details>
-                    )}
                     {msg.role === "tool" ? (
                       <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.8rem", color: "var(--text-secondary)" }}>
                         <Wrench size={13} />
@@ -2485,7 +2479,7 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
-                if (!isStreaming && !uploadingAttachments) void handleSend();
+                if (!uploadingAttachments) void handleSend();
               }
             }}
             placeholder={
@@ -2498,18 +2492,16 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
                     : `${visual.label} fragen`
             }
           />
-          {!isStreaming && (
-            <button
-              type="button"
-              className={`composer-mic-btn${voiceActive === "recording" ? " recording" : ""}`}
-              disabled={voiceActive === "transcribing"}
-              aria-label={voiceActive === "recording" ? "Aufnahme beenden" : "Spracheingabe starten"}
-              onClick={() => void handleToggleVoice()}
-            >
-              <Mic size={17} />
-            </button>
-          )}
-          {isStreaming ? (
+          <button
+            type="button"
+            className={`composer-mic-btn${voiceActive === "recording" ? " recording" : ""}`}
+            disabled={voiceActive === "transcribing"}
+            aria-label={voiceActive === "recording" ? "Aufnahme beenden" : "Spracheingabe starten"}
+            onClick={() => void handleToggleVoice()}
+          >
+            <Mic size={17} />
+          </button>
+          {isStreaming && !input.trim() && attachments.length === 0 ? (
             <button
               type="button"
               className="send-btn stop"

@@ -1105,18 +1105,16 @@ const GroupRoomView: React.FC<GroupRoomViewProps> = ({
                   : `An ${room.name} schreiben…`
             }
           />
-          {!anyBotBusy && (
-            <button
-              type="button"
-              className={`composer-mic-btn${voiceState === "recording" ? " recording" : ""}`}
-              disabled={voiceState === "transcribing"}
-              aria-label={voiceState === "recording" ? "Aufnahme beenden" : "Spracheingabe starten"}
-              onClick={() => void handleToggleDictation()}
-            >
-              <Mic size={17} />
-            </button>
-          )}
-          {anyBotBusy ? (
+          <button
+            type="button"
+            className={`composer-mic-btn${voiceState === "recording" ? " recording" : ""}`}
+            disabled={voiceState === "transcribing"}
+            aria-label={voiceState === "recording" ? "Aufnahme beenden" : "Spracheingabe starten"}
+            onClick={() => void handleToggleDictation()}
+          >
+            <Mic size={17} />
+          </button>
+          {anyBotBusy && !input.trim() ? (
             <button
               type="button"
               className="send-btn stop"
