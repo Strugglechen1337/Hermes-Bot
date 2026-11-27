@@ -2844,18 +2844,28 @@ a {
   color: var(--text-secondary);
   display: inline-flex;
   padding: 4px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
 }
 
 .md-media-file-card {
   display: flex;
   align-items: center;
   gap: 10px;
+  width: 100%;
+  text-align: left;
   padding: 10px 12px;
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.05);
   border: 1px solid rgba(255, 255, 255, 0.1);
   color: var(--text-primary);
   text-decoration: none;
+  cursor: pointer;
+}
+
+.image-lightbox-img {
+  -webkit-touch-callout: default;
 }
 
 .md-media-file-info {

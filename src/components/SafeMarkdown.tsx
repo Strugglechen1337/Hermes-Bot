@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import { Download, ExternalLink, FileText, Image as ImageIcon, Volume2, X } from "lucide-react";
+import { Download, ExternalLink, FileText, Image as ImageIcon, Share2, Volume2, X } from "lucide-react";
 
 interface SafeMarkdownProps {
   text: string;
@@ -350,23 +350,87 @@ const WebImageCard: React.FC<{
   );
 };
 
+/**
+ * Opens the native iOS/mobile Share Sheet with the actual File (giving direct
+ * "Bild sichern" into Photos gallery, AirDrop, WhatsApp, etc. without leaving
+ * the standalone PWA). Falls back to a Blob download on desktop browsers.
+ */
+async function shareOrSaveLocalMedia(src: string, filename: string): Promise<void> {
+  const res = await fetch(src, { credentials: "same-origin" });
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status}`);
+  }
+  const blob = await res.blob();
+  const mime = blob.type || "application/octet-stream";
+
+  if (typeof File !== "undefined" && typeof navigator !== "undefined" && typeof navigator.share === "function") {
+    const file = new File([blob], filename, { type: mime });
+    const canShareFiles =
+      typeof navigator.canShare === "function" ? navigator.canShare({ files: [file] }) : true;
+    if (canShareFiles) {
+      try {
+        await navigator.share({ files: [file], title: filename });
+        return;
+      } catch (err) {
+        if (err instanceof DOMException && err.name === "AbortError") {
+          return;
+        }
+      }
+    }
+  }
+
+  // Desktop / fallback: trigger in-memory Blob download without navigating away
+  const objectUrl = URL.createObjectURL(blob);
+  try {
+    const a = document.createElement("a");
+    a.href = objectUrl;
+    a.download = filename;
+    a.style.display = "none";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  } finally {
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 10_000);
+  }
+}
+
 const LocalMediaBlock: React.FC<{
   item: ExtractedLocalMedia;
   onZoom: (img: ExtractedWebImage) => void;
 }> = ({ item, onZoom }) => {
   const [failed, setFailed] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const handleAction = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await shareOrSaveLocalMedia(item.src, item.filename);
+    } catch {
+      // ignore fetch errors
+    } finally {
+      setBusy(false);
+    }
+  };
 
   if (item.kind === "image") {
     if (failed) {
       return (
-        <a href={item.downloadUrl} download={item.filename} className="md-media-file-card">
+        <button
+          type="button"
+          className="md-media-file-card"
+          disabled={busy}
+          onClick={() => void handleAction()}
+        >
           <ImageIcon size={18} />
           <div className="md-media-file-info">
             <span className="md-media-file-name">{item.filename}</span>
-            <span className="md-media-file-sub">Bild konnte nicht geladen werden · Herunterladen</span>
+            <span className="md-media-file-sub">
+              {busy ? "Wird geladen…" : "Bild teilen / sichern"}
+            </span>
           </div>
-          <Download size={16} />
-        </a>
+          <Share2 size={16} />
+        </button>
       );
     }
     return (
@@ -403,14 +467,15 @@ const LocalMediaBlock: React.FC<{
         <div className="md-media-audio-head">
           <Volume2 size={15} />
           <span className="md-media-file-name">{item.filename}</span>
-          <a
-            href={item.downloadUrl}
-            download={item.filename}
+          <button
+            type="button"
             className="md-media-dl-link"
-            aria-label={`${item.filename} herunterladen`}
+            disabled={busy}
+            aria-label={`${item.filename} teilen oder sichern`}
+            onClick={() => void handleAction()}
           >
-            <Download size={14} />
-          </a>
+            <Share2 size={14} />
+          </button>
         </div>
         <audio controls preload="metadata" src={item.src} className="md-media-audio" />
       </div>
@@ -426,19 +491,27 @@ const LocalMediaBlock: React.FC<{
   }
 
   return (
-    <a href={item.downloadUrl} download={item.filename} className="md-media-file-card">
+    <button
+      type="button"
+      className="md-media-file-card"
+      disabled={busy}
+      onClick={() => void handleAction()}
+    >
       <FileText size={18} />
       <div className="md-media-file-info">
         <span className="md-media-file-name">{item.filename}</span>
-        <span className="md-media-file-sub">Datei herunterladen</span>
+        <span className="md-media-file-sub">
+          {busy ? "Wird geladen…" : "Datei teilen / sichern"}
+        </span>
       </div>
       <Download size={16} />
-    </a>
+    </button>
   );
 };
 
 export const SafeMarkdown: React.FC<SafeMarkdownProps> = ({ text }) => {
   const [lightboxImg, setLightboxImg] = useState<ExtractedWebImage | null>(null);
+  const [lightboxBusy, setLightboxBusy] = useState(false);
 
   const { cleanedText, images, localMedia } = useMemo(() => {
     const local = extractLocalMediaAttachments(text);
@@ -571,13 +644,24 @@ export const SafeMarkdown: React.FC<SafeMarkdownProps> = ({ text }) => {
               <div className="image-lightbox-footer">
                 <span className="image-lightbox-caption">{lightboxImg.alt}</span>
                 {lightboxImg.isLocalMedia ? (
-                  <a
-                    href={lightboxImg.downloadUrl || lightboxImg.src}
-                    download={lightboxImg.alt}
+                  <button
+                    type="button"
                     className="btn sm primary"
+                    disabled={lightboxBusy}
+                    onClick={async () => {
+                      if (lightboxBusy) return;
+                      setLightboxBusy(true);
+                      try {
+                        await shareOrSaveLocalMedia(lightboxImg.src, lightboxImg.alt);
+                      } catch {
+                        // ignore
+                      } finally {
+                        setLightboxBusy(false);
+                      }
+                    }}
                   >
-                    <Download size={14} /> Speichern
-                  </a>
+                    <Share2 size={14} /> {lightboxBusy ? "Lädt…" : "Teilen / Sichern"}
+                  </button>
                 ) : (
                   <a
                     href={lightboxImg.href || lightboxImg.src}

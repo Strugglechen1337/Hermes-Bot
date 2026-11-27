@@ -89,9 +89,6 @@ describe("SafeMarkdown", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /Bild vergrößern: anime-charakter\.png/i }));
     expect(screen.getByRole("dialog", { name: "anime-charakter.png" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /Speichern/i })).toHaveAttribute(
-      "href",
-      "/api/pocket/media?path=%2Fhome%2Fuser%2F.hermes%2Fprofiles%2Fanna-coding%2Fcache%2Fscratch%2Fanime-charakter.png&download=1"
-    );
+    expect(screen.getByRole("button", { name: /Teilen \/ Sichern/i })).toBeInTheDocument();
   });
 });
