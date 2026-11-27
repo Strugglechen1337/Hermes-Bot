@@ -2004,6 +2004,8 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
             const showDivider =
               curMs !== null && (prevMs === null || curMs - prevMs > 10 * 60 * 1000);
 
+            if (msg.role === "tool") return null;
+
             const isSilentAck =
               msg.role === "assistant" &&
               !msg.streaming &&
@@ -2023,7 +2025,6 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
               msg.role === "assistant" &&
               !msg.streaming &&
               !msg.content.trim() &&
-              !msg.reasoning &&
               !msg.error &&
               (!msg.attachments || msg.attachments.length === 0);
             if (isEmptyAssistant) return null;
@@ -2107,12 +2108,7 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
                         )}
                       </div>
                     )}
-                    {msg.role === "tool" ? (
-                      <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.8rem", color: "var(--text-secondary)" }}>
-                        <Wrench size={13} />
-                        <span>{msg.tool_name || "Werkzeug"}</span>
-                      </div>
-                    ) : msg.content ? (
+                    {msg.content ? (
                       <>
                         {stripSecretRequestTag(msg.content) && (
                           <SafeMarkdown text={stripSecretRequestTag(msg.content)} />
