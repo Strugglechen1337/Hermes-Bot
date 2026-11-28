@@ -84,7 +84,6 @@ import {
   updateProfileModel,
   updateServerUiPreferences,
   uploadChatFile,
-  browserDesktopUrl,
   fetchBrowserDesktop,
   type BrowserDesktopInfo,
   type QuickPromptItem,
@@ -122,6 +121,7 @@ import {
 } from "../lib/usageLimits";
 import { BotAvatar } from "./BotAvatar";
 import { BotMediaGallerySheet } from "./BotMediaGallerySheet";
+import { BrowserDesktopView } from "./BrowserDesktopView";
 import { BotRoutinesSheet } from "./BotRoutinesSheet";
 import { ConfirmSheet } from "./ConfirmSheet";
 import { InChatConnectionCard } from "./InChatConnectionCard";
@@ -275,6 +275,7 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
   const [showSessionsSheet, setShowSessionsSheet] = useState(false);
   const [showActionsSheet, setShowActionsSheet] = useState(false);
   const [browserDesktop, setBrowserDesktop] = useState<BrowserDesktopInfo | null>(null);
+  const [showBrowserDesktop, setShowBrowserDesktop] = useState(false);
   useEffect(() => {
     let cancelled = false;
     setBrowserDesktop(null);
@@ -3159,6 +3160,16 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
         }}
       />
 
+      {showBrowserDesktop && browserDesktop?.available && browserDesktop.path && (
+        <BrowserDesktopView
+          path={browserDesktop.path}
+          botLabel={visual.label}
+          deskLabel={browserDesktop.label}
+          avatar={<BotAvatar visual={visual} imageUrl={avatarUrl} size="sm" />}
+          onClose={() => setShowBrowserDesktop(false)}
+        />
+      )}
+
       <Sheet open={showActionsSheet} onClose={() => setShowActionsSheet(false)}>
         <div className="sheet-header">
           <h2 className="sheet-title">{visual.label}</h2>
@@ -3219,13 +3230,13 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
           >
             <Paperclip size={17} /> Datei oder PDF senden
           </button>
-          {browserDesktop?.available && browserDesktop.port && (
+          {browserDesktop?.available && browserDesktop.path && (
             <button
               type="button"
               className="btn full"
               onClick={() => {
                 setShowActionsSheet(false);
-                window.open(browserDesktopUrl(browserDesktop.port as number), "_blank", "noopener");
+                setShowBrowserDesktop(true);
               }}
             >
               <Monitor size={17} /> Browser live öffnen &amp; helfen

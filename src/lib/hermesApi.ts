@@ -768,7 +768,9 @@ export async function fetchAppUpdateStatus(force = false): Promise<AppUpdateStat
 
 export interface BrowserDesktopInfo {
   available: boolean;
-  port?: number;
+  id?: string;
+  /** App-relative path of the proxied live desktop, e.g. `/desk/9223/`. */
+  path?: string;
   label?: string;
 }
 
@@ -777,11 +779,6 @@ export async function fetchBrowserDesktop(profile: string): Promise<BrowserDeskt
   return requestJson<BrowserDesktopInfo>(
     `/api/pocket/browser-desktop?profile=${encodeURIComponent(profile)}`
   );
-}
-
-/** The desktop is published on the same host as the app, on its own HTTPS port. */
-export function browserDesktopUrl(port: number): string {
-  return `${window.location.protocol}//${window.location.hostname}:${port}/`;
 }
 
 export async function savePocketSecret(

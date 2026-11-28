@@ -6,6 +6,7 @@ import { resolveConfig, type ServerConfig } from "./config.js";
 import { handleHermesHttpProxy } from "./proxy.js";
 import { startHermesPushWatcher } from "./pushWatcher.js";
 import { attachHermesWsBridge } from "./wsBridge.js";
+import { handleDeskHttp, handleDeskUpgrade, isDeskUpgrade } from "./deskProxy.js";
 
 const MIME_TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -79,6 +80,7 @@ export function createHermesPocketServer(config: ServerConfig): http.Server {
 
   const server = http.createServer((req, res) => {
     void (async () => {
+      if (await handleDeskHttp(req, res, config)) return;
       const handled = await handleHermesHttpProxy(req, res, config);
       if (!handled) {
         serveStaticSpa(req, res, config.staticDir);
@@ -87,6 +89,10 @@ export function createHermesPocketServer(config: ServerConfig): http.Server {
   });
 
   server.on("upgrade", (req, socket, head) => {
+    if (isDeskUpgrade(req)) {
+      void handleDeskUpgrade(req, socket, head, config);
+      return;
+    }
     attachHermesWsBridge(wss, req, socket, head, config);
   });
 

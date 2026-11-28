@@ -25,7 +25,7 @@ describe("resolveBrowserDesktop", () => {
   }
   it("maps the CDP port to a desktop port", () => {
     const h = home("mia", "browser:\n  cdp_url: http://127.0.0.1:9223\n");
-    expect(resolveBrowserDesktop("mia", { hermesHome: h })).toMatchObject({ available: true, port: 8445 });
+    expect(resolveBrowserDesktop("mia", { hermesHome: h })).toMatchObject({ available: true, id: "9223", path: "/desk/9223/" });
   });
   it("is unavailable for private bots even when attached", () => {
     const h = home("emma", "browser:\n  cdp_url: http://127.0.0.1:9224\n");
