@@ -789,6 +789,14 @@ export async function insertBrowserText(id: string, text: string): Promise<{ ok:
   });
 }
 
+/** Scrolls the page shown in the bot's live browser by about one screen. */
+export async function scrollBrowser(id: string, direction: "up" | "down"): Promise<{ ok: boolean }> {
+  return requestJson<{ ok: boolean }>("/api/pocket/browser-desktop/scroll", {
+    method: "POST",
+    body: JSON.stringify({ id, direction }),
+  });
+}
+
 export async function savePocketSecret(
   key: string,
   value: string,

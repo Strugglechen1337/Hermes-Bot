@@ -790,7 +790,10 @@ export async function handleHermesHttpProxy(
     return handlePocketUpdateRoute(req, res, config, parsedUrl);
   }
 
-  if (pathname === "/api/pocket/browser-desktop/text") {
+  if (
+    pathname === "/api/pocket/browser-desktop/text" ||
+    pathname === "/api/pocket/browser-desktop/scroll"
+  ) {
     return handlePocketBrowserTextRoute(req, res, config, parsedUrl);
   }
 

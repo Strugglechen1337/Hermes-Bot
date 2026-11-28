@@ -5,7 +5,39 @@ import { describe, expect, it } from "vitest";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { WebSocketServer } from "ws";
-import { insertTextIntoActivePage, parseBrowserCdpPort, resolveBrowserDesktop } from "./browserDesktop.js";
+import { insertTextIntoActivePage, parseBrowserCdpPort, resolveBrowserDesktop, scrollActivePage } from "./browserDesktop.js";
+
+describe("scrollActivePage", () => {
+  it("sends a wheel event of about 80% of the page height to the visible tab", async () => {
+    const wheel: Record<string, unknown>[] = [];
+    const wss = new WebSocketServer({ noServer: true });
+    const srv = http.createServer((_req, res) => {
+      const port = (srv.address() as AddressInfo).port;
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify([{ type: "page", webSocketDebuggerUrl: `ws://127.0.0.1:${port}/p` }]));
+    });
+    srv.on("upgrade", (req, socket, head) =>
+      wss.handleUpgrade(req, socket, head, (ws) => {
+        ws.on("message", (raw) => {
+          const m = JSON.parse(String(raw));
+          if (m.method === "Input.dispatchMouseEvent") wheel.push(m.params);
+          const expr = String(m.params?.expression || "");
+          const value = expr.includes("innerWidth") ? [1000, 500] : "visible";
+          ws.send(JSON.stringify({ id: m.id, result: { result: { value } } }));
+        });
+      })
+    );
+    await new Promise<void>((r) => srv.listen(0, "127.0.0.1", r));
+    await scrollActivePage((srv.address() as AddressInfo).port, "down");
+    await scrollActivePage((srv.address() as AddressInfo).port, "up");
+    wss.close();
+    await new Promise<void>((r) => srv.close(() => r()));
+    expect(wheel).toEqual([
+      { type: "mouseWheel", x: 500, y: 250, deltaX: 0, deltaY: 400 },
+      { type: "mouseWheel", x: 500, y: 250, deltaX: 0, deltaY: -400 },
+    ]);
+  });
+});
 
 describe("insertTextIntoActivePage", () => {
   it("types into the page that is visible, not a background tab", async () => {

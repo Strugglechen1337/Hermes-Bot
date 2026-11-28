@@ -110,8 +110,8 @@ function cdpSession(
 
 const MAX_INSERT_CHARS = 5000;
 
-/** Types text into the focused field of the page the user currently sees in the desktop. */
-export async function insertTextIntoActivePage(cdpPort: number, text: string): Promise<void> {
+/** Websocket URL of the page tab the user currently sees (falls back to the first tab). */
+async function visiblePageWs(cdpPort: number): Promise<string> {
   const res = await fetch(`http://127.0.0.1:${cdpPort}/json/list`);
   const pages = ((await res.json()) as CdpTarget[]).filter((t) => t.type === "page" && t.webSocketDebuggerUrl);
   if (pages.length === 0) throw new Error("no_page");
@@ -129,8 +129,34 @@ export async function insertTextIntoActivePage(cdpPort: number, text: string): P
       // try next page
     }
   }
-  await cdpSession(chosen.webSocketDebuggerUrl as string, [
+  return chosen.webSocketDebuggerUrl as string;
+}
+
+/** Types text into the focused field of the page the user currently sees in the desktop. */
+export async function insertTextIntoActivePage(cdpPort: number, text: string): Promise<void> {
+  await cdpSession(await visiblePageWs(cdpPort), [
     { method: "Input.insertText", params: { text: text.slice(0, MAX_INSERT_CHARS) } },
+  ]);
+}
+
+/** Scrolls the page the user currently sees by about 80 % of its height. */
+export async function scrollActivePage(cdpPort: number, direction: "up" | "down"): Promise<void> {
+  const ws = await visiblePageWs(cdpPort);
+  const [size] = (await cdpSession(ws, [
+    { method: "Runtime.evaluate", params: { expression: "[innerWidth, innerHeight]", returnByValue: true } },
+  ])) as { result?: { value?: number[] } }[];
+  const [w, h] = size?.result?.value ?? [800, 600];
+  await cdpSession(ws, [
+    {
+      method: "Input.dispatchMouseEvent",
+      params: {
+        type: "mouseWheel",
+        x: Math.round(w / 2),
+        y: Math.round(h / 2),
+        deltaX: 0,
+        deltaY: (direction === "down" ? 1 : -1) * Math.round(h * 0.8),
+      },
+    },
   ]);
 }
 
@@ -162,7 +188,9 @@ export async function handlePocketBrowserTextRoute(
   config: ServerConfig,
   parsedUrl: URL
 ): Promise<boolean> {
-  if (parsedUrl.pathname !== "/api/pocket/browser-desktop/text") return false;
+  const isText = parsedUrl.pathname === "/api/pocket/browser-desktop/text";
+  const isScroll = parsedUrl.pathname === "/api/pocket/browser-desktop/scroll";
+  if (!isText && !isScroll) return false;
   if ((req.method || "GET").toUpperCase() !== "POST") {
     sendJson(res, 405, { error: "method_not_allowed" });
     return true;
@@ -178,12 +206,25 @@ export async function handlePocketBrowserTextRoute(
   try {
     const body = await readJsonBody(req);
     const id = String(body.id ?? "");
-    const text = typeof body.text === "string" ? body.text : "";
-    if (!deskMap()[id] || !text) {
+    if (!deskMap()[id]) {
       sendJson(res, 400, { error: "bad_request" });
       return true;
     }
-    await insertTextIntoActivePage(Number(id), text);
+    if (isScroll) {
+      const direction = body.direction === "up" ? "up" : body.direction === "down" ? "down" : null;
+      if (!direction) {
+        sendJson(res, 400, { error: "bad_request" });
+        return true;
+      }
+      await scrollActivePage(Number(id), direction);
+    } else {
+      const text = typeof body.text === "string" ? body.text : "";
+      if (!text) {
+        sendJson(res, 400, { error: "bad_request" });
+        return true;
+      }
+      await insertTextIntoActivePage(Number(id), text);
+    }
     sendJson(res, 200, { ok: true });
   } catch (err) {
     sendJson(res, 502, { error: err instanceof Error ? err.message : "failed" });

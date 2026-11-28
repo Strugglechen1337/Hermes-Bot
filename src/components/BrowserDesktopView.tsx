@@ -1,6 +1,6 @@
-import { ChevronLeft, ClipboardPaste, Hand, Monitor, X } from "lucide-react";
-import React, { useEffect, useState } from "react";
-import { insertBrowserText } from "../lib/hermesApi";
+import { ChevronDown, ChevronLeft, ChevronUp, ClipboardPaste, Hand, Minus, Monitor, Plus, X } from "lucide-react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { insertBrowserText, scrollBrowser } from "../lib/hermesApi";
 
 interface BrowserDesktopViewProps {
   /** Desktop id (the CDP port the bots attach to), e.g. `9223`. */
@@ -11,6 +11,21 @@ interface BrowserDesktopViewProps {
   deskLabel?: string;
   avatar?: React.ReactNode;
   onClose: () => void;
+}
+
+const DENSITY_KEY = "hermes-pocket.deskDensity";
+const MIN_DENSITY = 1;
+const MAX_DENSITY = 3;
+const DENSITY_STEP = 0.25;
+
+function loadDensity(): number {
+  try {
+    const n = Number(localStorage.getItem(DENSITY_KEY));
+    if (Number.isFinite(n) && n >= MIN_DENSITY && n <= MAX_DENSITY) return n;
+  } catch {
+    // ignore
+  }
+  return 1.75;
 }
 
 function useLandscape(): boolean {
@@ -25,12 +40,15 @@ function useLandscape(): boolean {
   return landscape;
 }
 
+const even = (n: number) => Math.max(2, Math.round(n / 2) * 2);
+
 /**
  * Full-screen live view of the browser a bot works in. Touches are blocked until the user taps
  * "Steuerung übernehmen", so scrolling the page never moves the bot's mouse by accident.
- * The remote screen resizes to this view (also after rotating to landscape). The desktop is
- * served through the app's own session (no second password); "Einfügen" types text into the
- * focused field of the shown page.
+ * The remote screen gets (view size × density) pixels and is scaled to fit, so a higher density
+ * shows more of the page in smaller print. Edges keep clear of the notch. The desktop is served
+ * through the app's own session (no second password); "Einfügen" types text into the focused
+ * field of the shown page and ▲/▼ scroll it.
  */
 export const BrowserDesktopView: React.FC<BrowserDesktopViewProps> = ({
   id,
@@ -46,8 +64,53 @@ export const BrowserDesktopView: React.FC<BrowserDesktopViewProps> = ({
   const [pasteText, setPasteText] = useState("");
   const [pasteBusy, setPasteBusy] = useState(false);
   const [pasteMsg, setPasteMsg] = useState<string | null>(null);
-  // The desktop (Selkies) resizes its screen to this frame by itself, also after rotating.
-  const src = path;
+  const [density, setDensity] = useState(loadDensity);
+  const frameRef = useRef<HTMLIFrameElement | null>(null);
+  const boxRef = useRef<HTMLDivElement | null>(null);
+
+  const applyResolution = useCallback(() => {
+    const win = frameRef.current?.contentWindow;
+    const box = boxRef.current;
+    if (!win || !box) return;
+    const rect = box.getBoundingClientRect();
+    if (rect.width < 50 || rect.height < 50) return;
+    const width = Math.min(4000, even(rect.width * density));
+    const height = Math.min(4000, even(rect.height * density));
+    win.postMessage({ type: "setScaleLocally", value: true }, window.location.origin);
+    win.postMessage({ type: "setManualResolution", width, height }, window.location.origin);
+  }, [density]);
+
+  // Re-apply after load (the stream needs a moment), on size changes and on density changes.
+  useEffect(() => {
+    const timers = [1200, 3000, 6000].map((ms) => window.setTimeout(applyResolution, ms));
+    return () => timers.forEach((t) => window.clearTimeout(t));
+  }, [applyResolution]);
+
+  useEffect(() => {
+    const box = boxRef.current;
+    if (!box || typeof ResizeObserver === "undefined") return;
+    let timer: number | undefined;
+    const ro = new ResizeObserver(() => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(applyResolution, 400);
+    });
+    ro.observe(box);
+    return () => {
+      window.clearTimeout(timer);
+      ro.disconnect();
+    };
+  }, [applyResolution]);
+
+  function changeDensity(delta: number) {
+    // Bigger print = fewer remote pixels per view pixel.
+    const next = Math.min(MAX_DENSITY, Math.max(MIN_DENSITY, Math.round((density + delta) * 100) / 100));
+    setDensity(next);
+    try {
+      localStorage.setItem(DENSITY_KEY, String(next));
+    } catch {
+      // ignore
+    }
+  }
 
   async function readClipboard() {
     try {
@@ -73,6 +136,10 @@ export const BrowserDesktopView: React.FC<BrowserDesktopViewProps> = ({
     }
   }
 
+  function scroll(direction: "up" | "down") {
+    void scrollBrowser(id, direction).catch(() => undefined);
+  }
+
   return (
     <div
       role="dialog"
@@ -83,9 +150,9 @@ export const BrowserDesktopView: React.FC<BrowserDesktopViewProps> = ({
         style={{
           display: "flex",
           alignItems: "center",
-          gap: 10,
+          gap: 8,
           padding: landscape
-            ? "4px 12px"
+            ? "4px calc(env(safe-area-inset-right, 0px) + 12px) 4px calc(env(safe-area-inset-left, 0px) + 12px)"
             : "calc(env(safe-area-inset-top, 0px) + 10px) 12px 10px",
           background: "var(--bg, #0b0b0f)",
           borderBottom: "1px solid var(--border, #222)",
@@ -107,6 +174,24 @@ export const BrowserDesktopView: React.FC<BrowserDesktopViewProps> = ({
             )}
           </div>
         </div>
+        <button
+          type="button"
+          className="icon-btn ghost"
+          aria-label="Größer darstellen"
+          disabled={density <= MIN_DENSITY}
+          onClick={() => changeDensity(-DENSITY_STEP)}
+        >
+          <Plus size={18} />
+        </button>
+        <button
+          type="button"
+          className="icon-btn ghost"
+          aria-label="Kleiner darstellen"
+          disabled={density >= MAX_DENSITY}
+          onClick={() => changeDensity(DENSITY_STEP)}
+        >
+          <Minus size={18} />
+        </button>
         <button type="button" className="btn" onClick={() => setPasteOpen((v) => !v)}>
           <ClipboardPaste size={16} /> Einfügen
         </button>
@@ -136,11 +221,24 @@ export const BrowserDesktopView: React.FC<BrowserDesktopViewProps> = ({
         </div>
       )}
 
-      <div style={{ position: "relative", flex: 1, minHeight: 0 }}>
+      <div
+        ref={boxRef}
+        style={{
+          position: "relative",
+          flex: 1,
+          minHeight: 0,
+          // Keep the stream clear of the notch / rounded corners so edge controls stay reachable.
+          marginLeft: "env(safe-area-inset-left, 0px)",
+          marginRight: "env(safe-area-inset-right, 0px)",
+          marginBottom: "env(safe-area-inset-bottom, 0px)",
+        }}
+      >
         <iframe
+          ref={frameRef}
           title={`Browser von ${botLabel}`}
-          src={src}
+          src={path}
           allow="clipboard-read; clipboard-write; fullscreen"
+          onLoad={() => window.setTimeout(applyResolution, 800)}
           style={{ position: "absolute", inset: 0, width: "100%", height: "100%", border: 0, background: "#000" }}
         />
         {!controlling && (
@@ -150,16 +248,29 @@ export const BrowserDesktopView: React.FC<BrowserDesktopViewProps> = ({
           type="button"
           className="btn"
           onClick={() => setControlling((v) => !v)}
-          style={{
-            position: "absolute",
-            left: 16,
-            bottom: "calc(env(safe-area-inset-bottom, 0px) + 18px)",
-            zIndex: 2,
-            borderRadius: 999,
-          }}
+          style={{ position: "absolute", left: 16, bottom: 18, zIndex: 2, borderRadius: 999 }}
         >
           <Hand size={16} /> {controlling ? "Steuerung abgeben" : "Steuerung übernehmen"}
         </button>
+        <div
+          style={{
+            position: "absolute",
+            right: 12,
+            top: "50%",
+            transform: "translateY(-50%)",
+            zIndex: 2,
+            display: "flex",
+            flexDirection: "column",
+            gap: 10,
+          }}
+        >
+          <button type="button" className="glass-circle-btn" aria-label="Seite hoch scrollen" onClick={() => scroll("up")}>
+            <ChevronUp size={22} />
+          </button>
+          <button type="button" className="glass-circle-btn" aria-label="Seite runter scrollen" onClick={() => scroll("down")}>
+            <ChevronDown size={22} />
+          </button>
+        </div>
       </div>
     </div>
   );
