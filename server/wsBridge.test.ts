@@ -116,6 +116,46 @@ describe("wsBridge hold while a Hermes request is unanswered", () => {
     expect(heldBridgeCount()).toBe(0);
   });
 
+  const submit = JSON.stringify({ jsonrpc: "2.0", id: "hp-1", method: "prompt.submit", params: { text: "x" } });
+  const complete = JSON.stringify({
+    jsonrpc: "2.0",
+    method: "event",
+    params: { type: "message.complete", payload: {} },
+  });
+
+  it("keeps Hermes connected while a prompt runs and delivers a code request that arrives after the drop", async () => {
+    const first = await connectClient();
+    await waitFor(() => upstreamSockets.length === 1);
+    first.ws.send(submit);
+    await waitFor(() => upstreamReceived.length === 1);
+
+    first.ws.terminate();
+    await waitFor(() => heldBridgeCount() === 1);
+
+    // The agent asks for the 2FA code while the phone is away.
+    upstreamSockets[0].send(request);
+    await new Promise((r) => setTimeout(r, 150));
+    expect(upstreamClosed).toBe(0);
+
+    const second = await connectClient();
+    await waitFor(() => second.messages.length === 1);
+    expect(JSON.parse(second.messages[0]).method).toBe("vault.code");
+    expect(upstreamSockets).toHaveLength(1);
+  });
+
+  it("lets go of a held connection when the turn completes while the phone is away", async () => {
+    const first = await connectClient();
+    await waitFor(() => upstreamSockets.length === 1);
+    first.ws.send(submit);
+    await waitFor(() => upstreamReceived.length === 1);
+    first.ws.terminate();
+    await waitFor(() => heldBridgeCount() === 1);
+
+    upstreamSockets[0].send(complete);
+    await waitFor(() => upstreamClosed === 1);
+    expect(heldBridgeCount()).toBe(0);
+  });
+
   it("closes Hermes right away when no request is open", async () => {
     const first = await connectClient();
     await waitFor(() => upstreamSockets.length === 1);

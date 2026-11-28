@@ -78,6 +78,8 @@ interface Bridge {
   pendingRequests: Map<string, string>;
   /** Events that arrived while no client was attached. */
   buffered: QueuedFrame[];
+  /** A prompt is running (client sent prompt.submit, no message.complete/error yet). */
+  busySince: number | null;
   /** Client messages sent before the upstream socket finished connecting. */
   clientQueue: QueuedFrame[];
   holdTimer: NodeJS.Timeout | null;
@@ -143,16 +145,44 @@ function holdBridge(bridge: Bridge) {
     safeClose(previous.upstream, 1000, "replaced_by_newer_hold");
   }
   heldBridges.set(bridge.key, bridge);
-  bridge.holdTimer = setTimeout(() => {
-    if (heldBridges.get(bridge.key) === bridge) heldBridges.delete(bridge.key);
-    bridge.holdTimer = null;
-    safeClose(bridge.upstream, 1000, "client_closed");
-  }, holdMs());
-  bridge.holdTimer.unref?.();
+  armHoldTimer(bridge);
 }
 
+/** A turn that never reports completion must not pin the socket forever. */
+const MAX_BUSY_MS = 15 * 60_000;
+
+function isBusy(bridge: Bridge): boolean {
+  return bridge.busySince !== null && Date.now() - bridge.busySince < MAX_BUSY_MS;
+}
+
+/**
+ * Hold while the user still owes an answer OR while the agent is working: a 2FA code request can
+ * arrive seconds after the phone dropped the socket, and without a connected client Hermes
+ * declines it instantly.
+ */
 function shouldHold(bridge: Bridge): boolean {
-  return bridge.pendingRequests.size > 0 && bridge.upstream.readyState === WebSocket.OPEN;
+  return (
+    bridge.upstream.readyState === WebSocket.OPEN &&
+    (bridge.pendingRequests.size > 0 || isBusy(bridge))
+  );
+}
+
+function releaseHeld(bridge: Bridge, reason: string) {
+  if (bridge.holdTimer) {
+    clearTimeout(bridge.holdTimer);
+    bridge.holdTimer = null;
+  }
+  if (heldBridges.get(bridge.key) === bridge) heldBridges.delete(bridge.key);
+  safeClose(bridge.upstream, 1000, reason);
+}
+
+function armHoldTimer(bridge: Bridge) {
+  if (bridge.holdTimer) clearTimeout(bridge.holdTimer);
+  bridge.holdTimer = setTimeout(() => {
+    bridge.holdTimer = null;
+    releaseHeld(bridge, "client_closed");
+  }, holdMs());
+  bridge.holdTimer.unref?.();
 }
 
 function attachClient(bridge: Bridge, clientWs: WebSocket) {
@@ -165,6 +195,9 @@ function attachClient(bridge: Bridge, clientWs: WebSocket) {
         : Buffer.from(data as ArrayBuffer)
       : data.toString();
     const frame = parseFrame(payload, isBinary);
+    if (frame && frame.method === "prompt.submit") {
+      bridge.busySince = Date.now();
+    }
     if (
       frame &&
       frame.id !== undefined &&
@@ -289,6 +322,7 @@ export function attachHermesWsBridge(
         client: null,
         pendingRequests: new Map(),
         buffered: [],
+        busySince: null,
         clientQueue: [],
         holdTimer: null,
       };
@@ -311,7 +345,22 @@ export function attachHermesWsBridge(
         if (isServerRequest) {
           bridge.pendingRequests.set(String(frame.id), (data as Buffer).toString("utf8"));
         }
+        const params = frame && typeof frame.params === "object" ? (frame.params as Record<string, unknown> | null) : null;
+        const eventType = frame && frame.method === "event" && params ? params.type : undefined;
+        if (eventType === "message.complete" || eventType === "error") {
+          bridge.busySince = null;
+        }
         const client = bridge.client;
+        if (!client && heldBridges.get(key) === bridge) {
+          if (isServerRequest) {
+            // The user still has time to come back: restart the grace period from now.
+            armHoldTimer(bridge);
+          } else if (!shouldHold(bridge)) {
+            // Turn finished while the phone was away and nothing is waiting: let go.
+            releaseHeld(bridge, "turn_complete");
+            return;
+          }
+        }
         if (client && client.readyState === WebSocket.OPEN) {
           client.send(data, { binary: isBinary });
         } else if (!client && !isServerRequest && bridge.buffered.length < MAX_BUFFERED_FRAMES) {
