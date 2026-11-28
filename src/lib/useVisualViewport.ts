@@ -26,13 +26,52 @@ export function useVisualViewport(): VisualViewportState {
     const root = document.documentElement;
     const vv = window.visualViewport;
     let rafId = 0;
+    let caretTimers: number[] = [];
     let lastKbOpen = false;
     let lastVvHeight = 0;
+    let lastVvOffsetTop = 0;
     let lastIsLandscape = window.innerWidth > window.innerHeight;
     let baselineHeight = Math.max(
       window.innerHeight,
       vv ? Math.round(vv.height) : 0
     );
+
+    // Forces iOS Safari / WKWebView to re-anchor the native blue text caret
+    // after `--vvh` / `--vvt` shifts the composer above the software keyboard.
+    const realignFocusedCaret = () => {
+      const el = document.activeElement;
+      if (
+        !(el instanceof HTMLTextAreaElement) &&
+        !(
+          el instanceof HTMLInputElement &&
+          !["file", "checkbox", "radio", "button", "submit"].includes(el.type)
+        )
+      ) {
+        return;
+      }
+      try {
+        const start = el.selectionStart;
+        const end = el.selectionEnd;
+        const prevTransform = el.style.transform;
+        el.style.transform = "translateZ(0.01px)";
+        void el.offsetHeight;
+        el.style.transform = prevTransform;
+        if (typeof start === "number" && typeof end === "number") {
+          el.setSelectionRange(start, end);
+        }
+      } catch {
+        // Ignore inputs that don't support setSelectionRange
+      }
+    };
+
+    const scheduleCaretRealign = () => {
+      for (const id of caretTimers) window.clearTimeout(id);
+      caretTimers = [];
+      requestAnimationFrame(realignFocusedCaret);
+      for (const delay of [80, 220, 380]) {
+        caretTimers.push(window.setTimeout(realignFocusedCaret, delay));
+      }
+    };
 
     const resetViewportZoomIfNeeded = () => {
       if (vv && Math.abs((vv.scale || 1) - 1) > 0.02) {
@@ -81,19 +120,29 @@ export function useVisualViewport(): VisualViewportState {
         root.style.setProperty("--vvt", "0px");
       }
 
-      if (kbOpen !== lastKbOpen || (kbOpen && vvHeight !== lastVvHeight)) {
+      if (
+        kbOpen !== lastKbOpen ||
+        (kbOpen && (vvHeight !== lastVvHeight || vvOffsetTop !== lastVvOffsetTop))
+      ) {
         const openedNow = kbOpen && !lastKbOpen;
         lastKbOpen = kbOpen;
         lastVvHeight = vvHeight;
+        lastVvOffsetTop = vvOffsetTop;
         window.dispatchEvent(
           new CustomEvent("hp:viewport-change", {
             detail: { keyboardOpen: kbOpen, openedNow, height: vvHeight },
           })
         );
+        if (kbOpen && focused) {
+          scheduleCaretRealign();
+        }
       }
 
       if (window.scrollX !== 0 || window.scrollY !== 0) {
         window.scrollTo(0, 0);
+        if (kbOpen && focused) {
+          scheduleCaretRealign();
+        }
       }
     };
 
@@ -144,6 +193,7 @@ export function useVisualViewport(): VisualViewportState {
     return () => {
       if (rafId) cancelAnimationFrame(rafId);
       for (const id of orientationTimers) window.clearTimeout(id);
+      for (const id of caretTimers) window.clearTimeout(id);
       if (vv) {
         vv.removeEventListener("resize", scheduleSync);
         vv.removeEventListener("scroll", scheduleSync);
