@@ -50,7 +50,7 @@ import type {
   HermesSessionSummary,
   HermesUsageLimitError,
 } from "../../shared/types";
-import { evaluateApprovalPolicy, loadAutoApproveSafe } from "../lib/approvalPolicy";
+import { evaluateApprovalPolicy, loadApprovalRules, loadAutoApproveSafe } from "../lib/approvalPolicy";
 import { splitSnapshotPrompt } from "../lib/snapshotPrompt";
 import {
   BOT_CHAT_TITLE,
@@ -1113,7 +1113,7 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
           ...(req.params as HermesPendingApproval),
           server_request_id: req.id,
         };
-        const decision = evaluateApprovalPolicy(appr, loadAutoApproveSafe());
+        const decision = evaluateApprovalPolicy(appr, loadAutoApproveSafe(), loadApprovalRules(), profile.name);
         if (decision.action === "auto_once") {
           hermesWs.sendResponse(req.id, { choice: "once" });
           const label = appr.description || appr.command || appr.tool_name || "Aktion";
@@ -1349,7 +1349,7 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
         scrollIfNearBottom();
       } else if (ev.type === "approval.requested") {
         const appr = ev.payload as HermesPendingApproval;
-        const decision = evaluateApprovalPolicy(appr, loadAutoApproveSafe());
+        const decision = evaluateApprovalPolicy(appr, loadAutoApproveSafe(), loadApprovalRules(), profile.name);
         const sid = activeSessionRef.current;
         const promptId = appr.prompt_id || appr.request_id || appr.approval_id || appr.id;
         if (decision.action === "auto_once" && sid && promptId) {

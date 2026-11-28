@@ -12,7 +12,7 @@
   </p>
 
   <p>
-    <img alt="Version" src="https://img.shields.io/badge/Version-2.2.0-f59e0b?style=flat-square" />
+    <img alt="Version" src="https://img.shields.io/badge/Version-2.3.0-f59e0b?style=flat-square" />
     <img alt="Node" src="https://img.shields.io/badge/Node-20%2B-34d399?style=flat-square" />
     <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5-38bdf8?style=flat-square" />
     <img alt="Tailscale Empfohlen" src="https://img.shields.io/badge/Tailscale-Empfohlen-6366f1?style=flat-square" />

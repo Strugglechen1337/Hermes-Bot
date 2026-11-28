@@ -69,3 +69,21 @@ describe("approvalPolicy", () => {
     expect(res.category).toBe("manual");
   });
 });
+
+describe("approval rules", () => {
+  const rules = [
+    { id: "1", match: "docker ps", action: "allow" as const },
+    { id: "2", match: "kubectl", action: "ask" as const },
+    { id: "3", match: "rm -rf", action: "allow" as const },
+    { id: "4", match: "nur-mia", action: "allow" as const, profile: "mia" },
+  ];
+  it("ask rule wins, allow rule works in manual mode, protections stay", () => {
+    expect(evaluateApprovalPolicy({ command: "docker ps -a" }, false, rules).action).toBe("auto_once");
+    expect(evaluateApprovalPolicy({ command: "kubectl get pods" }, true, rules)).toMatchObject({ action: "ask", category: "rule" });
+    expect(evaluateApprovalPolicy({ command: "rm -rf /tmp/x" }, true, rules)).toMatchObject({ action: "ask", category: "destructive" });
+  });
+  it("respects per-bot rules", () => {
+    expect(evaluateApprovalPolicy({ command: "nur-mia" }, false, rules, "emma").action).toBe("ask");
+    expect(evaluateApprovalPolicy({ command: "nur-mia" }, false, rules, "mia").action).toBe("auto_once");
+  });
+});

@@ -60,7 +60,13 @@ const PrivateVaultSheet = lazy(() =>
 const RoutinesView = lazy(() =>
   import("./components/RoutinesView").then((m) => ({ default: m.RoutinesView }))
 );
-import { loadAutoApproveSafe, saveAutoApproveSafe } from "./lib/approvalPolicy";
+import {
+  loadApprovalRules,
+  loadAutoApproveSafe,
+  saveApprovalRules,
+  saveAutoApproveSafe,
+  type ApprovalRule,
+} from "./lib/approvalPolicy";
 import { fetchBotAvatar } from "./lib/avatarStore";
 import { getBotVisual } from "./lib/botTheme";
 import { toTimestampMs } from "./lib/format";
@@ -207,6 +213,13 @@ export const App: React.FC = () => {
   const [pushBusy, setPushBusy] = useState(false);
   const [pushFeedback, setPushFeedback] = useState<string | null>(null);
   const [autoApproveSafe, setAutoApproveSafe] = useState<boolean>(() => loadAutoApproveSafe());
+  const [approvalRules, setApprovalRules] = useState<ApprovalRule[]>(() => loadApprovalRules());
+  const [ruleText, setRuleText] = useState("");
+  const [ruleAction, setRuleAction] = useState<ApprovalRule["action"]>("allow");
+  const updateApprovalRules = (next: ApprovalRule[]) => {
+    setApprovalRules(next);
+    saveApprovalRules(next);
+  };
 
   // Live unread / new-bot-message tracking across all bots and groups
   const [recentByProfile, setRecentByProfile] = useState<Record<string, HermesSessionSummary>>({});
@@ -1765,6 +1778,57 @@ export const App: React.FC = () => {
           >
             {autoApproveSafe ? "Auf manuell umstellen" : "Automatisch aktivieren (außer Mails & Löschen)"}
           </button>
+          <div style={{ marginTop: 12, fontWeight: 700, fontSize: "0.82rem" }}>Eigene Regeln</div>
+          <p style={{ margin: "4px 0 8px", fontSize: "0.74rem", color: "var(--text-secondary)", lineHeight: 1.4 }}>
+            Enthält eine Anfrage den Suchtext, wird sie immer erlaubt oder immer nachgefragt. „Fragen“ gilt vor allem
+            anderen; „Erlauben“ hebt den Schutz für E-Mails, Löschen und sensible Dateien nie auf.
+          </p>
+          {approvalRules.map((r) => (
+            <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, fontSize: "0.8rem" }}>
+              <span className={`pill ${r.action === "allow" ? "ok" : ""}`}>{r.action === "allow" ? "Erlauben" : "Fragen"}</span>
+              <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {r.match}
+              </span>
+              <button
+                type="button"
+                className="icon-btn ghost"
+                aria-label="Regel löschen"
+                onClick={() => updateApprovalRules(approvalRules.filter((x) => x.id !== r.id))}
+              >
+                <X size={16} />
+              </button>
+            </div>
+          ))}
+          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            <input
+              value={ruleText}
+              onChange={(e) => setRuleText(e.target.value)}
+              placeholder="Suchtext, z. B. docker ps"
+              style={{ flex: 1, minWidth: 0, fontSize: 16 }}
+            />
+            <select
+              value={ruleAction}
+              onChange={(e) => setRuleAction(e.target.value as ApprovalRule["action"])}
+              style={{ fontSize: 16 }}
+            >
+              <option value="allow">Erlauben</option>
+              <option value="ask">Fragen</option>
+            </select>
+            <button
+              type="button"
+              className="btn sm primary"
+              disabled={!ruleText.trim()}
+              onClick={() => {
+                updateApprovalRules([
+                  ...approvalRules,
+                  { id: `r-${Date.now()}`, match: ruleText.trim().slice(0, 80), action: ruleAction },
+                ]);
+                setRuleText("");
+              }}
+            >
+              Neu
+            </button>
+          </div>
         </div>
 
         <button
@@ -1871,7 +1935,7 @@ export const App: React.FC = () => {
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
             <div>
               <div style={{ fontWeight: 700, fontSize: "0.86rem" }}>
-                Hermes Bots {updateStatus ? `v${updateStatus.currentVersion}` : "v2.2.0"}
+                Hermes Bots {updateStatus ? `v${updateStatus.currentVersion}` : "v2.3.0"}
               </div>
               <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 2 }}>
                 {updateStatus
