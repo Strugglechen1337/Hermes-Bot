@@ -13,6 +13,7 @@ import {
   ChevronUp,
   Copy,
   Cpu,
+  Monitor,
   FileText,
   Forward,
   Gauge,
@@ -83,6 +84,9 @@ import {
   updateProfileModel,
   updateServerUiPreferences,
   uploadChatFile,
+  browserDesktopUrl,
+  fetchBrowserDesktop,
+  type BrowserDesktopInfo,
   type QuickPromptItem,
 } from "../lib/hermesApi";
 import { hermesWs, type WsConnectionState } from "../lib/hermesWs";
@@ -270,6 +274,21 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
 
   const [showSessionsSheet, setShowSessionsSheet] = useState(false);
   const [showActionsSheet, setShowActionsSheet] = useState(false);
+  const [browserDesktop, setBrowserDesktop] = useState<BrowserDesktopInfo | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    setBrowserDesktop(null);
+    fetchBrowserDesktop(profile.name)
+      .then((info) => {
+        if (!cancelled) setBrowserDesktop(info);
+      })
+      .catch(() => {
+        if (!cancelled) setBrowserDesktop(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [profile.name]);
   const [sessionToDelete, setSessionToDelete] = useState<HermesSessionSummary | null>(null);
   const [deletingSession, setDeletingSession] = useState(false);
   const [hasNewBelow, setHasNewBelow] = useState(false);
@@ -3200,6 +3219,19 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
           >
             <Paperclip size={17} /> Datei oder PDF senden
           </button>
+          {browserDesktop?.available && browserDesktop.port && (
+            <button
+              type="button"
+              className="btn full"
+              onClick={() => {
+                setShowActionsSheet(false);
+                window.open(browserDesktopUrl(browserDesktop.port as number), "_blank", "noopener");
+              }}
+            >
+              <Monitor size={17} /> Browser live öffnen &amp; helfen
+              {browserDesktop.label ? ` (${browserDesktop.label})` : ""}
+            </button>
+          )}
           <button
             type="button"
             className="btn full"

@@ -766,6 +766,24 @@ export async function fetchAppUpdateStatus(force = false): Promise<AppUpdateStat
   return requestJson<AppUpdateStatus>(`/api/pocket/update-check${force ? "?force=1" : ""}`);
 }
 
+export interface BrowserDesktopInfo {
+  available: boolean;
+  port?: number;
+  label?: string;
+}
+
+/** Live browser desktop this bot is attached to (null when it has none). */
+export async function fetchBrowserDesktop(profile: string): Promise<BrowserDesktopInfo> {
+  return requestJson<BrowserDesktopInfo>(
+    `/api/pocket/browser-desktop?profile=${encodeURIComponent(profile)}`
+  );
+}
+
+/** The desktop is published on the same host as the app, on its own HTTPS port. */
+export function browserDesktopUrl(port: number): string {
+  return `${window.location.protocol}//${window.location.hostname}:${port}/`;
+}
+
 export async function savePocketSecret(
   key: string,
   value: string,

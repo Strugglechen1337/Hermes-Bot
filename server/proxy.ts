@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import type { ServerConfig } from "./config.js";
 import { appendAutonomousGuidance } from "../shared/botAutonomy.js";
+import { handlePocketBrowserDesktopRoute } from "./browserDesktop.js";
 import { handlePocketChecklistsRoute } from "./checklists.js";
 import { handlePocketBookmarksRoute } from "./bookmarks.js";
 import { handlePocketMediaRoute } from "./media.js";
@@ -787,6 +788,16 @@ export async function handleHermesHttpProxy(
 
   if (pathname === "/api/pocket/update-check") {
     return handlePocketUpdateRoute(req, res, config, parsedUrl);
+  }
+
+  if (pathname === "/api/pocket/browser-desktop") {
+    return handlePocketBrowserDesktopRoute(
+      req,
+      res,
+      config,
+      parsedUrl,
+      (name) => readPocketProfileMeta(name).private === true
+    );
   }
 
   if (pathname === "/api/pocket/transcribe") {
