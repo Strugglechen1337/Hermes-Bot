@@ -189,6 +189,9 @@ interface QueuedAttachment {
   previewUrl?: string;
 }
 
+/** Bot whose live browser is open; survives a remount of the chat (e.g. on rotation). */
+let browserDesktopOpenFor: string | null = null;
+
 export const DirectChatView: React.FC<DirectChatViewProps> = ({
   profile,
   allProfiles,
@@ -275,7 +278,15 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
   const [showSessionsSheet, setShowSessionsSheet] = useState(false);
   const [showActionsSheet, setShowActionsSheet] = useState(false);
   const [browserDesktop, setBrowserDesktop] = useState<BrowserDesktopInfo | null>(null);
-  const [showBrowserDesktop, setShowBrowserDesktop] = useState(false);
+  // Rotating the phone switches the app between one- and two-column layout, which remounts this
+  // chat. Remember (at module level) that the live browser was open so it comes back after rotating.
+  const [showBrowserDesktop, setShowBrowserDesktopState] = useState(
+    () => browserDesktopOpenFor === profile.name
+  );
+  const setShowBrowserDesktop = (open: boolean) => {
+    browserDesktopOpenFor = open ? profile.name : null;
+    setShowBrowserDesktopState(open);
+  };
   useEffect(() => {
     let cancelled = false;
     setBrowserDesktop(null);

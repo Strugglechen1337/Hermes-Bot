@@ -46,7 +46,8 @@ export const BrowserDesktopView: React.FC<BrowserDesktopViewProps> = ({
   const [pasteText, setPasteText] = useState("");
   const [pasteBusy, setPasteBusy] = useState(false);
   const [pasteMsg, setPasteMsg] = useState<string | null>(null);
-  const src = `${path}?autoconnect=1&resize=remote`;
+  // The desktop (Selkies) resizes its screen to this frame by itself, also after rotating.
+  const src = path;
 
   async function readClipboard() {
     try {
