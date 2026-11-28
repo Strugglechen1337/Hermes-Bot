@@ -693,11 +693,11 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
     }
   }, [scrollToBottom]);
 
-  // Keep the viewport pinned to the latest message while a bot is streaming or
-  // right after a new reply commits to the DOM (unless the user scrolled up to read history)
+  // Keep the viewport pinned to the latest message ONLY while the user is already
+  // near the bottom — never fight the user when they scroll up during streaming
   useEffect(() => {
     if (loadingChat) return;
-    if (isStreaming || isNearBottomRef.current) {
+    if (isNearBottomRef.current) {
       scrollToBottom();
     }
   }, [loadingChat, isStreaming, messages, scrollToBottom]);
@@ -1129,7 +1129,7 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
           }
           return next;
         });
-        scrollToBottom();
+        scrollIfNearBottom();
       } else if (ev.type === "reasoning.delta" || ev.type === "thinking.delta") {
         const chunk = typeof ev.payload.text === "string" ? ev.payload.text : "";
         if (!chunk) return;
@@ -1153,7 +1153,7 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
           }
           return next;
         });
-        scrollToBottom();
+        scrollIfNearBottom();
       } else if (ev.type === "tool.start" || ev.type === "tool.progress") {
         const toolName =
           (typeof ev.payload.tool_name === "string" && ev.payload.tool_name) ||
@@ -1237,7 +1237,11 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
           }
           return next;
         });
-        scrollToBottomWithSettle();
+        if (isNearBottomRef.current) {
+          scrollToBottomWithSettle();
+        } else {
+          setHasNewBelow(true);
+        }
         // Automatically detect when a bot asks for a Vault entry (card/address/shop login)
         // OR a single/multi-field .env secret form and pop up the protected card in chat.
         if (finalText) {
@@ -2671,7 +2675,7 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
             ref={textareaRef}
             className="composer-input"
             rows={1}
-            enterKeyHint="send"
+            enterKeyHint="enter"
             value={input}
             onFocus={scrollToBottomWithSettle}
             onChange={(e) => {
@@ -2679,7 +2683,7 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
               autoResizeInput(e.target);
             }}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
                 e.preventDefault();
                 if (!uploadingAttachments) void handleSend();
               }

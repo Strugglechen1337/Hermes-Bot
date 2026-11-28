@@ -1087,12 +1087,12 @@ const GroupRoomView: React.FC<GroupRoomViewProps> = ({
             ref={textareaRef}
             className="composer-input"
             rows={1}
-            enterKeyHint="send"
+            enterKeyHint="enter"
             value={input}
             onFocus={scrollToBottomWithSettle}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
                 e.preventDefault();
                 if (!sending) void handleSend();
               }
