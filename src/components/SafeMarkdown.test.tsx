@@ -146,4 +146,17 @@ describe("SafeMarkdown", () => {
       "/api/pocket/media?path=%2Fhome%2Fuser%2F.hermes%2Fprofiles%2Fmika%2Fcache%2Fdocuments%2Fnative-inputs%2Fabc123%2Fupload__gbjdk4h.jpeg"
     );
   });
+
+  it("renders bare local .hermes video paths inline as a video player with share/save button", () => {
+    const text =
+      "Das Video ist mit Ton heruntergeladen:\n\n" +
+      "/home/user/.hermes/cache/scratch/threads-baox/threads-video.mp4";
+
+    const { container } = render(<SafeMarkdown text={text} />);
+    expect(screen.getByText(/Das Video ist mit Ton heruntergeladen/i)).toBeInTheDocument();
+    const video = container.querySelector("video");
+    expect(video).not.toBeNull();
+    expect(video?.getAttribute("src")).toContain("threads-video.mp4");
+    expect(screen.getByRole("button", { name: /Teilen \/ Sichern/i })).toBeInTheDocument();
+  });
 });

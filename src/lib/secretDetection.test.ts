@@ -207,5 +207,18 @@ describe("secretDetection", () => {
     expect(explicitCard?.isExplicit).toBe(true);
     expect(explicitCard?.choices).toEqual(["20 °C behalten", "19 °C einstellen", "Nicht ändern"]);
     expect(stripSecretRequestTag("Text [CHOICE_CARD: Frage? | Ja | Nein]")).toBe("Text");
+
+    // Alternative "X oder Y?" questions extract the actual options instead of bogus Ja/Nein
+    const altCard = extractInlineChoiceCard(
+      "Der Link führt zu einem Threads-Video. Was möchtest du damit machen – den Inhalt erklärt bekommen oder das Video herunterladen?",
+      true
+    );
+    expect(altCard?.choices).toEqual([
+      "Den Inhalt erklärt bekommen",
+      "Das Video herunterladen",
+    ]);
+
+    // Open W-questions without explicit alternatives must NOT show bogus Ja/Nein
+    expect(extractInlineChoiceCard("Was möchtest du heute kochen?", true)).toBeNull();
   });
 });

@@ -103,6 +103,16 @@ export function extractLocalMediaAttachments(text: string): {
       }
     );
 
+    // 4. Bare local Hermes media paths (e.g. `/home/.../.hermes/.../video.mp4`)
+    //    so downloaded videos, images, audio, and PDFs render inline with player/save button
+    out = out.replace(
+      /(^|[\s(`])(\/(?:home|Users|tmp|var\/tmp)\/[^\s`<>()[\]"']*\/\.hermes\/[^\s`<>()[\]"']+\.(?:mp4|webm|mov|jpe?g|png|webp|gif|avif|mp3|wav|ogg|opus|m4a|aac|pdf))(?=$|[\s)`.,;:!?])/gi,
+      (_m, prefix: string, filePath: string) => {
+        pushMedia(filePath);
+        return prefix;
+      }
+    );
+
     out = out
       .replace(/^\s*[-*•]\s*$/gm, "")
       .replace(/\n{3,}/g, "\n\n");
@@ -531,6 +541,37 @@ const LocalMediaBlock: React.FC<{
     return (
       <div className="md-media-video-wrap">
         <video controls playsInline preload="metadata" src={item.src} className="md-media-video" />
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 8,
+            padding: "6px 10px",
+            background: "rgba(12, 14, 19, 0.72)",
+            borderTop: "1px solid var(--border-subtle)",
+          }}
+        >
+          <span
+            style={{
+              fontSize: "0.76rem",
+              color: "var(--text-secondary)",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {item.filename}
+          </span>
+          <button
+            type="button"
+            className="btn sm"
+            disabled={busy}
+            onClick={() => void handleAction()}
+          >
+            <Share2 size={13} /> {busy ? "Lädt…" : "Teilen / Sichern"}
+          </button>
+        </div>
       </div>
     );
   }

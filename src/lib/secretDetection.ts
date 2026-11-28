@@ -544,14 +544,44 @@ export function extractInlineChoiceCard(
     .map((s) => s.replace(/[*_`]+/g, "").trim())
     .filter(Boolean);
 
+  const capitalizeOption = (raw: string): string => {
+    const clean = raw.replace(/[?.!,;:]+$/, "").trim();
+    if (!clean) return "";
+    return clean.charAt(0).toUpperCase() + clean.slice(1);
+  };
+
+  // 1. Check for explicit "A oder B?" alternative questions (e.g.
+  //    "Was möchtest du damit machen – den Inhalt erklärt bekommen oder das Video herunterladen?")
+  for (const s of sentences) {
+    if (!s.endsWith("?") || s.length < 14 || s.length > 240) continue;
+    const altMatch = s.match(/(?:[–—:]\s*)([^?–—:]{3,70}?)\s+oder\s+([^?–—:]{3,70}?)\?$/i);
+    if (altMatch) {
+      const optA = capitalizeOption(altMatch[1]);
+      const optB = capitalizeOption(altMatch[2]);
+      if (optA.length >= 3 && optB.length >= 3 && optA.toLowerCase() !== optB.toLowerCase()) {
+        return {
+          question: s,
+          choices: [optA, optB],
+          isExplicit: false,
+        };
+      }
+    }
+  }
+
+  // 2. Check for true Yes/No decision questions — strictly skip open W-questions
+  //    ("Was möchtest du...", "Welche...", "Wie...", etc.) so they never get "Ja / Nein"
+  const OPEN_W_QUESTION_RE = /^(?:was|welche[rsnm]?|wie|wo|wohin|woher|wann|wer|wen|wem|warum|weshalb|wieso|wofür|womit)\b/i;
+  const YES_NO_QUESTION_RE =
+    /^(?:(?:hi|hallo|hey)\s+[^,!?]{1,24}[,!]\s*)?(?:soll ich|möchtest du|willst du|darf ich|kann ich|wollen wir|sollen wir|passt das|einverstanden)\b/i;
+
   const decisionQuestion = sentences.find(
     (s) =>
       s.endsWith("?") &&
       s.length >= 12 &&
       s.length <= 220 &&
-      /\b(soll ich|möchtest du|willst du|darf ich|kann ich|wollen wir|sollen wir|passt das|einverstanden)\b/i.test(
-        s
-      )
+      !OPEN_W_QUESTION_RE.test(s) &&
+      !/\boder\b/i.test(s) &&
+      YES_NO_QUESTION_RE.test(s)
   );
   if (!decisionQuestion) return null;
 
