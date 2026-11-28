@@ -6,6 +6,7 @@ import { resolveConfig, type ServerConfig } from "./config.js";
 import { handleHermesHttpProxy } from "./proxy.js";
 import { startHermesPushWatcher } from "./pushWatcher.js";
 import { attachHermesWsBridge } from "./wsBridge.js";
+import { syncGuidanceToAllProfiles } from "./guidanceSync.js";
 import { handleDeskHttp, handleDeskUpgrade, isDeskUpgrade } from "./deskProxy.js";
 
 const MIME_TYPES: Record<string, string> = {
@@ -107,6 +108,8 @@ const isEntrypoint =
 if (isEntrypoint) {
   const config = resolveConfig();
   const server = createHermesPocketServer(config);
+  const synced = syncGuidanceToAllProfiles();
+  if (synced.length) console.log(`[hermes-pocket] bot guidance refreshed for ${synced.length} profile(s)`);
   const pushWatcher = startHermesPushWatcher();
   server.on("close", () => {
     pushWatcher.stop();

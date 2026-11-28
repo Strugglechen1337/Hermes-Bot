@@ -1,6 +1,6 @@
-import { ChevronDown, ChevronLeft, ChevronUp, ClipboardPaste, Hand, Minus, Monitor, Plus, X } from "lucide-react";
+import { Check, ChevronDown, ChevronLeft, ChevronUp, ClipboardPaste, Circle, Hand, Minus, Monitor, Plus, Square, X } from "lucide-react";
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { insertBrowserText, scrollBrowser } from "../lib/hermesApi";
+import { insertBrowserText, recordBrowser, scrollBrowser } from "../lib/hermesApi";
 
 interface BrowserDesktopViewProps {
   /** Desktop id (the CDP port the bots attach to), e.g. `9223`. */
@@ -11,6 +11,11 @@ interface BrowserDesktopViewProps {
   deskLabel?: string;
   avatar?: React.ReactNode;
   onClose: () => void;
+  /** User finished helping: the bot should carry on from the current browser state. */
+  onDone?: () => void;
+  /** User recorded a task: hand the recorded steps to the bot so it can build a skill. */
+  onTeach?: (taskName: string, steps: string) => void;
+  initiallyRecording?: boolean;
 }
 
 const DENSITY_KEY = "hermes-pocket.deskDensity";
@@ -58,6 +63,9 @@ export const BrowserDesktopView: React.FC<BrowserDesktopViewProps> = ({
   deskLabel,
   avatar,
   onClose,
+  onDone,
+  onTeach,
+  initiallyRecording = false,
 }) => {
   const landscape = useLandscape();
   const [controlling, setControlling] = useState(false);
@@ -69,6 +77,11 @@ export const BrowserDesktopView: React.FC<BrowserDesktopViewProps> = ({
   useEffect(() => {
     setDensity(loadDensity(landscape));
   }, [landscape]);
+  const [recording, setRecording] = useState(initiallyRecording);
+  const [teachOpen, setTeachOpen] = useState(false);
+  const [taskName, setTaskName] = useState("");
+  const [teachBusy, setTeachBusy] = useState(false);
+  const [teachMsg, setTeachMsg] = useState<string | null>(null);
   const [appliedRes, setAppliedRes] = useState<string | null>(null);
   const frameRef = useRef<HTMLIFrameElement | null>(null);
   const boxRef = useRef<HTMLDivElement | null>(null);
@@ -148,6 +161,41 @@ export const BrowserDesktopView: React.FC<BrowserDesktopViewProps> = ({
     }
   }
 
+  async function startTeach() {
+    if (!taskName.trim() || teachBusy) return;
+    setTeachBusy(true);
+    setTeachMsg(null);
+    try {
+      await recordBrowser(id, "start");
+      setRecording(true);
+      setTeachOpen(false);
+      setControlling(true);
+    } catch {
+      setTeachMsg("Aufnahme konnte nicht gestartet werden.");
+    } finally {
+      setTeachBusy(false);
+    }
+  }
+
+  async function stopTeach() {
+    if (teachBusy) return;
+    setTeachBusy(true);
+    try {
+      const res = await recordBrowser(id, "stop");
+      setRecording(false);
+      if (!res.steps || !res.count) {
+        setTeachMsg("Es wurde nichts aufgezeichnet. Bedien die Seite mit „Steuerung übernehmen“ und versuch es nochmal.");
+        setTeachOpen(true);
+        return;
+      }
+      onTeach?.(taskName.trim() || "Neue Aufgabe", res.steps);
+    } catch {
+      setTeachMsg("Aufnahme konnte nicht beendet werden.");
+    } finally {
+      setTeachBusy(false);
+    }
+  }
+
   function scroll(direction: "up" | "down") {
     void scrollBrowser(id, direction).catch(() => undefined);
   }
@@ -214,6 +262,29 @@ export const BrowserDesktopView: React.FC<BrowserDesktopViewProps> = ({
         </button>
       </header>
 
+      {teachOpen && (
+        <div style={{ padding: 10, background: "var(--bg, #0b0b0f)", borderBottom: "1px solid var(--border, #222)" }}>
+          <input
+            value={taskName}
+            onChange={(e) => setTaskName(e.target.value)}
+            placeholder="Name der Aufgabe, z. B. Rechnung herunterladen"
+            style={{ width: "100%", boxSizing: "border-box", fontSize: 16 }}
+          />
+          <p style={{ fontSize: "0.76rem", color: "var(--text-muted, #888)", margin: "6px 0" }}>
+            Mach die Aufgabe einmal vor. Passwörter, Codes und Kartendaten werden nicht aufgezeichnet.
+          </p>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button type="button" className="btn primary" disabled={!taskName.trim() || teachBusy} onClick={() => void startTeach()}>
+              <Circle size={14} /> Aufnahme starten
+            </button>
+            <button type="button" className="icon-btn ghost" aria-label="Schließen" onClick={() => setTeachOpen(false)}>
+              <X size={18} />
+            </button>
+          </div>
+          {teachMsg && <p style={{ fontSize: "0.78rem", color: "var(--text-muted, #888)", margin: "6px 0 0" }}>{teachMsg}</p>}
+        </div>
+      )}
+
       {pasteOpen && (
         <div style={{ padding: 10, background: "var(--bg, #0b0b0f)", borderBottom: "1px solid var(--border, #222)" }}>
           <textarea
@@ -269,6 +340,24 @@ export const BrowserDesktopView: React.FC<BrowserDesktopViewProps> = ({
         >
           <Hand size={16} /> {controlling ? "Steuerung abgeben" : "Steuerung übernehmen"}
         </button>
+        <div style={{ position: "absolute", left: 16, bottom: 66, zIndex: 2, display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {recording ? (
+            <button type="button" className="btn primary" disabled={teachBusy} onClick={() => void stopTeach()} style={{ borderRadius: 999 }}>
+              <Square size={14} /> Aufnahme beenden &amp; Bot lernen lassen
+            </button>
+          ) : (
+            onTeach && (
+              <button type="button" className="btn" onClick={() => setTeachOpen((v) => !v)} style={{ borderRadius: 999 }}>
+                <Circle size={14} /> Aufgabe vormachen
+              </button>
+            )
+          )}
+          {onDone && !recording && (
+            <button type="button" className="btn primary" onClick={onDone} style={{ borderRadius: 999 }}>
+              <Check size={16} /> Ich bin fertig
+            </button>
+          )}
+        </div>
         <div
           style={{
             position: "absolute",

@@ -301,6 +301,20 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
       cancelled = true;
     };
   }, [profile.name]);
+  // Refresh the computer status (online / tabs / recording) whenever the menu opens.
+  useEffect(() => {
+    if (!showActionsSheet || !browserDesktop?.available) return;
+    let cancelled = false;
+    fetchBrowserDesktop(profile.name)
+      .then((info) => {
+        if (!cancelled && info.available) setBrowserDesktop(info);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showActionsSheet, profile.name]);
   const [sessionToDelete, setSessionToDelete] = useState<HermesSessionSummary | null>(null);
   const [deletingSession, setDeletingSession] = useState(false);
   const [hasNewBelow, setHasNewBelow] = useState(false);
@@ -1631,9 +1645,9 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
     return false;
   }
 
-  async function handleSend() {
+  async function handleSend(overrideText?: string) {
     stopActiveDictation();
-    const rawText = (textareaRef.current?.value ?? input).trim();
+    const rawText = (overrideText ?? textareaRef.current?.value ?? input).trim();
     const pendingFiles = [...attachments];
     if (!rawText && pendingFiles.length === 0) return;
 
@@ -3179,6 +3193,24 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
           deskLabel={browserDesktop.label}
           avatar={<BotAvatar visual={visual} imageUrl={avatarUrl} size="sm" />}
           onClose={() => setShowBrowserDesktop(false)}
+          initiallyRecording={browserDesktop.recording === true}
+          onDone={() => {
+            setShowBrowserDesktop(false);
+            void handleSend(
+              "Ich bin im Browser fertig (Anmeldung oder Schritt erledigt). Schau dir den aktuellen Stand im Browser an und mach genau dort weiter, wo du aufgehört hast."
+            );
+          }}
+          onTeach={(name, steps) => {
+            setShowBrowserDesktop(false);
+            void handleSend(
+              `Ich habe dir im Browser eine Aufgabe vorgemacht: „${name}“.
+
+Aufgezeichnete Schritte (Passwörter, Codes und Zahlungsdaten wurden bewusst NICHT aufgezeichnet):
+${steps}
+
+Bitte lege daraus einen wiederverwendbaren Skill an: kurze Schritt-für-Schritt-Anleitung, Seitenelemente nur als Hinweis (bei geänderter Seite neu orientieren), geheime Eingaben immer über browser_vault oder Rückfrage. Teste den Ablauf einmal, wenn er harmlos ist, und sag mir danach, wie ich ihn auslösen kann.`
+            );
+          }}
         />
       )}
 
@@ -3253,6 +3285,11 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
             >
               <Monitor size={17} /> Browser live öffnen &amp; helfen
               {browserDesktop.label ? ` (${browserDesktop.label})` : ""}
+              {browserDesktop.online === false
+                ? " · nicht erreichbar"
+                : typeof browserDesktop.tabs === "number"
+                  ? ` · bereit, ${browserDesktop.tabs} Tab${browserDesktop.tabs === 1 ? "" : "s"}`
+                  : ""}
             </button>
           )}
           <button

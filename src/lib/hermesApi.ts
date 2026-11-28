@@ -772,6 +772,9 @@ export interface BrowserDesktopInfo {
   /** App-relative path of the proxied live desktop, e.g. `/desk/9223/`. */
   path?: string;
   label?: string;
+  online?: boolean;
+  tabs?: number;
+  recording?: boolean;
 }
 
 /** Live browser desktop this bot is attached to (null when it has none). */
@@ -794,6 +797,17 @@ export async function scrollBrowser(id: string, direction: "up" | "down"): Promi
   return requestJson<{ ok: boolean }>("/api/pocket/browser-desktop/scroll", {
     method: "POST",
     body: JSON.stringify({ id, direction }),
+  });
+}
+
+/** Starts or stops recording the user's actions in the bot's live browser ("Teach a task"). */
+export async function recordBrowser(
+  id: string,
+  action: "start" | "stop"
+): Promise<{ ok: boolean; count?: number; steps?: string }> {
+  return requestJson<{ ok: boolean; count?: number; steps?: string }>("/api/pocket/browser-desktop/record", {
+    method: "POST",
+    body: JSON.stringify({ id, action }),
   });
 }
 

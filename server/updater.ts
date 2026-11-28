@@ -60,7 +60,7 @@ function readLocalVersion(): string {
       // continue
     }
   }
-  return "2.1.0";
+  return "2.2.0";
 }
 
 function sendJson(res: ServerResponse, status: number, payload: Record<string, unknown>): void {

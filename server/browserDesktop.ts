@@ -7,6 +7,7 @@ import { WebSocket } from "ws";
 import { deskMap } from "./deskProxy.js";
 import { isSameOriginRequest } from "./security.js";
 import { verifyHermesSession } from "./push.js";
+import { formatSteps, isRecording, startRecording, stopRecording } from "./browserRecorder.js";
 
 /**
  * Tells the app which live browser desktop (KasmVNC behind Tailscale Serve) a bot is attached to,
@@ -190,7 +191,8 @@ export async function handlePocketBrowserTextRoute(
 ): Promise<boolean> {
   const isText = parsedUrl.pathname === "/api/pocket/browser-desktop/text";
   const isScroll = parsedUrl.pathname === "/api/pocket/browser-desktop/scroll";
-  if (!isText && !isScroll) return false;
+  const isRecord = parsedUrl.pathname === "/api/pocket/browser-desktop/record";
+  if (!isText && !isScroll && !isRecord) return false;
   if ((req.method || "GET").toUpperCase() !== "POST") {
     sendJson(res, 405, { error: "method_not_allowed" });
     return true;
@@ -208,6 +210,21 @@ export async function handlePocketBrowserTextRoute(
     const id = String(body.id ?? "");
     if (!deskMap()[id]) {
       sendJson(res, 400, { error: "bad_request" });
+      return true;
+    }
+    if (isRecord) {
+      const action = body.action === "start" ? "start" : body.action === "stop" ? "stop" : null;
+      if (!action) {
+        sendJson(res, 400, { error: "bad_request" });
+        return true;
+      }
+      if (action === "start") {
+        startRecording(Number(id));
+        sendJson(res, 200, { ok: true });
+      } else {
+        const steps = stopRecording(Number(id));
+        sendJson(res, 200, { ok: true, count: steps.length, steps: formatSteps(steps) });
+      }
       return true;
     }
     if (isScroll) {
@@ -254,6 +271,22 @@ export async function handlePocketBrowserDesktopRoute(
     return true;
   }
   const profile = (parsedUrl.searchParams.get("profile") || "").trim();
-  sendJson(res, 200, resolveBrowserDesktop(profile, { isPrivate: isPrivate(profile) }));
+  const info = resolveBrowserDesktop(profile, { isPrivate: isPrivate(profile) });
+  if (!info.available || !info.id) {
+    sendJson(res, 200, info);
+    return true;
+  }
+  // Live status for the bot profile: is the browser up and how many tabs are open?
+  let online = false;
+  let tabs = 0;
+  try {
+    const r = await fetch(`http://127.0.0.1:${info.id}/json/list`, { signal: AbortSignal.timeout(1500) });
+    const list = (await r.json()) as { type?: string }[];
+    online = true;
+    tabs = list.filter((t) => t.type === "page").length;
+  } catch {
+    // container down
+  }
+  sendJson(res, 200, { ...info, online, tabs, recording: isRecording(Number(info.id)) });
   return true;
 }

@@ -1871,7 +1871,7 @@ export const App: React.FC = () => {
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
             <div>
               <div style={{ fontWeight: 700, fontSize: "0.86rem" }}>
-                Hermes Bots {updateStatus ? `v${updateStatus.currentVersion}` : "v2.1.0"}
+                Hermes Bots {updateStatus ? `v${updateStatus.currentVersion}` : "v2.2.0"}
               </div>
               <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 2 }}>
                 {updateStatus
