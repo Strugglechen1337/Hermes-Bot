@@ -18,14 +18,15 @@ const MIN_DENSITY = 1;
 const MAX_DENSITY = 3;
 const DENSITY_STEP = 0.25;
 
-function loadDensity(): number {
+/** Portrait needs larger print than landscape, so the size is remembered per orientation. */
+function loadDensity(landscape: boolean): number {
   try {
-    const n = Number(localStorage.getItem(DENSITY_KEY));
+    const n = Number(localStorage.getItem(`${DENSITY_KEY}.${landscape ? "land" : "port"}`));
     if (Number.isFinite(n) && n >= MIN_DENSITY && n <= MAX_DENSITY) return n;
   } catch {
     // ignore
   }
-  return 1.75;
+  return landscape ? 1.5 : 1.25;
 }
 
 function useLandscape(): boolean {
@@ -64,7 +65,10 @@ export const BrowserDesktopView: React.FC<BrowserDesktopViewProps> = ({
   const [pasteText, setPasteText] = useState("");
   const [pasteBusy, setPasteBusy] = useState(false);
   const [pasteMsg, setPasteMsg] = useState<string | null>(null);
-  const [density, setDensity] = useState(loadDensity);
+  const [density, setDensity] = useState(() => loadDensity(landscape));
+  useEffect(() => {
+    setDensity(loadDensity(landscape));
+  }, [landscape]);
   const frameRef = useRef<HTMLIFrameElement | null>(null);
   const boxRef = useRef<HTMLDivElement | null>(null);
 
@@ -106,7 +110,7 @@ export const BrowserDesktopView: React.FC<BrowserDesktopViewProps> = ({
     const next = Math.min(MAX_DENSITY, Math.max(MIN_DENSITY, Math.round((density + delta) * 100) / 100));
     setDensity(next);
     try {
-      localStorage.setItem(DENSITY_KEY, String(next));
+      localStorage.setItem(`${DENSITY_KEY}.${landscape ? "land" : "port"}`, String(next));
     } catch {
       // ignore
     }
