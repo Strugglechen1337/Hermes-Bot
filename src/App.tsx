@@ -179,6 +179,11 @@ export const App: React.FC = () => {
     text: string;
     id: number;
   } | null>(null);
+  const [pushTargetSession, setPushTargetSession] = useState<{
+    botName: string;
+    sessionId: string | null;
+    nonce: number;
+  } | null>(null);
   const [isWideLayout, setIsWideLayout] = useState<boolean>(() =>
     typeof window !== "undefined" && typeof window.matchMedia === "function"
       ? window.matchMedia("(min-width: 740px)").matches
@@ -421,15 +426,21 @@ export const App: React.FC = () => {
       }
     };
 
-    const openBotFromPush = (botName: string) => {
+    const openBotFromPush = (botName: string, sessionId?: string | null) => {
       const clean = botName.trim();
       if (!clean) return;
       setShowAccountSheet(false);
       setShowCredentialVault(false);
       setShowPagesArchive(false);
+      setShowBookmarks(false);
       setShowAiProviders(false);
       setTab("bots");
       setSelectedBotName(clean);
+      setPushTargetSession({
+        botName: clean,
+        sessionId: sessionId?.trim() || null,
+        nonce: Date.now(),
+      });
       markBotRead(clean);
     };
 
@@ -452,12 +463,17 @@ export const App: React.FC = () => {
         const res = await cache.match("/__pending_push_nav");
         if (!res) return;
         await cache.delete("/__pending_push_nav");
-        const payload = (await res.json()) as { bot?: string; room?: string; ts?: number } | null;
+        const payload = (await res.json()) as {
+          bot?: string;
+          session?: string;
+          room?: string;
+          ts?: number;
+        } | null;
         if (payload && typeof payload.ts === "number" && Date.now() - payload.ts < 60_000) {
           if (payload.room) {
             openRoomFromPush(payload.room);
           } else if (payload.bot) {
-            openBotFromPush(payload.bot);
+            openBotFromPush(payload.bot, payload.session);
           }
         }
       } catch {
@@ -467,13 +483,14 @@ export const App: React.FC = () => {
 
     const params = new URLSearchParams(window.location.search);
     const botParam = params.get("bot")?.trim();
+    const sessionParam = params.get("session")?.trim();
     const roomParam = params.get("room")?.trim();
     if (roomParam) {
       openRoomFromPush(roomParam);
       void clearPendingPushNav();
       window.history.replaceState({}, "", window.location.pathname);
     } else if (botParam) {
-      openBotFromPush(botParam);
+      openBotFromPush(botParam, sessionParam);
       void clearPendingPushNav();
       const promptParam = params.get("prompt");
       if (promptParam && promptParam.trim()) {
@@ -494,6 +511,7 @@ export const App: React.FC = () => {
       const data = ev.data as {
         type?: string;
         bot?: string;
+        session?: string;
         room?: string;
         body?: string;
         title?: string;
@@ -502,7 +520,7 @@ export const App: React.FC = () => {
         openRoomFromPush(data.room);
         void clearPendingPushNav();
       } else if (data?.type === "hp:open-bot" && data.bot) {
-        openBotFromPush(data.bot);
+        openBotFromPush(data.bot, data.session);
         void clearPendingPushNav();
       } else if (data?.type === "hp:bot-message" && data.bot) {
         markBotUnread(data.bot, {
@@ -1442,6 +1460,7 @@ export const App: React.FC = () => {
               selectedBotName={selectedBotName}
               layoutMode="chat-only"
               draftPrefill={draftPrefill}
+              pushTargetSession={pushTargetSession}
               onConsumeDraftPrefill={() => setDraftPrefill(null)}
               onForwardToBot={handleForwardToBot}
               onSelectBot={handleSelectBot}

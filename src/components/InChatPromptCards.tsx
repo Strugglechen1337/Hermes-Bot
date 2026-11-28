@@ -31,6 +31,7 @@ import type {
 import { saveProfileSecret } from "../lib/hermesApi";
 import {
   isPlaintextFormFieldKey,
+  type DetectedChoiceCard,
   type DetectedDealCard,
   type DetectedPocketPage,
   type DetectedSecretRequest,
@@ -276,6 +277,117 @@ export const ClarifyPromptCard: React.FC<ClarifyPromptCardProps> = ({
           </button>
         </div>
       )}
+    </div>
+  );
+};
+
+export interface InlineChoiceCardProps {
+  card: DetectedChoiceCard;
+  botLabel: string;
+  disabled?: boolean;
+  onReply: (answer: string) => void;
+}
+
+/**
+ * Interactive Multiple-Choice + custom free-text card rendered inline for bot
+ * decision questions (including background Cronjob responses and `[CHOICE_CARD: ...]`).
+ */
+export const InlineChoiceCard: React.FC<InlineChoiceCardProps> = ({
+  card,
+  botLabel,
+  disabled = false,
+  onReply,
+}) => {
+  const [customAnswer, setCustomAnswer] = useState("");
+  const [dismissed, setDismissed] = useState(false);
+
+  if (dismissed) return null;
+
+  const isCompactPair =
+    card.choices.length === 2 && card.choices.every((c) => c.trim().length <= 18);
+
+  const submitCustom = () => {
+    const val = customAnswer.trim();
+    if (!val || disabled) return;
+    setCustomAnswer("");
+    setDismissed(true);
+    onReply(val);
+  };
+
+  return (
+    <div
+      className="prompt-card clarify"
+      role="region"
+      aria-label={`Antwortauswahl für ${botLabel}`}
+      style={{ marginTop: 10 }}
+    >
+      <div className="prompt-card-header">
+        <div className="prompt-card-badge clarify">
+          <HelpCircle size={15} />
+          <span>Schnellantwort · {botLabel}</span>
+        </div>
+        <button
+          type="button"
+          className="prompt-card-dismiss"
+          aria-label="Auswahl ausblenden"
+          onClick={() => setDismissed(true)}
+        >
+          <X size={15} />
+        </button>
+      </div>
+
+      <div className="prompt-card-body">
+        <div className="prompt-question-block">
+          <div className="prompt-question-text">{card.question}</div>
+          <div className={`prompt-choices${isCompactPair ? " two-col" : ""}`}>
+            {card.choices.map((choice) => {
+              const lower = choice.trim().toLowerCase();
+              const isYes = lower === "ja" || lower.startsWith("ja,") || lower.startsWith("ja ");
+              const isNo = lower === "nein" || lower.startsWith("nein,") || lower.startsWith("nein ");
+              return (
+                <button
+                  key={choice}
+                  type="button"
+                  disabled={disabled}
+                  className={`prompt-choice-btn ${isYes ? "yes" : isNo ? "no" : ""}`}
+                  onClick={() => {
+                    setDismissed(true);
+                    onReply(choice);
+                  }}
+                >
+                  <span className="prompt-choice-indicator single" aria-hidden="true" />
+                  <span className="prompt-choice-label">{choice}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="prompt-custom-row">
+            <input
+              className="prompt-input"
+              value={customAnswer}
+              disabled={disabled}
+              onChange={(e) => setCustomAnswer(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  submitCustom();
+                }
+              }}
+              placeholder="Oder eigene Antwort eintragen…"
+            />
+            <button
+              type="button"
+              className="btn sm primary"
+              disabled={disabled || !customAnswer.trim()}
+              aria-label="Eigene Antwort senden"
+              onClick={submitCustom}
+            >
+              <Send size={14} />
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 };

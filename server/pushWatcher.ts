@@ -161,12 +161,21 @@ function isIncomingBotToBotDmText(rawText: string | null | undefined): boolean {
 export function isNonNotifiableAssistantMessage(row: WatchedDbMessageRow): boolean {
   const source = (row.session_source || "").trim().toLowerCase();
   const title = (row.session_title || "").trim().toLowerCase();
-  if (source === "subagent" || title.startsWith("subagent:")) {
+  // Skip internal subagent sessions and isolated cron-only sessions (cron outputs
+  // are delivered into the interactive Bot Chat as `Cronjob Response:` messages
+  // where the user can actually see and reply to them).
+  if (source === "subagent" || source === "cron" || title.startsWith("subagent:")) {
     return true;
   }
 
   const text = (row.content || "").trim();
   if (!text) return true;
+
+  // User-role rows are only notifiable when they are delivered Cronjob Responses in Bot Chat
+  if (row.role === "user") {
+    return !/^Cronjob Response:\s*/i.test(text);
+  }
+
   if (/^(?:\[SILENT\]|NO_REPLY)$/i.test(text)) return true;
   if (/^\[IMPORTANT:\s*Background process\b/i.test(text)) return true;
   if (/^\[ASYNC DELEGATION\b/i.test(text)) return true;
@@ -191,12 +200,17 @@ export function isNonNotifiableAssistantMessage(row: WatchedDbMessageRow): boole
 }
 
 export function formatPushPreview(rawText: string, maxLen = 160): string {
-  const hasMedia = /(?:^|\s)MEDIA:\s*\/[^\s\r\n]+/i.test(rawText);
-  const hasPage = /\[POCKET_PAGE:[^\]]+\]/i.test(rawText);
-  const hasPackage = /\[PACKAGE_CARD:[^\]]+\]/i.test(rawText);
+  // Strip Hermes Cronjob Response header/footer if present
+  const unwrapped = (rawText || "")
+    .replace(/^Cronjob Response:\s*[^\r\n]+\r?\n(?:\(job_id:\s*[^)]+\)\r?\n)?[-─]{3,}\s*\r?\n+/i, "")
+    .replace(/\r?\n*To stop or manage this job,[\s\S]*$/i, "");
 
-  const cleaned = (rawText || "")
-    .replace(/\[(?:POCKET_PAGE|PACKAGE_CARD|DEAL_CARD|SECRET_REQUEST|CHECKLIST|REACT):[^\]]*\]/gi, " ")
+  const hasMedia = /(?:^|\s)MEDIA:\s*\/[^\s\r\n]+/i.test(unwrapped);
+  const hasPage = /\[POCKET_PAGE:[^\]]+\]/i.test(unwrapped);
+  const hasPackage = /\[PACKAGE_CARD:[^\]]+\]/i.test(unwrapped);
+
+  const cleaned = unwrapped
+    .replace(/\[(?:POCKET_PAGE|PACKAGE_CARD|DEAL_CARD|SECRET_REQUEST|CHECKLIST|CHOICE_CARD|REACT):[^\]]*\]/gi, " ")
     .replace(/(?:^|\s)MEDIA:\s*\/[^\s\r\n]+/gi, " ")
     .replace(/```[\s\S]*?```/g, "[Code]")
     .replace(/!\[([^\]]*)\]\([^)]+\)/g, "$1")
@@ -353,7 +367,7 @@ export function startHermesPushWatcher(options: PushWatcherOptions = {}): {
         const safeLastId = Math.max(0, Math.floor(state.lastSeenId));
         const rows = await queryDb(
           target.dbPath,
-          `SELECT m.id, m.session_id, m.role, m.content, m.timestamp, s.source AS session_source, s.title AS session_title, (SELECT u.content FROM messages u WHERE u.session_id = m.session_id AND u.role = 'user' AND u.id < m.id ORDER BY u.id DESC LIMIT 1) AS prev_user_content FROM messages m LEFT JOIN sessions s ON s.id = m.session_id WHERE m.id > ${safeLastId} AND m.role = 'assistant' ORDER BY m.id ASC LIMIT 20;`
+          `SELECT m.id, m.session_id, m.role, m.content, m.timestamp, s.source AS session_source, s.title AS session_title, (SELECT u.content FROM messages u WHERE u.session_id = m.session_id AND u.role = 'user' AND u.id < m.id ORDER BY u.id DESC LIMIT 1) AS prev_user_content FROM messages m LEFT JOIN sessions s ON s.id = m.session_id WHERE m.id > ${safeLastId} AND (m.role = 'assistant' OR (m.role = 'user' AND m.content LIKE 'Cronjob Response:%')) ORDER BY m.id ASC LIMIT 20;`
         );
         if (rows.length > 0) {
           let maxId = state.lastSeenId;
@@ -376,11 +390,16 @@ export function startHermesPushWatcher(options: PushWatcherOptions = {}): {
           ) {
             const latest = candidates[candidates.length - 1];
             const preview = formatPushPreview(latest.content || "");
+            const targetSession = (latest.session_id || "").trim();
+            const deepLinkUrl = targetSession
+              ? `/?bot=${encodeURIComponent(target.profileName)}&session=${encodeURIComponent(targetSession)}`
+              : `/?bot=${encodeURIComponent(target.profileName)}`;
             const stats = await dispatch({
               title: target.displayName,
               body: preview,
               bot: target.profileName,
               tag: `hermes-bot-${target.profileName}`,
+              url: deepLinkUrl,
             });
             if (stats.sent > 0) {
               recordBotPushSent(target.profileName);

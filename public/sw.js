@@ -73,16 +73,18 @@ self.addEventListener("notificationclick", (event) => {
         ? `/?bot=${encodeURIComponent(targetBot)}`
         : "/";
   let targetRoom = "";
+  let targetSession = "";
   try {
     const parsedUrl = new URL(targetUrl, self.location.origin);
     targetRoom = (parsedUrl.searchParams.get("room") || "").trim();
+    targetSession = (parsedUrl.searchParams.get("session") || "").trim();
   } catch {
     // ignore
   }
 
   event.waitUntil(
     (async () => {
-      // Persist target bot or group room in Cache Storage before focusing/opening so iOS Safari
+      // Persist target bot/session or group room in Cache Storage before focusing/opening so iOS Safari
       // standalone PWAs never lose the deep-link if postMessage fires while frozen
       // or if openWindow strips query parameters.
       if ((targetBot || targetRoom) && typeof caches !== "undefined") {
@@ -91,7 +93,12 @@ self.addEventListener("notificationclick", (event) => {
           await cache.put(
             "/__pending_push_nav",
             new Response(
-              JSON.stringify({ bot: targetBot, room: targetRoom, ts: Date.now() }),
+              JSON.stringify({
+                bot: targetBot,
+                session: targetSession,
+                room: targetRoom,
+                ts: Date.now(),
+              }),
               { headers: { "Content-Type": "application/json" } }
             )
           );
@@ -115,7 +122,7 @@ self.addEventListener("notificationclick", (event) => {
           const navMsg = targetRoom
             ? { type: "hp:open-room", room: targetRoom }
             : targetBot
-              ? { type: "hp:open-bot", bot: targetBot }
+              ? { type: "hp:open-bot", bot: targetBot, session: targetSession }
               : null;
           if (navMsg) {
             client.postMessage(navMsg);

@@ -3,10 +3,12 @@ import {
   detectBotSecretForm,
   detectBotSecretRequest,
   detectBotVaultRequest,
+  extractInlineChoiceCard,
   extractPackageCards,
   extractPocketPages,
   extractProductDeals,
   isPlaintextFormFieldKey,
+  parseCronjobResponseMessage,
   stripSecretRequestTag,
 } from "./secretDetection";
 
@@ -178,5 +180,32 @@ describe("secretDetection", () => {
     expect(
       detectBotSecretRequest("Dein Token wurde erfolgreich gespeichert.")
     ).toBeNull();
+  });
+
+  it("parses Cronjob Response wrappers and extracts inline multiple-choice cards", () => {
+    const rawCron =
+      "Cronjob Response: Kinderzimmer-Heizung nachfragen\n" +
+      "(job_id: 376d544ef56c)\n" +
+      "-------------\n\n" +
+      "Hi Alex, soll ich die für die Nacht testweise gewünschten **20 °C im Kinderzimmer** dauerhaft in den Heizplan übernehmen?\n\n" +
+      "Bis zu deiner Entscheidung ändere ich den Heizplan nicht.\n\n" +
+      'To stop or manage this job, send me a new message (e.g. "stop reminder Kinderzimmer-Heizung nachfragen").';
+
+    const parsed = parseCronjobResponseMessage(rawCron);
+    expect(parsed?.jobName).toBe("Kinderzimmer-Heizung nachfragen");
+    expect(parsed?.body).not.toContain("job_id:");
+    expect(parsed?.body).not.toContain("To stop or manage this job");
+
+    const autoCard = extractInlineChoiceCard(rawCron, true);
+    expect(autoCard?.isExplicit).toBe(false);
+    expect(autoCard?.choices).toEqual(["Ja, übernehmen", "Nein, nicht ändern"]);
+
+    const explicitCard = extractInlineChoiceCard(
+      "Kurze Frage:\n[CHOICE_CARD: Welche Temperatur soll gelten? | 20 °C behalten | 19 °C einstellen | Nicht ändern]",
+      false
+    );
+    expect(explicitCard?.isExplicit).toBe(true);
+    expect(explicitCard?.choices).toEqual(["20 °C behalten", "19 °C einstellen", "Nicht ändern"]);
+    expect(stripSecretRequestTag("Text [CHOICE_CARD: Frage? | Ja | Nein]")).toBe("Text");
   });
 });

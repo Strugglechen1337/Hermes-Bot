@@ -93,9 +93,11 @@ import {
   detectBotVaultRequest,
   extractBotReactions,
   extractChecklists,
+  extractInlineChoiceCard,
   extractPackageCards,
   extractPocketPages,
   extractProductDeals,
+  parseCronjobResponseMessage,
   stripSecretRequestTag,
   type DetectedDealCard,
   type DetectedPocketPage,
@@ -121,6 +123,7 @@ import { PackageTrackingCard } from "./PackageTrackingCard";
 import {
   ApprovalPromptCard,
   ClarifyPromptCard,
+  InlineChoiceCard,
   ManualSecretCard,
   PocketPageCard,
   PocketPageViewer,
@@ -2098,6 +2101,16 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
             const myEmojis = sessionReactions[msgKey] || [];
             const botEmojis = botReactionsByMsgIdx[i] || [];
             const allEmojis = Array.from(new Set([...myEmojis, ...botEmojis]));
+            const cronParsed = parseCronjobResponseMessage(msg.content);
+            const effectiveRole: "user" | "assistant" | "system" = cronParsed
+              ? "assistant"
+              : msg.role;
+            const displayRawContent = cronParsed ? cronParsed.body : msg.content;
+            const isLatestMessage = i === messages.length - 1;
+            const inlineChoiceCard =
+              effectiveRole === "assistant" && !msg.streaming && !msg.error && isLatestMessage
+                ? extractInlineChoiceCard(msg.content, true)
+                : null;
 
             return (
               <React.Fragment key={String(msg.id ?? i)}>
@@ -2108,7 +2121,7 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
                 )}
                 <div
                   data-msg-idx={i}
-                  className={`msg-row ${msg.role}${activeMatchMsgIndex === i ? " chat-msg-match-highlight" : ""}`}
+                  className={`msg-row ${effectiveRole}${activeMatchMsgIndex === i ? " chat-msg-match-highlight" : ""}`}
                 >
                   {msg.role === "assistant" && msg.streaming && (
                     <div className="msg-author">
@@ -2179,10 +2192,30 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
                         )}
                       </div>
                     )}
-                    {msg.content ? (
+                    {cronParsed && (
+                      <div
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 5,
+                          fontSize: "0.72rem",
+                          fontWeight: 600,
+                          color: "#c7d2fe",
+                          background: "rgba(165, 180, 252, 0.12)",
+                          border: "1px solid rgba(165, 180, 252, 0.24)",
+                          borderRadius: 999,
+                          padding: "2px 8px",
+                          marginBottom: 8,
+                        }}
+                      >
+                        <CalendarClock size={12} />
+                        <span>Routine · {cronParsed.jobName}</span>
+                      </div>
+                    )}
+                    {displayRawContent ? (
                       <>
-                        {stripSecretRequestTag(msg.content) && (
-                          <SafeMarkdown text={stripSecretRequestTag(msg.content)} />
+                        {stripSecretRequestTag(displayRawContent) && (
+                          <SafeMarkdown text={stripSecretRequestTag(displayRawContent)} />
                         )}
                         {(msg.role === "assistant" || msg.role === "user") &&
                           extractPocketPages(msg.content).map((page) => (
@@ -2271,6 +2304,44 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
                       </div>
                     )}
                   </div>
+                  {inlineChoiceCard && (
+                    <InlineChoiceCard
+                      card={inlineChoiceCard}
+                      botLabel={visual.label}
+                      disabled={isStreaming || wsState !== "connected"}
+                      onReply={(answer) => {
+                        const sid = activeSessionRef.current;
+                        if (!sid || wsState !== "connected" || isStreaming) return;
+                        setMessages((prev) => [
+                          ...prev,
+                          {
+                            id: `u-choice-${Date.now()}`,
+                            role: "user",
+                            content: answer,
+                            timestamp: Date.now(),
+                          },
+                        ]);
+                        setIsStreaming(true);
+                        scrollToBottomWithSettle();
+                        void hermesWs
+                          .call("prompt.submit", {
+                            session_id: sid,
+                            profile: profile.name,
+                            submission_id: randomClientId("sub"),
+                            text: answer,
+                            ...(activeModelOverride ? { model_override: activeModelOverride } : {}),
+                          })
+                          .catch((err) => {
+                            setIsStreaming(false);
+                            setChatError(
+                              err instanceof Error
+                                ? err.message
+                                : "Antwort konnte nicht gesendet werden."
+                            );
+                          });
+                      }}
+                    />
+                  )}
                   {!msg.streaming && msg.timestamp && (
                     <div className="msg-time">{formatShortTime(msg.timestamp)}</div>
                   )}

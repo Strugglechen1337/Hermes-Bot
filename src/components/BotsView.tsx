@@ -85,6 +85,7 @@ interface BotsViewProps {
   selectedBotName: string | null;
   layoutMode?: "mobile" | "list-only" | "chat-only";
   draftPrefill?: { botName: string; text: string; id: number } | null;
+  pushTargetSession?: { botName: string; sessionId: string | null; nonce: number } | null;
   openCreateTrigger?: number;
   createAsPrivate?: boolean;
   onSelectBot: (name: string | null) => void;
@@ -142,6 +143,7 @@ export const BotsView: React.FC<BotsViewProps> = ({
   selectedBotName,
   layoutMode = "mobile",
   draftPrefill = null,
+  pushTargetSession = null,
   openCreateTrigger = 0,
   createAsPrivate = false,
   onSelectBot,
@@ -607,10 +609,20 @@ export const BotsView: React.FC<BotsViewProps> = ({
         : null;
     const matchingDraft =
       draftPrefill && draftPrefill.botName === selectedProfile.name ? draftPrefill : null;
+    const matchingPush =
+      pushTargetSession && pushTargetSession.botName === selectedProfile.name
+        ? pushTargetSession
+        : null;
+    const chatInstanceKey = matchingPush
+      ? `${selectedProfile.name}:${matchingPush.nonce}`
+      : selectedProfile.name;
+    const resolvedInitialSessionId =
+      matchingPush?.sessionId || matchingTargetSession?.sessionId || null;
+
     return (
       <>
         <DirectChatView
-          key={selectedProfile.name}
+          key={chatInstanceKey}
           profile={selectedProfile}
           allProfiles={publicProfiles}
           isPrivateBot={isPrivateSelected}
@@ -618,7 +630,7 @@ export const BotsView: React.FC<BotsViewProps> = ({
           draftPrefill={matchingDraft}
           onConsumeDraftPrefill={onConsumeDraftPrefill}
           onForwardToBot={onForwardToBot}
-          initialSessionId={matchingTargetSession?.sessionId || null}
+          initialSessionId={resolvedInitialSessionId}
           initialSessionTitle={matchingTargetSession?.title || null}
           avatarUrl={avatars[selectedProfile.name] || null}
           otherUnreadCount={otherUnreadCount}

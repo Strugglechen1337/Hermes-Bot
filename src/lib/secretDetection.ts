@@ -473,9 +473,113 @@ export function extractChecklists(text: string): DetectedChecklist[] {
   return out;
 }
 
+export interface ParsedCronjobMessage {
+  jobName: string;
+  body: string;
+}
+
+export interface DetectedChoiceCard {
+  question: string;
+  choices: string[];
+  isExplicit: boolean;
+}
+
+const CHOICE_CARD_GLOBAL_RE = /\[CHOICE_CARD:\s*([^\]]+)\]/gi;
+
+/**
+ * Cleans Hermes's built-in `Cronjob Response: <Name> (job_id: ...)` wrapper
+ * delivered into `Bot Chat` so it renders as a sleek routine message without
+ * raw technical headers or English management footers.
+ */
+export function parseCronjobResponseMessage(text: string): ParsedCronjobMessage | null {
+  if (!text) return null;
+  const trimmed = text.trim();
+  const headerMatch = trimmed.match(
+    /^Cronjob Response:\s*([^\r\n]+)\r?\n(?:\(job_id:\s*[^)]+\)\r?\n)?[-─]{3,}\s*\r?\n+([\s\S]+)$/i
+  );
+  if (!headerMatch) return null;
+  const jobName = headerMatch[1].trim();
+  const body = headerMatch[2]
+    .replace(/\r?\n*To stop or manage this job,[\s\S]*$/i, "")
+    .trim();
+  if (!body) return null;
+  return { jobName, body };
+}
+
+/**
+ * Extracts an interactive Multiple-Choice / Quick-Reply card from a bot message:
+ * 1. Explicit `[CHOICE_CARD: Frage | Option 1 | Option 2 | ...]` tag (works in any chat or cronjob).
+ * 2. When `allowSmartAutoDetect` is true (latest unanswered bot/cronjob message), detects direct
+ *    German decision questions (e.g. "Soll ich ... übernehmen?") and builds 1-tap reply choices.
+ */
+export function extractInlineChoiceCard(
+  text: string,
+  allowSmartAutoDetect = false
+): DetectedChoiceCard | null {
+  if (!text) return null;
+
+  for (const m of text.matchAll(CHOICE_CARD_GLOBAL_RE)) {
+    const parts = m[1]
+      .split("|")
+      .map((p) => p.trim())
+      .filter(Boolean);
+    if (parts.length >= 2) {
+      return {
+        question: parts[0],
+        choices: parts.slice(1, 6),
+        isExplicit: true,
+      };
+    }
+  }
+
+  if (!allowSmartAutoDetect) return null;
+
+  const cron = parseCronjobResponseMessage(text);
+  const cleanBody = stripSecretRequestTag(cron ? cron.body : text);
+  if (!cleanBody || cleanBody.length > 1200) return null;
+
+  // Match a direct German decision question sentence ending with "?"
+  const sentences = cleanBody
+    .split(/(?<=[?!.])\s+|\r?\n+/)
+    .map((s) => s.replace(/[*_`]+/g, "").trim())
+    .filter(Boolean);
+
+  const decisionQuestion = sentences.find(
+    (s) =>
+      s.endsWith("?") &&
+      s.length >= 12 &&
+      s.length <= 220 &&
+      /\b(soll ich|möchtest du|willst du|darf ich|kann ich|wollen wir|sollen wir|passt das|einverstanden)\b/i.test(
+        s
+      )
+  );
+  if (!decisionQuestion) return null;
+
+  const lower = decisionQuestion.toLowerCase();
+  if (/übernehmen|ändern|anpassen|einstellen|speichern|aktivieren|heizplan/.test(lower)) {
+    return {
+      question: decisionQuestion,
+      choices: ["Ja, übernehmen", "Nein, nicht ändern"],
+      isExplicit: false,
+    };
+  }
+  if (/bestellen|kaufen|buchen|senden|abschicken|löschen|ausführen/.test(lower)) {
+    return {
+      question: decisionQuestion,
+      choices: ["Ja, mach das", "Nein, abbrechen"],
+      isExplicit: false,
+    };
+  }
+  return {
+    question: decisionQuestion,
+    choices: ["Ja, bitte", "Nein, danke"],
+    isExplicit: false,
+  };
+}
+
 /**
  * Strips any internal `[SECRET_FORM: ...]`, `[SECRET_REQUEST: ...]`, `[VAULT_REQUEST: ...]`,
- * `[DEAL_CARD: ...]`, `[POCKET_PAGE: ...]`, and `[CHECKLIST: ...]` directives from rendered markdown prose.
+ * `[DEAL_CARD: ...]`, `[POCKET_PAGE: ...]`, `[CHECKLIST: ...]`, and `[CHOICE_CARD: ...]` directives from rendered markdown prose.
  */
 export function stripSecretRequestTag(text: string): string {
   return text
@@ -483,6 +587,7 @@ export function stripSecretRequestTag(text: string): string {
     .replace(EXPLICIT_TAG_GLOBAL_RE, "")
     .replace(EXPLICIT_VAULT_GLOBAL_RE, "")
     .replace(CHECKLIST_TAG_GLOBAL_RE, "")
+    .replace(CHOICE_CARD_GLOBAL_RE, "")
     .replace(PACKAGE_CARD_GLOBAL_RE, "")
     .replace(REACT_TAG_GLOBAL_RE, "")
     .replace(EXPLICIT_DEAL_GLOBAL_RE, "")
