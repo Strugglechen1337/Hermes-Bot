@@ -96,9 +96,29 @@ function isMiniModel(m: string): boolean {
   return /\b(?:mini|spark|fast|haiku)\b/i.test(m) && !isNanoModel(m);
 }
 
+function isUnsupportedOnCodexOAuth(m: string): boolean {
+  // ChatGPT OAuth (openai-codex) rejects gpt-5.4-mini / gpt-5.4-nano with
+  // "Model entitlement rejection" on standard plans, and spark is Pro-only.
+  const lower = m.toLowerCase();
+  return (
+    lower.includes("5.4-mini") ||
+    lower.includes("5.4-nano") ||
+    lower.includes("-spark") ||
+    lower.endsWith("-pro")
+  );
+}
+
 function isCodexOrFlagshipGpt(m: string): boolean {
   const lower = m.toLowerCase();
   return lower.includes("gpt") && !isMiniModel(lower) && !isNanoModel(lower);
+}
+
+function pickFirstMatching(pool: string[], patterns: RegExp[]): string | undefined {
+  for (const re of patterns) {
+    const found = pool.find((m) => re.test(m));
+    if (found) return found;
+  }
+  return undefined;
 }
 
 /**
@@ -117,23 +137,68 @@ export function recommendGptModelForBot(
 
   if (!gptProvider) return null;
 
-  const models = uniqueModels(gptProvider);
-  const gptModels = models.filter((m) => m.toLowerCase().includes("gpt"));
-  const pool = gptModels.length > 0 ? gptModels : models;
+  const isCodexOAuth = gptProvider.slug === "openai-codex";
+  const rawModels = uniqueModels(gptProvider);
+  const filteredModels = isCodexOAuth
+    ? rawModels.filter((m) => !isUnsupportedOnCodexOAuth(m))
+    : rawModels;
+  const gptModels = filteredModels.filter((m) => m.toLowerCase().includes("gpt"));
+  const pool = gptModels.length > 0 ? gptModels : filteredModels;
   if (pool.length === 0) return null;
 
   const classification = classifyBotModelTier(profile);
-  const flagship = pool.find(isCodexOrFlagshipGpt) || pool[0];
-  const mini = pool.find(isMiniModel);
-  const nano = pool.find(isNanoModel);
+  let chosen: string;
 
-  let chosen = flagship;
-  if (classification.tier === "fast") {
-    chosen = nano || mini || flagship;
-  } else if (classification.tier === "balanced") {
-    chosen = mini || flagship;
+  if (isCodexOAuth) {
+    // Verified ChatGPT Codex OAuth model families:
+    // - Pro: sol / astra (or terra fallback)
+    // - Balanced: terra (or sol fallback)
+    // - Fast/Efficient: luna (or terra fallback)
+    const proModel =
+      pickFirstMatching(pool, [
+        /^gpt-6\.1-sol$/i,
+        /^gpt-6\.2-sol$/i,
+        /^gpt-6\.2-astra$/i,
+        /^gpt-6-sol$/i,
+        /^gpt-6\.1-terra$/i,
+        /-sol$/i,
+        /-astra$/i,
+      ]) || pool.find(isCodexOrFlagshipGpt) || pool[0];
+
+    const balancedModel =
+      pickFirstMatching(pool, [
+        /^gpt-6\.1-terra$/i,
+        /^gpt-5\.6-terra$/i,
+        /-terra$/i,
+        /^gpt-6-sol$/i,
+      ]) || proModel;
+
+    const fastModel =
+      pickFirstMatching(pool, [
+        /^gpt-6-luna$/i,
+        /^gpt-5\.6-luna$/i,
+        /-luna$/i,
+        /^gpt-6\.1-terra$/i,
+      ]) || balancedModel;
+
+    if (classification.tier === "fast") {
+      chosen = fastModel;
+    } else if (classification.tier === "balanced") {
+      chosen = balancedModel;
+    } else {
+      chosen = proModel;
+    }
   } else {
-    chosen = flagship;
+    const flagship = pool.find(isCodexOrFlagshipGpt) || pool[0];
+    const mini = pool.find(isMiniModel);
+    const nano = pool.find(isNanoModel);
+    if (classification.tier === "fast") {
+      chosen = nano || mini || flagship;
+    } else if (classification.tier === "balanced") {
+      chosen = mini || flagship;
+    } else {
+      chosen = flagship;
+    }
   }
 
   return {

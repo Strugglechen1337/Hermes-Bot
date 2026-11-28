@@ -11,8 +11,8 @@ const SAMPLE_PROVIDERS: HermesModelOptionProvider[] = [
     slug: "openai-codex",
     name: "OpenAI Codex",
     is_current: true,
-    featured_models: ["gpt-6.1-terra", "gpt-5.4-mini", "gpt-5.4-nano"],
-    models: ["gpt-6.1-terra", "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano"],
+    featured_models: ["gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-luna", "gpt-5.4-mini"],
+    models: ["gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-luna", "gpt-5.4-mini", "gpt-5.4-nano"],
   },
   {
     slug: "anthropic",
@@ -41,16 +41,16 @@ describe("smartModelRouting", () => {
     expect(classifyBotModelTier({ name: "lea-news" }).tier).toBe("balanced");
   });
 
-  it("recommends the matching live openai-codex GPT model per bot tier", () => {
+  it("recommends verified openai-codex GPT tiers and never picks unentitled gpt-5.4-mini/nano", () => {
     const anna = recommendGptModelForBot({ name: "anna-coding" }, SAMPLE_PROVIDERS);
     expect(anna?.provider).toBe("openai-codex");
-    expect(anna?.model).toBe("gpt-6.1-terra");
+    expect(anna?.model).toBe("gpt-6.1-sol");
 
     const mia = recommendGptModelForBot({ name: "mia-einkauf" }, SAMPLE_PROVIDERS);
-    expect(mia?.model).toBe("gpt-5.4-mini");
+    expect(mia?.model).toBe("gpt-6.1-terra");
 
     const lena = recommendGptModelForBot({ name: "lena-kalender" }, SAMPLE_PROVIDERS);
-    expect(lena?.model).toBe("gpt-5.4-nano");
+    expect(lena?.model).toBe("gpt-6-luna");
   });
 
   it("builds a complete auto-assign plan across multiple profiles", () => {
@@ -64,9 +64,9 @@ describe("smartModelRouting", () => {
     );
     expect(plan).toHaveLength(3);
     expect(plan.map((p) => p.recommendation.model)).toEqual([
+      "gpt-6.1-sol",
       "gpt-6.1-terra",
-      "gpt-5.4-mini",
-      "gpt-5.4-nano",
+      "gpt-6-luna",
     ]);
   });
 });
