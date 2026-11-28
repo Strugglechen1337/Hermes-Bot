@@ -1080,7 +1080,10 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
         setPendingSecret(req);
         notifyIfBackgrounded({
           title: `${visual.label} · Sichere Abfrage`,
-          body: "Passwort oder API-Key wird sicher angefordert.",
+          body:
+            req.method === "vault.code"
+              ? "Sicherheitscode wird gebraucht – bitte im Chat eingeben (ca. 3 Minuten Zeit)."
+              : "Passwort oder API-Key wird sicher angefordert.",
           bot: profile.name,
         });
         scrollToBottomWithSettle();

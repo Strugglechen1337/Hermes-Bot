@@ -64,7 +64,34 @@ export class HermesWsClient {
     }
   }
 
+  private resumeListenerInstalled = false;
+
+  /**
+   * iOS suspends the PWA when the user switches to another app (e.g. to read an SMS code).
+   * On return, reconnect immediately instead of waiting for the backoff timer so the
+   * server can replay any still-open request (2FA code, approval).
+   */
+  private installResumeListener(): void {
+    if (this.resumeListenerInstalled || typeof document === "undefined") return;
+    this.resumeListenerInstalled = true;
+    const onResume = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      if (!this.shouldReconnect) return;
+      if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) return;
+      this.reconnectAttempt = 0;
+      if (this.reconnectTimer) {
+        clearTimeout(this.reconnectTimer);
+        this.reconnectTimer = null;
+      }
+      this.openSocket();
+    };
+    document.addEventListener("visibilitychange", onResume);
+    window.addEventListener("pageshow", onResume);
+    window.addEventListener("online", onResume);
+  }
+
   connect(): void {
+    this.installResumeListener();
     this.shouldReconnect = true;
     if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
       return;
