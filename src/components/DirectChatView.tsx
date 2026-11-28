@@ -50,6 +50,7 @@ import type {
   HermesUsageLimitError,
 } from "../../shared/types";
 import { evaluateApprovalPolicy, loadAutoApproveSafe } from "../lib/approvalPolicy";
+import { splitSnapshotPrompt } from "../lib/snapshotPrompt";
 import {
   BOT_CHAT_TITLE,
   getBotHandle,
@@ -829,7 +830,11 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
           onRegisterSession?.(profile.name, resolvedSid);
           onMarkBotRead?.(profile.name, { sessionId: resolvedSid, messages: loaded });
           setIsStreaming(Boolean(snapshot?.running || snapshot?.inflight?.streaming));
-          setPendingApproval(snapshot?.pending_approval || snapshot?.prompts?.[0] || null);
+          {
+            const split = splitSnapshotPrompt(snapshot?.pending_approval || snapshot?.prompts?.[0] || null);
+            setPendingApproval(split.approval);
+            setPendingClarify(split.clarify);
+          }
           setPendingConnection(snapshot?.pending_connection || null);
           const snapUsage = snapshot?.usage || snapshot?.info?.usage;
           if (snapUsage && typeof snapUsage === "object") {
@@ -930,7 +935,11 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
         onRegisterSession?.(profile.name, resolvedSid);
         onMarkBotRead?.(profile.name, { sessionId: resolvedSid, messages: loaded });
         setIsStreaming(Boolean(snapshot?.running || snapshot?.inflight?.streaming));
-        setPendingApproval(snapshot?.pending_approval || snapshot?.prompts?.[0] || null);
+        {
+          const split = splitSnapshotPrompt(snapshot?.pending_approval || snapshot?.prompts?.[0] || null);
+          setPendingApproval(split.approval);
+          setPendingClarify(split.clarify);
+        }
         setPendingConnection(snapshot?.pending_connection || null);
         const snapUsage = snapshot?.usage || snapshot?.info?.usage;
         if (snapUsage && typeof snapUsage === "object") {
@@ -1823,6 +1832,28 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
     outcome: "submitted" | "cancelled"
   ) {
     if (!pendingClarify) return;
+    if (pendingClarify.params.__snapshot === true) {
+      // The live request was not delivered to this socket (only the resume snapshot was), so
+      // there is no response id to answer. A typed reply ends the open question at once.
+      const text = Object.values(answers)
+        .filter((v): v is string => typeof v === "string" && v.trim().length > 0)
+        .join(", ");
+      setPendingClarify(null);
+      const sid = activeSessionRef.current;
+      if (outcome === "submitted" && text && sid && wsState === "connected") {
+        setIsStreaming(true);
+        void hermesWs
+          .call("prompt.submit", {
+            session_id: sid,
+            profile: profile.name,
+            submission_id: randomClientId("sub"),
+            text,
+            ...(activeModelOverride ? { model_override: activeModelOverride } : {}),
+          })
+          .catch(() => setIsStreaming(false));
+      }
+      return;
+    }
     if (outcome === "cancelled") {
       hermesWs.sendResponse(pendingClarify.id, { outcome: "cancelled" });
     } else {
