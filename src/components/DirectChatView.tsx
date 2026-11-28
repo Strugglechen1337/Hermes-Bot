@@ -3162,6 +3162,7 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
 
       {showBrowserDesktop && browserDesktop?.available && browserDesktop.path && (
         <BrowserDesktopView
+          id={browserDesktop.id || ""}
           path={browserDesktop.path}
           botLabel={visual.label}
           deskLabel={browserDesktop.label}

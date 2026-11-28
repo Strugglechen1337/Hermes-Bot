@@ -3,7 +3,9 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import os from "node:os";
 import path from "node:path";
 import type { ServerConfig } from "./config.js";
+import { WebSocket } from "ws";
 import { deskMap } from "./deskProxy.js";
+import { isSameOriginRequest } from "./security.js";
 import { verifyHermesSession } from "./push.js";
 
 /**
@@ -60,6 +62,133 @@ export function resolveBrowserDesktop(
   } catch {
     return { available: false };
   }
+}
+
+interface CdpTarget {
+  type?: string;
+  webSocketDebuggerUrl?: string;
+}
+
+/** Runs CDP commands on one page websocket and resolves with each result (5 s per command). */
+function cdpSession(
+  wsUrl: string,
+  commands: { method: string; params?: Record<string, unknown> }[]
+): Promise<unknown[]> {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(wsUrl);
+    const results: unknown[] = [];
+    let next = 0;
+    const timer = setTimeout(() => {
+      ws.terminate();
+      reject(new Error("cdp_timeout"));
+    }, 5000 * Math.max(1, commands.length));
+    const sendNext = () => ws.send(JSON.stringify({ id: next + 1, ...commands[next] }));
+    ws.on("open", sendNext);
+    ws.on("message", (raw) => {
+      const msg = JSON.parse(String(raw)) as { id?: number; result?: unknown; error?: { message?: string } };
+      if (msg.id !== next + 1) return;
+      if (msg.error) {
+        clearTimeout(timer);
+        ws.close();
+        reject(new Error(msg.error.message || "cdp_error"));
+        return;
+      }
+      results.push(msg.result);
+      next += 1;
+      if (next >= commands.length) {
+        clearTimeout(timer);
+        ws.close();
+        resolve(results);
+      } else sendNext();
+    });
+    ws.on("error", (e) => {
+      clearTimeout(timer);
+      reject(e);
+    });
+  });
+}
+
+const MAX_INSERT_CHARS = 5000;
+
+/** Types text into the focused field of the page the user currently sees in the desktop. */
+export async function insertTextIntoActivePage(cdpPort: number, text: string): Promise<void> {
+  const res = await fetch(`http://127.0.0.1:${cdpPort}/json/list`);
+  const pages = ((await res.json()) as CdpTarget[]).filter((t) => t.type === "page" && t.webSocketDebuggerUrl);
+  if (pages.length === 0) throw new Error("no_page");
+  let chosen = pages[0];
+  for (const p of pages) {
+    try {
+      const [r] = (await cdpSession(p.webSocketDebuggerUrl as string, [
+        { method: "Runtime.evaluate", params: { expression: "document.visibilityState", returnByValue: true } },
+      ])) as { result?: { value?: string } }[];
+      if (r?.result?.value === "visible") {
+        chosen = p;
+        break;
+      }
+    } catch {
+      // try next page
+    }
+  }
+  await cdpSession(chosen.webSocketDebuggerUrl as string, [
+    { method: "Input.insertText", params: { text: text.slice(0, MAX_INSERT_CHARS) } },
+  ]);
+}
+
+function readJsonBody(req: IncomingMessage, maxBytes = 20_000): Promise<Record<string, unknown>> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    req.on("data", (c: Buffer) => {
+      size += c.length;
+      if (size > maxBytes) {
+        reject(new Error("too_large"));
+        req.destroy();
+      } else chunks.push(c);
+    });
+    req.on("end", () => {
+      try {
+        resolve(JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>);
+      } catch {
+        reject(new Error("bad_json"));
+      }
+    });
+    req.on("error", reject);
+  });
+}
+
+export async function handlePocketBrowserTextRoute(
+  req: IncomingMessage,
+  res: ServerResponse,
+  config: ServerConfig,
+  parsedUrl: URL
+): Promise<boolean> {
+  if (parsedUrl.pathname !== "/api/pocket/browser-desktop/text") return false;
+  if ((req.method || "GET").toUpperCase() !== "POST") {
+    sendJson(res, 405, { error: "method_not_allowed" });
+    return true;
+  }
+  if (!isSameOriginRequest(req)) {
+    sendJson(res, 403, { error: "forbidden_origin" });
+    return true;
+  }
+  if (!(await verifyHermesSession(req, config))) {
+    sendJson(res, 401, { error: "unauthorized" });
+    return true;
+  }
+  try {
+    const body = await readJsonBody(req);
+    const id = String(body.id ?? "");
+    const text = typeof body.text === "string" ? body.text : "";
+    if (!deskMap()[id] || !text) {
+      sendJson(res, 400, { error: "bad_request" });
+      return true;
+    }
+    await insertTextIntoActivePage(Number(id), text);
+    sendJson(res, 200, { ok: true });
+  } catch (err) {
+    sendJson(res, 502, { error: err instanceof Error ? err.message : "failed" });
+  }
+  return true;
 }
 
 function sendJson(res: ServerResponse, status: number, body: Record<string, unknown>) {

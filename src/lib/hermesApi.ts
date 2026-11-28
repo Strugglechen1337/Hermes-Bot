@@ -781,6 +781,14 @@ export async function fetchBrowserDesktop(profile: string): Promise<BrowserDeskt
   );
 }
 
+/** Types text into the focused field of the page shown in the bot's live browser. */
+export async function insertBrowserText(id: string, text: string): Promise<{ ok: boolean }> {
+  return requestJson<{ ok: boolean }>("/api/pocket/browser-desktop/text", {
+    method: "POST",
+    body: JSON.stringify({ id, text }),
+  });
+}
+
 export async function savePocketSecret(
   key: string,
   value: string,
