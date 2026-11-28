@@ -11,7 +11,7 @@ describe("insertTextIntoActivePage", () => {
   it("types into the page that is visible, not a background tab", async () => {
     const got: { page: string; method: string; text?: string }[] = [];
     const wss = new WebSocketServer({ noServer: true });
-    const srv = http.createServer((req, res) => {
+    const srv = http.createServer((_req, res) => {
       const port = (srv.address() as AddressInfo).port;
       res.setHeader("content-type", "application/json");
       res.end(
