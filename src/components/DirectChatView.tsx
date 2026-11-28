@@ -5,6 +5,7 @@ import {
   ArrowDown,
   ArrowUp,
   Bookmark,
+  CalendarClock,
   Check,
   ChevronDown,
   ChevronLeft,
@@ -111,6 +112,7 @@ import {
 } from "../lib/usageLimits";
 import { BotAvatar } from "./BotAvatar";
 import { BotMediaGallerySheet } from "./BotMediaGallerySheet";
+import { BotRoutinesSheet } from "./BotRoutinesSheet";
 import { ConfirmSheet } from "./ConfirmSheet";
 import { InChatConnectionCard } from "./InChatConnectionCard";
 import { InteractiveChecklistCard } from "./InteractiveChecklistCard";
@@ -422,6 +424,7 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
     [cancelLongPress]
   );
   const [showMediaGallery, setShowMediaGallery] = useState(false);
+  const [showBotRoutines, setShowBotRoutines] = useState(false);
   const [inChatSearchOpen, setInChatSearchOpen] = useState(false);
   const [inChatSearchQuery, setInChatSearchQuery] = useState("");
   const [activeMatchPos, setActiveMatchPos] = useState(0);
@@ -2746,6 +2749,13 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
         onClose={() => setShowMediaGallery(false)}
       />
 
+      <BotRoutinesSheet
+        open={showBotRoutines}
+        profileName={profile.name}
+        botLabel={visual.label}
+        onClose={() => setShowBotRoutines(false)}
+      />
+
       <Sheet open={Boolean(contextMsg)} onClose={() => setContextMsg(null)}>
         {contextMsg && (
           <>
@@ -3102,6 +3112,16 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
             }}
           >
             <Search size={17} /> Im Chat suchen
+          </button>
+          <button
+            type="button"
+            className="btn full"
+            onClick={() => {
+              setShowActionsSheet(false);
+              setShowBotRoutines(true);
+            }}
+          >
+            <CalendarClock size={17} /> Routinen dieses Bots
           </button>
           <button
             type="button"
