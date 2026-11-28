@@ -173,6 +173,8 @@ export const ClarifyPromptCard: React.FC<ClarifyPromptCardProps> = ({
           const choices = q.choices || [];
           const pickedMulti = selectedMulti[q.qid] || [];
           const pickedSingle = selectedSingle[q.qid] || "";
+          const isCompactPair =
+            choices.length === 2 && choices.every((c) => c.trim().length <= 16);
 
           return (
             <div key={q.qid} className="prompt-question-block">
@@ -181,10 +183,13 @@ export const ClarifyPromptCard: React.FC<ClarifyPromptCardProps> = ({
                   <span className="prompt-question-num">{idx + 1}.</span>
                 )}
                 <span>{q.question}</span>
+                {q.multi_select && (
+                  <span className="prompt-multi-hint">Mehrfachauswahl</span>
+                )}
               </div>
 
               {choices.length > 0 && (
-                <div className="prompt-choices">
+                <div className={`prompt-choices${isCompactPair ? " two-col" : ""}`}>
                   {choices.map((choice) => {
                     const active = q.multi_select
                       ? pickedMulti.includes(choice)
@@ -199,8 +204,13 @@ export const ClarifyPromptCard: React.FC<ClarifyPromptCardProps> = ({
                         className={`prompt-choice-btn ${active ? "selected" : ""} ${isYes ? "yes" : isNo ? "no" : ""}`}
                         onClick={() => handleQuickPick(q, choice)}
                       >
+                        <span
+                          className={`prompt-choice-indicator ${q.multi_select ? "multi" : "single"}${active ? " active" : ""}`}
+                          aria-hidden="true"
+                        >
+                          {active && <Check size={11} strokeWidth={3} />}
+                        </span>
                         <span className="prompt-choice-label">{choice}</span>
-                        {active && <Check size={15} className="prompt-choice-check" />}
                       </button>
                     );
                   })}
