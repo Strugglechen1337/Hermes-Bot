@@ -1,0 +1,30 @@
+# Shared, visible Chromium for Hermes bots (non-private bots attach via CDP).
+# Desktop (KasmVNC) and CDP are bound to 127.0.0.1 only; expose via tailscale serve.
+services:
+  browser:
+    image: lscr.io/linuxserver/chromium:latest
+    container_name: hermes-browser
+    restart: unless-stopped
+    shm_size: "1gb"
+    env_file: .env
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/Berlin
+      - LC_ALL=de_DE.UTF-8
+      - CHROME_CLI=--remote-debugging-port=9222 --lang=de-DE
+    volumes:
+      - ./config:/config
+    ports:
+      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:9223:9223"
+    deploy:
+      resources:
+        limits:
+          memory: 3g
+  cdp-forward:
+    image: alpine/socat:latest
+    container_name: hermes-browser-cdp
+    restart: unless-stopped
+    network_mode: "service:browser"
+    command: TCP-LISTEN:9223,fork,reuseaddr TCP:127.0.0.1:9222
