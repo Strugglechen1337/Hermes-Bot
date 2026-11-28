@@ -61,6 +61,7 @@ import { formatBadgeCount, isInternalBotNoiseMessage } from "../lib/unreadStore"
 import {
   formatChatDividerTime,
   formatRelativeTime,
+  formatShortTime,
   randomClientId,
   toTimestampMs,
 } from "../lib/format";
@@ -2270,6 +2271,9 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
                       </div>
                     )}
                   </div>
+                  {!msg.streaming && msg.timestamp && (
+                    <div className="msg-time">{formatShortTime(msg.timestamp)}</div>
+                  )}
                   {allEmojis.length > 0 && (
                     <div className="msg-reactions-row" aria-label="Reaktionen">
                       {allEmojis.map((emoji) => (
