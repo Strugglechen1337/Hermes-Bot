@@ -91,6 +91,8 @@ import { isTtsSupported, stopSpeaking, subscribeTtsState, toggleSpeakText } from
 import {
   detectBotSecretForm,
   detectBotVaultRequest,
+  detectBotVerifyRequest,
+  type DetectedVerifyRequest,
   extractBotReactions,
   extractChecklists,
   extractInlineChoiceCard,
@@ -132,6 +134,7 @@ import {
   SecretPromptCard,
   UsageLimitCard,
   VaultFormCard,
+  VerifyCard,
 } from "./InChatPromptCards";
 import { SafeMarkdown } from "./SafeMarkdown";
 import { Sheet } from "./Sheet";
@@ -234,6 +237,7 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
   const [pendingClarify, setPendingClarify] = useState<HermesServerRequest | null>(null);
   const [pendingSecret, setPendingSecret] = useState<HermesServerRequest | null>(null);
   const [pendingVaultForm, setPendingVaultForm] = useState<DetectedVaultRequest | null>(null);
+  const [pendingVerify, setPendingVerify] = useState<DetectedVerifyRequest | null>(null);
   const [manualSecret, setManualSecret] = useState<{
     open: boolean;
     formTitle?: string;
@@ -1253,7 +1257,10 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
         // OR a single/multi-field .env secret form and pop up the protected card in chat.
         if (finalText) {
           const detectedVault = detectBotVaultRequest(finalText);
-          if (detectedVault) {
+          const detectedVerify = detectBotVerifyRequest(finalText);
+          if (detectedVerify) {
+            setPendingVerify(detectedVerify);
+          } else if (detectedVault) {
             setPendingVaultForm(detectedVault);
           } else {
             const detectedForm = detectBotSecretForm(finalText);
@@ -2482,6 +2489,31 @@ export const DirectChatView: React.FC<DirectChatViewProps> = ({
           />
         )}
 
+        {pendingVerify && (
+          <VerifyCard
+            botLabel={visual.label}
+            request={pendingVerify}
+            onSubmit={(text) => {
+              setPendingVerify(null);
+              const sid = activeSessionRef.current;
+              if (sid && wsState === "connected") {
+                setIsStreaming(true);
+                void hermesWs
+                  .call("prompt.submit", {
+                    session_id: sid,
+                    profile: profile.name,
+                    submission_id: randomClientId("sub"),
+                    text,
+                    ...(activeModelOverride ? { model_override: activeModelOverride } : {}),
+                  })
+                  .catch(() => {
+                    setIsStreaming(false);
+                  });
+              }
+            }}
+            onClose={() => setPendingVerify(null)}
+          />
+        )}
         {pendingVaultForm && (
           <VaultFormCard
             profileName={profile.name}

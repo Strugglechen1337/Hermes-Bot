@@ -3,6 +3,7 @@ import {
   detectBotSecretForm,
   detectBotSecretRequest,
   detectBotVaultRequest,
+  detectBotVerifyRequest,
   extractInlineChoiceCard,
   extractPackageCards,
   extractPocketPages,
@@ -13,6 +14,18 @@ import {
 } from "./secretDetection";
 
 describe("secretDetection", () => {
+  it("detects [VERIFY_REQUEST] cards for one-time codes and in-app approvals and strips the tag", () => {
+    const code = detectBotVerifyRequest(
+      "Amazon will einen Code. [VERIFY_REQUEST: code | Code aus der SMS eingeben]"
+    );
+    expect(code).toEqual({ kind: "code", prompt: "Code aus der SMS eingeben" });
+    const approve = detectBotVerifyRequest("Bitte bestätigen [VERIFY_REQUEST: approve]");
+    expect(approve?.kind).toBe("approve");
+    expect(approve?.prompt).toMatch(/App/);
+    expect(detectBotVerifyRequest("kein Tag")).toBeNull();
+    expect(stripSecretRequestTag("Hallo [VERIFY_REQUEST: code | x]")).toBe("Hallo");
+  });
+
   it("detects explicit [SECRET_REQUEST: KEY | Prompt] tags and normalizes Home Assistant to HASS_TOKEN", () => {
     const res = detectBotSecretRequest(
       "Ich verbinde mich gern. [SECRET_REQUEST: HOME_ASSISTANT_TOKEN | Home Assistant Long-Lived Token]"

@@ -36,6 +36,7 @@ import {
   type DetectedPocketPage,
   type DetectedSecretRequest,
   type DetectedVaultRequest,
+  type DetectedVerifyRequest,
 } from "../lib/secretDetection";
 import { formatResetCountdown } from "../lib/usageLimits";
 import {
@@ -1412,6 +1413,94 @@ export const VaultFormCard: React.FC<VaultFormCardProps> = ({
         <button type="submit" className="btn sm primary" disabled={saving}>
           <Lock size={13} /> {saving ? "Speichere im Tresor…" : "Im Tresor speichern & weiter"}
         </button>
+      </div>
+    </form>
+  );
+};
+
+// ── 6b. Login Verification Card (one-time code / in-app approval) ────────────
+
+interface VerifyCardProps {
+  botLabel: string;
+  request: DetectedVerifyRequest;
+  /** Text that is sent to the bot as the user's next message. */
+  onSubmit: (text: string) => void;
+  onClose: () => void;
+}
+
+export const VerifyCard: React.FC<VerifyCardProps> = ({ botLabel, request, onSubmit, onClose }) => {
+  const [code, setCode] = useState("");
+  const isCode = request.kind === "code";
+
+  function submitCode(e: React.FormEvent) {
+    e.preventDefault();
+    const clean = code.replace(/\s+/g, "");
+    if (clean.length < 4) return;
+    onSubmit(
+      `Hier ist der Einmal-Sicherheitscode für die Anmeldung: ${clean}. Gib ihn im Browser ein und mache weiter. ` +
+        `Falls der Browser nicht reagiert, starte ihn neu und sag mir kurz Bescheid.`
+    );
+  }
+
+  return (
+    <form className="prompt-card secret" onSubmit={submitCode} autoComplete="off">
+      <div className="prompt-card-header">
+        <div className="prompt-card-badge secret">
+          <ShieldCheck size={14} />
+          <span>{isCode ? "Anmeldung · Sicherheitscode" : "Anmeldung · Freigabe"}</span>
+        </div>
+        <button type="button" className="prompt-card-dismiss" aria-label="Schließen" onClick={onClose}>
+          <X size={15} />
+        </button>
+      </div>
+
+      <div className="prompt-card-body">
+        <p className="prompt-description">
+          {request.prompt}
+          {isCode
+            ? ` · Der Code gilt nur kurz und einmal; ${botLabel} tippt ihn direkt in den Browser.`
+            : ` · Tippe danach auf „Bestätigt“, dann macht ${botLabel} weiter.`}
+        </p>
+        {isCode && (
+          <input
+            className="prompt-input"
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            placeholder="Sicherheitscode"
+            value={code}
+            onChange={(e) => setCode(e.target.value)}
+          />
+        )}
+      </div>
+
+      <div className="prompt-card-footer">
+        <button
+          type="button"
+          className="btn sm"
+          onClick={() =>
+            onSubmit("Die Anmeldung klappt nicht oder ich möchte abbrechen. Bitte brich den Vorgang ab.")
+          }
+        >
+          Abbrechen
+        </button>
+        {isCode ? (
+          <button type="submit" className="btn sm primary" disabled={code.replace(/\s+/g, "").length < 4}>
+            <Send size={13} /> Code senden
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="btn sm primary"
+            onClick={() =>
+              onSubmit(
+                "Ich habe die Anmeldung in der App bestätigt. Prüfe im Browser, ob sie durchgegangen ist, und mache weiter. " +
+                  "Falls der Browser nicht reagiert, starte ihn neu und sag mir kurz Bescheid."
+              )
+            }
+          >
+            <Check size={13} /> Bestätigt
+          </button>
+        )}
       </div>
     </form>
   );

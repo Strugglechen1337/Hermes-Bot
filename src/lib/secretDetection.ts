@@ -19,6 +19,12 @@ export interface DetectedVaultRequest {
   explicit: boolean;
 }
 
+export interface DetectedVerifyRequest {
+  /** `code` = Einmalcode eintippen, `approve` = Freigabe in einer App/auf dem Handy bestätigen. */
+  kind: "code" | "approve";
+  prompt: string;
+}
+
 export interface DetectedDealCard {
   shop: string;
   title: string;
@@ -35,6 +41,8 @@ const EXPLICIT_VAULT_RE =
   /\[VAULT_REQUEST:\s*(payment|address|login)(?:\s*\|\s*([^|\]]+))?(?:\s*\|\s*([^\]]+))?\]/i;
 const EXPLICIT_VAULT_GLOBAL_RE =
   /\[VAULT_REQUEST:\s*(payment|address|login)(?:\s*\|\s*([^|\]]+))?(?:\s*\|\s*([^\]]+))?\]/gi;
+const EXPLICIT_VERIFY_RE = /\[VERIFY_REQUEST:\s*(code|approve)(?:\s*\|\s*([^\]]+))?\]/i;
+const EXPLICIT_VERIFY_GLOBAL_RE = /\[VERIFY_REQUEST:\s*(code|approve)(?:\s*\|\s*([^\]]+))?\]/gi;
 const EXPLICIT_DEAL_GLOBAL_RE =
   /\[DEAL_CARD:\s*([^|\]]+)\|\s*([^|\]]+)\|\s*([^|\]]+)(?:\|\s*([^|\]]*))?(?:\|\s*([^|\]]*))?(?:\|\s*([^\]]+))?\]/gi;
 const POCKET_PAGE_GLOBAL_RE =
@@ -123,6 +131,21 @@ export function isPlaintextFormFieldKey(keyName: string): boolean {
   return /(?:^|_)(EMAIL|MAIL|USER|USERNAME|LOGIN|URL|HOST|NAME|ADDRESS|ADDR|STREET|CITY|ZIP|PLZ|PHONE|COUNTRY|EXPIRY|EXP)(?:$|_)/.test(
     upper
   );
+}
+
+/**
+ * Detects `[VERIFY_REQUEST: code | Hinweis]` / `[VERIFY_REQUEST: approve | Hinweis]` – a bot asking
+ * for a one-time code (SMS/Authenticator/E-Mail) or an in-app approval during a shop login.
+ */
+export function detectBotVerifyRequest(text: string): DetectedVerifyRequest | null {
+  const m = text.match(EXPLICIT_VERIFY_RE);
+  if (!m) return null;
+  const kind = m[1].toLowerCase() as DetectedVerifyRequest["kind"];
+  const fallback =
+    kind === "code"
+      ? "Bitte gib den Sicherheitscode ein, den du per SMS, E-Mail oder Authenticator erhalten hast."
+      : "Bitte bestätige die Anmeldung in der App oder auf deinem Handy.";
+  return { kind, prompt: (m[2] || fallback).trim() };
 }
 
 /**
@@ -616,6 +639,7 @@ export function stripSecretRequestTag(text: string): string {
     .replace(EXPLICIT_FORM_TITLE_GLOBAL_RE, "")
     .replace(EXPLICIT_TAG_GLOBAL_RE, "")
     .replace(EXPLICIT_VAULT_GLOBAL_RE, "")
+    .replace(EXPLICIT_VERIFY_GLOBAL_RE, "")
     .replace(CHECKLIST_TAG_GLOBAL_RE, "")
     .replace(CHOICE_CARD_GLOBAL_RE, "")
     .replace(PACKAGE_CARD_GLOBAL_RE, "")
