@@ -1,6 +1,6 @@
 # PROJECT.md — Hermes Bots (formerly Hermes Pocket)
 
-Current Status: **v2.0.0 — Production Live & Active**  
+Current Status: **v2.1.0 — Production Live & Active**  
 Repository: `https://github.com/Strugglechen1337/Hermes-Bot` (branch `main` / `feat/hermes-pocket-mvp`)
 
 ## Architecture Overview
