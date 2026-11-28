@@ -69,6 +69,7 @@ export const BrowserDesktopView: React.FC<BrowserDesktopViewProps> = ({
   useEffect(() => {
     setDensity(loadDensity(landscape));
   }, [landscape]);
+  const [appliedRes, setAppliedRes] = useState<string | null>(null);
   const frameRef = useRef<HTMLIFrameElement | null>(null);
   const boxRef = useRef<HTMLDivElement | null>(null);
 
@@ -80,13 +81,20 @@ export const BrowserDesktopView: React.FC<BrowserDesktopViewProps> = ({
     if (rect.width < 50 || rect.height < 50) return;
     const width = Math.min(4000, even(rect.width * density));
     const height = Math.min(4000, even(rect.height * density));
-    win.postMessage({ type: "setScaleLocally", value: true }, window.location.origin);
-    win.postMessage({ type: "setManualResolution", width, height }, window.location.origin);
+    const origin = window.location.origin;
+    // Leave a previous manual size first, then set the new one (a plain second set can be ignored).
+    win.postMessage({ type: "resetResolutionToWindow" }, origin);
+    window.setTimeout(() => {
+      win.postMessage({ type: "setScaleLocally", value: true }, origin);
+      win.postMessage({ type: "setManualResolution", width, height }, origin);
+    }, 250);
+    setAppliedRes(`${width}×${height}`);
   }, [density]);
 
-  // Re-apply after load (the stream needs a moment), on size changes and on density changes.
+  // Apply right away on density changes, again after load (the stream needs a moment) and on rotation.
   useEffect(() => {
-    const timers = [1200, 3000, 6000].map((ms) => window.setTimeout(applyResolution, ms));
+    applyResolution();
+    const timers = [1500, 4000].map((ms) => window.setTimeout(applyResolution, ms));
     return () => timers.forEach((t) => window.clearTimeout(t));
   }, [applyResolution]);
 
@@ -196,6 +204,11 @@ export const BrowserDesktopView: React.FC<BrowserDesktopViewProps> = ({
         >
           <Minus size={18} />
         </button>
+        {appliedRes && (
+          <span style={{ fontSize: "0.66rem", color: "var(--text-muted, #888)", whiteSpace: "nowrap" }}>
+            {appliedRes}
+          </span>
+        )}
         <button type="button" className="btn" onClick={() => setPasteOpen((v) => !v)}>
           <ClipboardPaste size={16} /> Einfügen
         </button>
